@@ -60,7 +60,12 @@ query "insert into auth.users (id, email, email_confirmed_at)
 if rollback; then not_ok "refuses to run while Migration 2 data exists"; else
   check 'grep -q "Rollback aborted: public.maintenance_tasks" "$OUT"' "refuses to run while Migration 2 data exists"; fi
 
-query "delete from public.maintenance_tasks;" > /dev/null
+# Remove every Migration 2 row (including any left by earlier tests), so only
+# their audit history remains.
+query "delete from public.maintenance_entry_parts; delete from public.maintenance_entry_tasks;
+       delete from public.maintenance_entries; delete from public.maintenance_plans;
+       delete from public.sled_readings; delete from public.maintenance_package_tasks;
+       delete from public.maintenance_packages; delete from public.maintenance_tasks;" > /dev/null
 if rollback; then not_ok "refuses to run while Migration 2 audit history exists"; else
   check 'grep -q "audit row" "$OUT"' "refuses to run while Migration 2 audit history exists"; fi
 check '[[ "$(count_tables "$M2_TABLES")" == "8" ]]' "nothing was removed after the refusals"

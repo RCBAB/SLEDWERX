@@ -284,7 +284,14 @@ totals.
 
 **Rules**
 - Readings on the same meter never go down. A lower value must be recorded as
-  a reset. A back-dated reading must fit the existing history.
+  a reset. A back-dated reading must fit the existing history. Reading
+  changes are serialized per sled (a transaction-level advisory lock), so two
+  simultaneous saves cannot each pass the check and together break it.
+- Adding tasks or parts to an entry counts as changing that entry. Mechanics
+  can add them only to entries they created; owners and editors can add them
+  to any entry on the sled.
+- An entry cannot be restored while its reading is in Recently Deleted.
+  Restore the reading first.
 - Deleting an entry sends its tasks and parts to Recently Deleted with it
   (restoring brings them back) but **never deletes its reading**. A reading
   used by an active entry cannot be deleted on its own.

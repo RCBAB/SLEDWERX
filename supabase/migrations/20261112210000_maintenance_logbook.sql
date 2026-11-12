@@ -595,6 +595,11 @@ begin
   if tg_op = 'UPDATE' and new.client_request_id is distinct from old.client_request_id then
     raise exception 'client_request_id cannot be changed.' using errcode = '42501';
   end if;
+  if tg_op = 'UPDATE' and old.deleted_at is not null and new.deleted_at is null
+     and new.reading_id is not null
+     and exists (select 1 from public.sled_readings r where r.id = new.reading_id and r.deleted_at is not null) then
+    raise exception 'Restore this entry''s reading first.' using errcode = '42501';
+  end if;
   if new.reading_id is not null
      and (tg_op = 'INSERT' or new.reading_id is distinct from old.reading_id)
      and not exists (
@@ -608,7 +613,9 @@ end;
 $$;
 
 -- Entry tasks and parts: take the sled from the entry; the entry must be
--- active; tasks must be usable on the sled; task names are copied.
+-- active; adding items requires permission to modify that entry (so a
+-- mechanic cannot add tasks or parts to someone else's entry); tasks must be
+-- usable on the sled; task names are copied.
 -- Named "derive" so it runs before the record guard (triggers run in name order).
 create function private.tg_entry_children_derive()
 returns trigger
@@ -617,6 +624,7 @@ set search_path = ''
 as $$
 declare
   v_sled uuid;
+  v_entry_created_by uuid;
   v_task_name text;
 begin
   if tg_op = 'UPDATE' then
@@ -625,11 +633,14 @@ begin
     end if;
   else
     -- Runs with the caller's RLS: only entries the caller can see.
-    select e.sled_id into v_sled
+    select e.sled_id, e.created_by into v_sled, v_entry_created_by
     from public.maintenance_entries e
     where e.id = new.entry_id and e.deleted_at is null;
     if v_sled is null then
       raise exception 'Maintenance entry not found.' using errcode = '23503';
+    end if;
+    if auth.uid() is not null and not private.can_modify_sled_record(v_sled, v_entry_created_by) then
+      raise exception 'You do not have permission to change this maintenance entry.' using errcode = '42501';
     end if;
     new.sled_id := v_sled;
   end if;
@@ -682,6 +693,12 @@ security definer
 set search_path = ''
 as $$
 begin
+  -- Serialize reading changes per sled until commit, so two simultaneous
+  -- saves cannot each pass validation and together break the history. Each
+  -- check below takes a fresh snapshot after the lock, so it sees any reading
+  -- committed by the transaction it waited for.
+  perform pg_advisory_xact_lock(hashtextextended('sledwerx.sled_readings:' || new.sled_id::text, 0));
+
   if exists (
     select 1 from (
       select r.odometer_mi,

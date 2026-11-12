@@ -6,7 +6,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set search_path = public, extensions;
 
-select plan(101);
+select plan(107);
 
 -- ---------------------------------------------------------------------------
 -- Fixtures: Olive (owner), Eli (editor), Max (mechanic), Val (viewer),
@@ -56,6 +56,8 @@ select is_empty($$ select p.proname from pg_proc p join pg_namespace n on n.oid 
   'anonymous users cannot execute any SledWerx function');
 select is_empty($$ select table_name from information_schema.columns
   where table_schema = 'public' and column_name ilike '%currency%' $$, 'no currency configuration (USD only)');
+select ok(pg_get_functiondef('private.tg_sled_readings_order'::regproc) like '%pg_advisory_xact_lock%',
+  'reading validation is serialized per sled, so simultaneous saves cannot break the history');
 
 -- ---------------------------------------------------------------------------
 -- Personal library: tasks and packages
@@ -254,7 +256,20 @@ select throws_ok($$ insert into public.maintenance_entry_tasks (entry_id, task_i
   '42501', null, 'mechanics cannot reach the owner''s unrelated library tasks');
 select throws_ok($$ update public.maintenance_entries set deleted_at = now() where id = '5f000000-0000-0000-0000-000000000002' $$,
   '42501', null, 'mechanics cannot delete entries, even their own');
+select throws_ok($$ insert into public.maintenance_entry_parts (entry_id, name, unit_cost)
+  values ('5f000000-0000-0000-0000-000000000001', 'Gold-plated bolt', 999) $$,
+  '42501', 'You do not have permission to change this maintenance entry.',
+  'mechanics cannot add parts to someone else''s entry');
+select throws_ok($$ insert into public.maintenance_entry_tasks (entry_id, task_name)
+  values ('5f000000-0000-0000-0000-000000000001', 'Added by mechanic') $$,
+  '42501', 'You do not have permission to change this maintenance entry.',
+  'mechanics cannot add tasks to someone else''s entry');
 update public.maintenance_entries set title = 'Mechanic edit' where id = '5f000000-0000-0000-0000-000000000001';
+
+set local request.jwt.claims = '{"sub":"52222222-2222-2222-2222-222222222222","role":"authenticated"}';
+select lives_ok($$ insert into public.maintenance_entry_parts (entry_id, name, unit_cost)
+  values ('5f000000-0000-0000-0000-000000000002', 'Track clip', 3) $$,
+  'editors can add parts to other people''s entries');
 
 set local request.jwt.claims = '{"sub":"54444444-4444-4444-4444-444444444444","role":"authenticated"}';
 select throws_ok($$ insert into public.maintenance_entries (sled_id, performed_on, title)
@@ -390,6 +405,20 @@ select is((select count(*)::int from public.maintenance_tasks) + (select count(*
 -- Cleanup after 30 days keeps the reading; anonymous access; account deletion
 -- ---------------------------------------------------------------------------
 set local request.jwt.claims = '{"sub":"51111111-1111-1111-1111-111111111111","role":"authenticated"}';
+insert into public.sled_readings (id, sled_id, read_on, odometer_mi)
+  values ('5e000000-0000-0000-0000-000000000009', '5aaaaaaa-0000-0000-0000-000000000002', '2026-02-01', 20);
+insert into public.maintenance_entries (id, sled_id, performed_on, title, reading_id)
+  values ('5f000000-0000-0000-0000-000000000004', '5aaaaaaa-0000-0000-0000-000000000002', '2026-02-01',
+          'Entry whose reading gets deleted', '5e000000-0000-0000-0000-000000000009');
+update public.maintenance_entries set deleted_at = now() where id = '5f000000-0000-0000-0000-000000000004';
+update public.sled_readings set deleted_at = now() where id = '5e000000-0000-0000-0000-000000000009';
+select throws_ok($$ update public.maintenance_entries set deleted_at = null where id = '5f000000-0000-0000-0000-000000000004' $$,
+  '42501', 'Restore this entry''s reading first.',
+  'an entry cannot be restored while its reading is in Recently Deleted');
+update public.sled_readings set deleted_at = null where id = '5e000000-0000-0000-0000-000000000009';
+select lives_ok($$ update public.maintenance_entries set deleted_at = null where id = '5f000000-0000-0000-0000-000000000004' $$,
+  'after restoring the reading, the entry can be restored');
+
 insert into public.maintenance_entries (id, sled_id, performed_on, title, reading_id)
   values ('5f000000-0000-0000-0000-000000000003', '5aaaaaaa-0000-0000-0000-000000000002', '2026-01-01',
           'Old entry', '5e000000-0000-0000-0000-000000000008');

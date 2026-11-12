@@ -70,7 +70,7 @@ check '[[ -z "$(query "select 1 from pg_namespace where nspname = '\''private'\'
 check '[[ -z "$(query "select 1 from pg_trigger where tgname = '\''on_auth_user_created'\''")" ]]' "the sign-up trigger is removed"
 check '[[ -z "$(query "select 1 from supabase_migrations.schema_migrations where version = '\''20261112180000'\''")" ]]' \
   "the migration-history entry is removed"
-check 'query "insert into auth.users (email) values ('\''after-rollback@example.com'\''); delete from auth.users;" > /dev/null' \
+check 'query "insert into auth.users (id, email) values (gen_random_uuid(), '\''after-rollback@example.com'\''); delete from auth.users;" > /dev/null' \
   "sign-up still works after the rollback"
 
 # --- Migration 1 can be re-applied cleanly ---------------------------------

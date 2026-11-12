@@ -76,7 +76,16 @@ jobs:
             node scripts/db-api-smoke-test.mjs
       # Exercises supabase/rollback/ against the throwaway local database only.
       # Rollback scripts are never applied to any real database by CI.
-      - name: Rollback test (local stack)
+      # Order: roll back Migration 2 (leaving Migration 1), re-run the
+      # Migration 1 tests on that state, then test Migration 1's rollback.
+      - name: Migration 2 rollback test (local stack)
+        run: scripts/test-migration-2-rollback.sh
+        env:
+          THROWAWAY_DATABASE: "yes"
+          PSQL: docker exec -i supabase_db_sledwerx psql -U postgres
+      - name: Migration 1 tests after Migration 2 rollback (local stack)
+        run: npx supabase test db supabase/tests/database/001_foundation.test.sql
+      - name: Migration 1 rollback test (local stack)
         run: scripts/test-migration-1-rollback.sh
         env:
           THROWAWAY_DATABASE: "yes"

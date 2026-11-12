@@ -16,6 +16,88 @@ below call for it, and preferably after talking it through.
 
 ---
 
+## Order matters
+
+Roll back the newest migration first. Migration 1's rollback fails safely
+(changing nothing) while Migration 2 is applied, because Migration 2's tables
+depend on it.
+
+---
+
+## `20261112210000_rollback.sql` (Migration 2)
+
+Undoes `supabase/migrations/20261112210000_maintenance_logbook.sql`: the eight
+logbook tables, two views, `restore_record_version`, its helper functions and
+the `engine_event` type. It restores the three Migration 1 objects Migration 2
+changed (audit trigger, audit read policy and scope check, cleanup function) to
+their exact Migration 1 definitions. **Migration 1 and its data are untouched.**
+
+### When to use it
+
+Only when **all** of these are true:
+
+1. Migration 2 was applied (`npx supabase migration list --remote` shows
+   `20261112210000` under Remote).
+2. A post-deployment check failed.
+3. All eight Migration 2 tables are empty **and** no audit history for them
+   exists (in practice: nobody has used the logbook yet, and any test user
+   has been deleted).
+4. No later migration that depends on Migration 2 has been applied.
+
+Never use it once real logbook data exists. Fix forward instead. The script
+refuses in that case anyway.
+
+### Step 1: Confirm there is no Migration 2 data (read-only)
+
+```sql
+select 'maintenance_tasks' as t, count(*) from public.maintenance_tasks
+union all select 'maintenance_packages', count(*) from public.maintenance_packages
+union all select 'maintenance_package_tasks', count(*) from public.maintenance_package_tasks
+union all select 'sled_readings', count(*) from public.sled_readings
+union all select 'maintenance_plans', count(*) from public.maintenance_plans
+union all select 'maintenance_entries', count(*) from public.maintenance_entries
+union all select 'maintenance_entry_tasks', count(*) from public.maintenance_entry_tasks
+union all select 'maintenance_entry_parts', count(*) from public.maintenance_entry_parts
+union all select 'audit history', count(*) from public.audit_log
+  where library_owner_id is not null
+     or table_name in ('maintenance_tasks','maintenance_packages','maintenance_package_tasks','sled_readings',
+                       'maintenance_plans','maintenance_entries','maintenance_entry_tasks','maintenance_entry_parts');
+```
+
+Every count must be `0`. Deleting a test user under **Authentication →
+Users** removes its data and history.
+
+### Step 2: Run the rollback
+
+In **SQL Editor**, first line:
+```sql
+set sledwerx.confirm_rollback = '20261112210000';
+```
+then paste the whole of `20261112210000_rollback.sql` and run it once. The
+expected result is the notice `Rollback complete: Migration 2 removed;
+Migration 1 restored.` Any error means nothing changed (see the message table
+in the Migration 1 section; the same messages apply).
+
+### Step 3: Verify (read-only)
+
+`npx supabase migration list --remote` should show `20261112210000` under
+Local only. In SQL Editor, this should return no rows:
+
+```sql
+select table_name from information_schema.tables
+where table_schema = 'public' and (table_name like 'maintenance%' or table_name = 'sled_readings');
+```
+
+### Risks
+
+Same safeguards as Migration 1: an explicit confirmation, data and history
+checks, one transaction with a final verification, and no `CASCADE`.
+Additionally, the restored Migration 1 objects are copied verbatim from the
+Migration 1 file. Tests confirm the database afterwards matches a database
+that only ever had Migration 1, object for object.
+
+---
+
 ## `20261112180000_rollback.sql` (Migration 1)
 
 Undoes `supabase/migrations/20261112180000_foundation_garages_sleds_sharing.sql`.
@@ -123,8 +205,8 @@ touched.
 
 ### Testing
 
-CI tests this script on every pull request against a throwaway local
-Supabase database. It checks that the script:
+CI tests both scripts on every pull request against a throwaway local
+Supabase database (Migration 2 first, then Migration 1). It checks that the script:
 
 - refuses to run without confirmation
 - refuses to run while data exists

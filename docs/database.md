@@ -30,7 +30,13 @@ the helpers created in stage 1.
 - Sleds are shared **individually** through `sled_shares`. Sharing one sled
   gives no access to the garage or to any other sled.
 - Every record in later modules carries a `sled_id`, and its RLS policies call
-  `private.has_sled_permission(sled_id, '<permission>')`.
+  `private.has_sled_permission(sled_id, '<permission>')`. See
+  [Building a record table](#building-a-record-table-for-a-later-module).
+- **Ownership transfer** is deferred until after 1.0. The schema is ready for
+  it: ownership is a single column (`sleds.owner_id`) derived from the garage,
+  history is keyed by sled, and shares are per sled. A later migration will
+  add a transfer function that moves the sled into the recipient's garage.
+  Today the guard trigger refuses any change to `owner_id`.
 
 ## Roles and permissions
 
@@ -42,9 +48,20 @@ or `viewer`. `private.has_sled_permission()` is the single source of truth:
 | `view` – see the sled and its records | ✓ | ✓ | ✓ | ✓ |
 | `edit_sled` – edit sled details | ✓ | ✓ | | |
 | `add_records` – add maintenance/service records and notes | ✓ | ✓ | ✓ | |
-| `edit_records` – edit existing records | ✓ | ✓ | | |
-| `soft_delete_records` / `restore_records` – Recently Deleted | ✓ | ✓ | | |
+| `edit_records` – edit any existing record | ✓ | ✓ | | |
+| edit records **they created** – `can_modify_sled_record(sled_id, created_by)` | ✓ | ✓ | ✓ | |
+| `soft_delete_records` / `restore_records` – Recently Deleted for records | ✓ | | | |
 | `manage_sled` – delete/restore/permanently delete the sled, sharing, ownership | ✓ | | | |
+
+While a sled is in Recently Deleted, only `view` and `manage_sled` apply.
+
+- **Editors** (Decision 2) cannot move a sled to Recently Deleted, restore it,
+  permanently delete it, or manage sharing. They also cannot delete or restore
+  individual records; only the owner can.
+- **Mechanics** (Decision 3) can create records and edit the records they
+  created (`created_by` is set by the database and cannot be changed). They
+  cannot delete records, edit other people's records, delete or restore the
+  sled, manage sharing, or transfer ownership.
 
 Shares and invitations can only be changed through these functions, so
 nobody can grant themselves access or raise their own role:
@@ -56,10 +73,29 @@ nobody can grant themselves access or raise their own role:
 | `accept_sled_invitation(token)` | The invited person. Their account email must match and be confirmed. |
 | `update_sled_share_role(share_id, role)` | Owner |
 | `revoke_sled_share(share_id)` | Owner, or the shared user (to leave) |
+| `reactivate_sled_share(share_id)` | Owner, after restoring a sled (see below) |
 | `permanently_delete_sled(sled_id)` | Owner, only from Recently Deleted |
 
-Email delivery of invitations is not part of 1.0: the app shows the invitation
-link for the owner to send.
+**Invitation emails** (Decision 7): 1.0 sends invitations by email and also
+offers a copyable link. Email delivery belongs in a server-side route (or Edge
+Function) that calls `create_sled_invitation` as the signed-in owner and sends
+the returned token through a transactional email provider. The provider's API
+key lives only in server environment variables, never in browser code. The
+database design does not change: the token is returned once and only its hash
+is stored. The provider is chosen when the sharing interface is built.
+
+### Deleted sleds and sharing (Decision 6)
+
+- Moving a sled to Recently Deleted immediately **suspends** every active share
+  (`sled_shares.suspended_at`) and revokes pending invitations. Shared users
+  lose all access through the API at once.
+- Suspended shares are kept during the 30-day recovery period, so the owner
+  can see who had access and with which role. Each shared user can see that
+  their own share is suspended, so their devices can clear cached data.
+- Restoring the sled does **not** reactivate anyone. The owner chooses who
+  regains access with `reactivate_sled_share`, and can still change roles or
+  revoke suspended shares. Shared users cannot reactivate themselves.
+- If the sled is permanently deleted, its shares are deleted with it.
 
 ## Recently Deleted
 
@@ -85,10 +121,58 @@ link for the owner to send.
   on garages, sleds, shares and invitations: who, when, which fields, and the
   previous and new values. Invitation token hashes are never recorded.
 - It is written only by triggers. The API cannot insert, update or delete
-  audit rows. Owners can read the history of their own sleds and garages.
+  audit rows.
+- Each row has a `category`, set by the table's trigger, which controls who
+  can read it (Decision 5):
+
+  | Category | Tables | Owner | Editor | Mechanic | Viewer |
+  |---|---|:-:|:-:|:-:|:-:|
+  | `garage` | garages | ✓ | | | |
+  | `sharing` | invitations, shares (emails, user ids) | ✓ | | | |
+  | `sled` | sleds | ✓ | ✓ | | |
+  | `maintenance` | maintenance tables (migration 2) | ✓ | ✓ | own records | |
+
+  "Own records" means rows whose `record_created_by` is the mechanic. This is
+  copied from the record's `created_by`, which nobody can change. Editors and
+  mechanics see history only while their share is active and the sled is not
+  in Recently Deleted.
 - Retention: a sled's history is removed when the sled is permanently deleted
-  or the owner's account is deleted. Maintenance version history and restore
-  (Decision 6) build on this table in migration 2.
+  or the owner's account is deleted. Viewing and restoring previous versions
+  of maintenance records (from `old_data`) is built in migration 2. A restore
+  is itself an update, so it is audited too.
+
+## Building a record table for a later module
+
+Every table that stores records for a sled (service records, issues, parts,
+setups, ride logs, ...) must follow this pattern, which
+`supabase/tests/database/001_foundation.test.sql` exercises on a stand-in
+table:
+
+1. Columns: `id uuid`, `sled_id uuid not null references public.sleds (id) on
+   delete cascade`, `deleted_at`, `deleted_by`, `created_at`, `created_by`,
+   `updated_at`, `updated_by`, `version`.
+2. Triggers:
+   - `before insert or update`: `private.tg_sled_record_guard()`. Requires
+     `add_records` to create and `can_modify_sled_record` to edit. Restricts
+     soft delete and restore to the owner within 30 days, stops records moving
+     to another sled, and makes deleted records read-only until restored.
+   - `before insert or update`: `private.tg_stamp()`. Fills in the metadata
+     and enforces the version check.
+   - `after insert or update`: `private.tg_audit('maintenance')`, or another
+     category if one is added.
+3. Revoke all privileges from `anon` and `authenticated`, then grant
+   `select, insert, update` to `authenticated`. Never grant `delete`.
+4. RLS policies:
+   ```sql
+   -- select
+   using (private.has_sled_permission(sled_id, 'view')
+          and (deleted_at is null or private.has_sled_permission(sled_id, 'restore_records')))
+   -- insert
+   with check (private.has_sled_permission(sled_id, 'add_records'))
+   -- update
+   using (private.can_modify_sled_record(sled_id, created_by))
+   with check (private.can_modify_sled_record(sled_id, created_by))
+   ```
 
 ## Offline sync contract
 
@@ -108,7 +192,8 @@ link for the owner to send.
   retry gets `PT409`. The device should re-read the row: if it already matches
   the local edit, there is no conflict.
 - **Revocation and deletion:** a revoked share stays visible to the affected
-  user (with `revoked_at`) for 30 days. On every sync, devices should also
+  user (with `revoked_at`) for 30 days. A suspended share stays visible (with
+  `suspended_at`) until the owner reactivates or revokes it. On every sync, devices should also
   fetch the list of sled ids they can currently read (`select id from sleds`)
   and delete cached data for any sled not in it. This covers revoked access
   and sleds moved to Recently Deleted. The server refuses all access

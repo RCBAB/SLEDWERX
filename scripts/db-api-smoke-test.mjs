@@ -128,6 +128,38 @@ check(accepted.data === sledId, "the invited user can accept", accepted.error);
   check(current.data?.version === created.data.version + 1, "an up-to-date update succeeds", current.error);
 }
 
+// Recently Deleted suspends sharing; restoring does not reactivate it
+{
+  const versionOf = async () =>
+    (await alex.client.from("sleds").select("version").eq("id", sledId).single()).data.version;
+
+  const deleted = await alex.client
+    .from("sleds")
+    .update({ deleted_at: new Date().toISOString(), version: await versionOf() })
+    .eq("id", sledId);
+  check(!deleted.error, "owner can move the sled to Recently Deleted", deleted.error);
+  check((await blake.client.from("sleds").select("id")).data?.length === 0,
+    "shared access is suspended immediately");
+
+  const restored = await alex.client
+    .from("sleds")
+    .update({ deleted_at: null, version: await versionOf() })
+    .eq("id", sledId);
+  check(!restored.error, "owner can restore the sled", restored.error);
+  check((await blake.client.from("sleds").select("id")).data?.length === 0,
+    "restoring does not reactivate shared access");
+
+  const own = await blake.client.from("sled_shares").select("id, suspended_at").eq("sled_id", sledId).single();
+  check(Boolean(own.data?.suspended_at), "the shared user can see their access is suspended", own);
+  const selfReactivate = await blake.client.rpc("reactivate_sled_share", { p_share_id: own.data?.id });
+  check(Boolean(selfReactivate.error), "a shared user cannot reactivate their own access", selfReactivate.error);
+
+  const reactivated = await alex.client.rpc("reactivate_sled_share", { p_share_id: own.data?.id });
+  check(!reactivated.error, "the owner can reactivate access", reactivated.error);
+  check((await blake.client.from("sleds").select("id")).data?.length === 1,
+    "reactivated access works again");
+}
+
 // Revocation
 {
   const share = await alex.client.from("sled_shares").select("id").eq("sled_id", sledId).single();

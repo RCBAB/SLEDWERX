@@ -8,7 +8,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set search_path = public, extensions;
 
-select plan(101);
+select plan(150);
 
 -- ---------------------------------------------------------------------------
 -- Fixtures
@@ -290,7 +290,19 @@ select lives_ok($$ update public.sleds set deleted_at = null where id = 'aaaaaaa
   'owner can restore within 30 days');
 
 set local request.jwt.claims = '{"sub":"44444444-4444-4444-4444-444444444444","role":"authenticated"}';
-select is((select count(*)::int from public.sleds), 1, 'restored sleds are visible to shared users again');
+select is_empty($$ select 1 from public.sleds $$, 'restoring a sled does not reactivate shared access');
+select ok(exists (select 1 from public.sled_shares where suspended_at is not null),
+  'shared users can see that their access is suspended, so devices clear cached data');
+select throws_ok($$ select public.reactivate_sled_share((select id from public.sled_shares where suspended_at is not null)) $$,
+  'P0002', null, 'shared users cannot reactivate their own access');
+
+set local request.jwt.claims = '{"sub":"11111111-1111-1111-1111-111111111111","role":"authenticated"}';
+select lives_ok($$ select public.reactivate_sled_share(
+  (select id from public.sled_shares where sled_id = 'aaaaaaaa-0000-0000-0000-000000000001' and suspended_at is not null)) $$,
+  'the owner chooses whose access to reactivate');
+
+set local request.jwt.claims = '{"sub":"44444444-4444-4444-4444-444444444444","role":"authenticated"}';
+select is((select count(*)::int from public.sleds), 1, 'reactivated users regain access');
 
 -- Sled 2 deleted 31 days ago (simulated as a trusted server context).
 reset role;
@@ -381,6 +393,163 @@ select throws_ok($$ delete from public.audit_log $$, '42501', null, 'audit histo
 reset role;
 select is((select count(*)::int from public.audit_log where new_data ? 'token_hash' or old_data ? 'token_hash'),
   0, 'invitation token hashes are never written to the audit log');
+
+-- ---------------------------------------------------------------------------
+-- Role-based record permissions and audit history (Decisions 2, 3, 5, 6)
+--
+-- test_service_records is a stand-in built exactly as later maintenance
+-- tables must be built: record guard, stamp, audit('maintenance') and the
+-- documented RLS policies.
+-- ---------------------------------------------------------------------------
+create table public.test_service_records (
+  id uuid primary key default gen_random_uuid(),
+  sled_id uuid not null references public.sleds (id) on delete cascade,
+  note text,
+  deleted_at timestamptz,
+  deleted_by uuid,
+  created_at timestamptz not null default now(),
+  created_by uuid,
+  updated_at timestamptz not null default now(),
+  updated_by uuid,
+  version integer not null default 1
+);
+create trigger guard before insert or update on public.test_service_records
+  for each row execute function private.tg_sled_record_guard();
+create trigger stamp before insert or update on public.test_service_records
+  for each row execute function private.tg_stamp();
+create trigger audit after insert or update on public.test_service_records
+  for each row execute function private.tg_audit('maintenance');
+alter table public.test_service_records enable row level security;
+revoke all on public.test_service_records from anon, authenticated;
+grant select, insert, update on public.test_service_records to authenticated;
+create policy records_select on public.test_service_records for select to authenticated
+  using (private.has_sled_permission(sled_id, 'view')
+         and (deleted_at is null or private.has_sled_permission(sled_id, 'restore_records')));
+create policy records_insert on public.test_service_records for insert to authenticated
+  with check (private.has_sled_permission(sled_id, 'add_records'));
+create policy records_update on public.test_service_records for update to authenticated
+  using (private.can_modify_sled_record(sled_id, created_by))
+  with check (private.can_modify_sled_record(sled_id, created_by));
+
+set local role authenticated;
+set local request.jwt.claims = '{"sub":"11111111-1111-1111-1111-111111111111","role":"authenticated"}';
+insert into public.sleds (id, garage_id, model_year, make, model)
+values ('aaaaaaaa-0000-0000-0000-000000000005', (select v::uuid from t where k = 'garage_alex@example.com'), 2023, 'Ski-Doo', 'Freeride');
+insert into t select 'tok5_blake', token from public.create_sled_invitation('aaaaaaaa-0000-0000-0000-000000000005', 'blake@example.com', 'editor');
+insert into t select 'tok5_casey', token from public.create_sled_invitation('aaaaaaaa-0000-0000-0000-000000000005', 'casey@example.com', 'viewer');
+insert into t select 'tok5_drew', token from public.create_sled_invitation('aaaaaaaa-0000-0000-0000-000000000005', 'drew@example.com', 'mechanic');
+
+set local request.jwt.claims = '{"sub":"22222222-2222-2222-2222-222222222222","role":"authenticated"}';
+select lives_ok($$ select public.accept_sled_invitation((select v from t where k = 'tok5_blake')) $$, 'editor joins sled 5');
+set local request.jwt.claims = '{"sub":"33333333-3333-3333-3333-333333333333","role":"authenticated"}';
+select lives_ok($$ select public.accept_sled_invitation((select v from t where k = 'tok5_casey')) $$, 'viewer joins sled 5');
+set local request.jwt.claims = '{"sub":"44444444-4444-4444-4444-444444444444","role":"authenticated"}';
+select lives_ok($$ select public.accept_sled_invitation((select v from t where k = 'tok5_drew')) $$, 'mechanic joins sled 5');
+
+-- Mechanic
+select lives_ok($$ insert into public.test_service_records (id, sled_id, note)
+  values ('cccccccc-0000-0000-0000-000000000001', 'aaaaaaaa-0000-0000-0000-000000000005', 'Chaincase oil changed') $$, 'mechanics can create maintenance records');
+
+set local request.jwt.claims = '{"sub":"22222222-2222-2222-2222-222222222222","role":"authenticated"}';
+select lives_ok($$ insert into public.test_service_records (id, sled_id, note)
+  values ('cccccccc-0000-0000-0000-000000000002', 'aaaaaaaa-0000-0000-0000-000000000005', 'Editor note') $$, 'editors can create maintenance records');
+
+set local request.jwt.claims = '{"sub":"44444444-4444-4444-4444-444444444444","role":"authenticated"}';
+select lives_ok($$ update public.test_service_records set note = 'Chaincase oil changed (corrected)' where id = 'cccccccc-0000-0000-0000-000000000001' $$,
+  'mechanics can correct their own records');
+update public.test_service_records set note = 'Mechanic edit' where id = 'cccccccc-0000-0000-0000-000000000002';
+select is((select note from public.test_service_records where id = 'cccccccc-0000-0000-0000-000000000002'), 'Editor note',
+  'mechanics cannot edit records created by others');
+select throws_ok($$ update public.test_service_records set deleted_at = now() where id = 'cccccccc-0000-0000-0000-000000000001' $$,
+  '42501', 'Only the owner can delete records.', 'mechanics cannot delete records');
+select throws_ok($$ update public.test_service_records set sled_id = 'aaaaaaaa-0000-0000-0000-000000000001' where id = 'cccccccc-0000-0000-0000-000000000001' $$,
+  '42501', 'Records cannot be moved to another snowmobile.', 'records cannot be moved to another sled');
+select ok(exists (select 1 from public.audit_log where record_id = 'cccccccc-0000-0000-0000-000000000001'),
+  'mechanics can view the history of records they created');
+select is_empty($$ select 1 from public.audit_log where record_id = 'cccccccc-0000-0000-0000-000000000002' $$,
+  'mechanics cannot view the history of records created by others');
+select is_empty($$ select 1 from public.audit_log where sled_id = 'aaaaaaaa-0000-0000-0000-000000000005' and category <> 'maintenance' $$,
+  'mechanics cannot view sled or sharing history');
+select is(private.has_sled_permission('aaaaaaaa-0000-0000-0000-000000000005', 'manage_sled'), false, 'mechanics cannot manage sharing or ownership');
+
+-- Viewer
+set local request.jwt.claims = '{"sub":"33333333-3333-3333-3333-333333333333","role":"authenticated"}';
+select throws_ok($$ insert into public.test_service_records (sled_id, note) values ('aaaaaaaa-0000-0000-0000-000000000005', 'Viewer note') $$,
+  '42501', null, 'viewers cannot create records');
+select is((select count(*)::int from public.test_service_records), 2, 'viewers can read maintenance records');
+select is_empty($$ select 1 from public.audit_log where sled_id = 'aaaaaaaa-0000-0000-0000-000000000005' $$, 'viewers cannot view any audit history');
+
+-- Editor
+set local request.jwt.claims = '{"sub":"22222222-2222-2222-2222-222222222222","role":"authenticated"}';
+select ok(exists (select 1 from public.audit_log where record_id = 'cccccccc-0000-0000-0000-000000000001')
+          and exists (select 1 from public.audit_log where record_id = 'cccccccc-0000-0000-0000-000000000002'),
+  'editors can view the history of all maintenance records');
+select ok(exists (select 1 from public.audit_log where sled_id = 'aaaaaaaa-0000-0000-0000-000000000005' and category = 'sled'),
+  'editors can view the sled''s change history');
+select is_empty($$ select 1 from public.audit_log where sled_id = 'aaaaaaaa-0000-0000-0000-000000000005' and category = 'sharing' $$,
+  'editors cannot view sharing history (emails, invitations, user ids)');
+select is_empty($$ select 1 from public.audit_log where garage_id = (select v::uuid from t where k = 'garage_alex@example.com') $$,
+  'editors cannot view the owner''s garage history');
+select is_empty($$ select 1 from public.audit_log where new_data ? 'email' or old_data ? 'email' $$,
+  'no invitation email addresses are visible to editors');
+select lives_ok($$ update public.test_service_records set note = 'Editor correction' where id = 'cccccccc-0000-0000-0000-000000000001' $$,
+  'editors can edit any record');
+select throws_ok($$ update public.test_service_records set deleted_at = now() where id = 'cccccccc-0000-0000-0000-000000000002' $$,
+  '42501', 'Only the owner can delete records.', 'editors cannot delete records');
+select is(private.has_sled_permission('aaaaaaaa-0000-0000-0000-000000000005', 'restore_records'), false, 'editors cannot restore records');
+select throws_ok($$ update public.sleds set deleted_at = now() where id = 'aaaaaaaa-0000-0000-0000-000000000005' $$,
+  '42501', 'Only the owner can delete or restore a snowmobile.', 'editors cannot move a snowmobile to Recently Deleted');
+select throws_ok($$ select public.permanently_delete_sled('aaaaaaaa-0000-0000-0000-000000000005') $$,
+  'P0002', null, 'editors cannot permanently delete a snowmobile');
+select throws_ok($$ select public.reactivate_sled_share((select id from public.sled_shares where sled_id = 'aaaaaaaa-0000-0000-0000-000000000005' and user_id = '22222222-2222-2222-2222-222222222222')) $$,
+  'P0002', null, 'editors cannot manage shares');
+
+-- Owner
+set local request.jwt.claims = '{"sub":"11111111-1111-1111-1111-111111111111","role":"authenticated"}';
+select lives_ok($$ update public.test_service_records set deleted_at = now() where id = 'cccccccc-0000-0000-0000-000000000002' $$,
+  'owners can delete records');
+select lives_ok($$ update public.test_service_records set deleted_at = null where id = 'cccccccc-0000-0000-0000-000000000002' $$,
+  'owners can restore records');
+select ok(exists (select 1 from public.audit_log where sled_id = 'aaaaaaaa-0000-0000-0000-000000000005' and category = 'sharing'),
+  'owners can view sharing history');
+select ok((select count(*) from public.audit_log where record_id = 'cccccccc-0000-0000-0000-000000000001') >= 3,
+  'every change to a maintenance record is audited');
+
+-- Moving the sled to Recently Deleted suspends sharing
+insert into t select 'tok5_erin', token from public.create_sled_invitation('aaaaaaaa-0000-0000-0000-000000000005', 'erin@example.com', 'viewer');
+select lives_ok($$ update public.sleds set deleted_at = now() where id = 'aaaaaaaa-0000-0000-0000-000000000005' $$, 'owner moves sled 5 to Recently Deleted');
+select is((select count(*)::int from public.sled_shares where sled_id = 'aaaaaaaa-0000-0000-0000-000000000005' and suspended_at is not null and revoked_at is null),
+  3, 'all shares are suspended, and kept for the recovery period');
+select is((select count(*)::int from public.sled_invitations where sled_id = 'aaaaaaaa-0000-0000-0000-000000000005' and accepted_at is null and revoked_at is null),
+  0, 'pending invitations are revoked');
+
+set local request.jwt.claims = '{"sub":"22222222-2222-2222-2222-222222222222","role":"authenticated"}';
+select is_empty($$ select 1 from public.sleds where id = 'aaaaaaaa-0000-0000-0000-000000000005' $$, 'editors lose access immediately');
+select is_empty($$ select 1 from public.test_service_records $$, 'shared users cannot read records of a deleted sled');
+select is_empty($$ select 1 from public.audit_log where sled_id = 'aaaaaaaa-0000-0000-0000-000000000005' $$, 'shared users cannot read history of a deleted sled');
+select is(private.sled_role('aaaaaaaa-0000-0000-0000-000000000005'), null, 'suspended users have no role on the sled');
+
+set local request.jwt.claims = '{"sub":"11111111-1111-1111-1111-111111111111","role":"authenticated"}';
+select throws_ok($$ select public.reactivate_sled_share((select id from public.sled_shares where sled_id = 'aaaaaaaa-0000-0000-0000-000000000005' and user_id = '22222222-2222-2222-2222-222222222222')) $$,
+  '42501', null, 'access cannot be reactivated while the sled is deleted');
+select lives_ok($$ update public.sleds set deleted_at = null where id = 'aaaaaaaa-0000-0000-0000-000000000005' $$, 'owner restores sled 5');
+
+set local request.jwt.claims = '{"sub":"22222222-2222-2222-2222-222222222222","role":"authenticated"}';
+select is_empty($$ select 1 from public.sleds where id = 'aaaaaaaa-0000-0000-0000-000000000005' $$, 'restoring the sled does not reactivate the editor');
+
+set local request.jwt.claims = '{"sub":"11111111-1111-1111-1111-111111111111","role":"authenticated"}';
+select lives_ok($$ select public.reactivate_sled_share((select id from public.sled_shares where sled_id = 'aaaaaaaa-0000-0000-0000-000000000005' and user_id = '22222222-2222-2222-2222-222222222222')) $$,
+  'owner reactivates only the editor');
+
+set local request.jwt.claims = '{"sub":"22222222-2222-2222-2222-222222222222","role":"authenticated"}';
+select is((select count(*)::int from public.sleds where id = 'aaaaaaaa-0000-0000-0000-000000000005'), 1, 'the reactivated editor regains access');
+set local request.jwt.claims = '{"sub":"44444444-4444-4444-4444-444444444444","role":"authenticated"}';
+select is_empty($$ select 1 from public.sleds where id = 'aaaaaaaa-0000-0000-0000-000000000005' $$, 'users who were not reactivated stay suspended');
+set local request.jwt.claims = '{"sub":"33333333-3333-3333-3333-333333333333","role":"authenticated"}';
+select throws_ok($$ select * from public.create_sled_invitation('aaaaaaaa-0000-0000-0000-000000000005', 'x@example.com', 'editor') $$,
+  '42501', null, 'suspended users cannot share the sled');
+
+reset role;
 
 -- ---------------------------------------------------------------------------
 -- Anonymous access

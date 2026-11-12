@@ -7,7 +7,9 @@
 --
 -- Later modules (maintenance, reminders, parts, suspension, ride logs,
 -- attachments, community library, sync conflicts) build on the helper
--- functions defined here, chiefly private.has_sled_permission().
+-- functions defined here: private.has_sled_permission(),
+-- private.can_modify_sled_record(), private.tg_sled_record_guard() and
+-- private.tg_audit('<category>').
 --
 -- Conventions used by this and later migrations:
 --   * Every user-data table has: id (uuid, may be generated on the device for
@@ -234,8 +236,13 @@ create index sled_invitations_sled_id_idx on public.sled_invitations (sled_id);
 
 -- -----------------------------------------------------------------------------
 -- sled_shares: who has access to which sled, and with which role.
--- Revoked shares are kept (revoked_at) so offline devices learn about the
--- revocation and remove cached data; they are purged after 30 days.
+-- A share is active only when revoked_at and suspended_at are both null.
+--   * revoked_at: access removed by the owner, or the user left. Kept so
+--     offline devices learn about it and clear cached data; purged after 30
+--     days.
+--   * suspended_at: set automatically when the sled moves to Recently Deleted.
+--     Restoring the sled does NOT reactivate suspended shares; the owner
+--     chooses who regains access with reactivate_sled_share().
 -- -----------------------------------------------------------------------------
 create table public.sled_shares (
   id uuid primary key default gen_random_uuid(),
@@ -245,6 +252,7 @@ create table public.sled_shares (
   invitation_id uuid,
   revoked_at timestamptz,
   revoked_by uuid,
+  suspended_at timestamptz,
   created_at timestamptz not null default now(),
   created_by uuid,
   updated_at timestamptz not null default now(),
@@ -258,18 +266,27 @@ create index sled_shares_user_id_updated_at_idx on public.sled_shares (user_id, 
 create index sled_shares_sled_id_idx on public.sled_shares (sled_id);
 
 -- -----------------------------------------------------------------------------
--- audit_log: append-only change history, written only by triggers.
--- Readable by the owner of the garage/sled it belongs to; nobody can modify
--- it through the API. History for a sled is removed when the sled is
+-- audit_log: append-only change history, written only by triggers; nobody can
+-- modify it through the API. History for a sled is removed when the sled is
 -- permanently deleted or the owner's account is deleted.
+--
+-- category (set by the trigger argument) controls who can read a row:
+--   garage       owner only (garages are private)
+--   sharing      owner only (invitations and shares: emails, user ids)
+--   sled         owner; editors of the sled
+--   maintenance  owner; editors of the sled; a mechanic only for records
+--                they created (record_created_by)
+-- Viewers cannot read audit history.
 -- -----------------------------------------------------------------------------
 create table public.audit_log (
   id bigint generated always as identity primary key,
   occurred_at timestamptz not null default now(),
   actor_id uuid,
   action text not null check (action in ('insert', 'update')),
+  category text not null check (category in ('garage', 'sharing', 'sled', 'maintenance')),
   table_name text not null,
   record_id uuid not null,
+  record_created_by uuid,
   garage_id uuid references public.garages (id) on delete cascade,
   sled_id uuid references public.sleds (id) on delete cascade,
   changed_fields text[],
@@ -324,6 +341,7 @@ as $$
   join public.sleds s on s.id = sh.sled_id
   where sh.user_id = (select auth.uid())
     and sh.revoked_at is null
+    and sh.suspended_at is null
     and s.deleted_at is null
     and (p_roles is null or sh.role = any (p_roles));
 $$;
@@ -345,6 +363,7 @@ as $$
       where sh.sled_id = s.id
         and sh.user_id = (select auth.uid())
         and sh.revoked_at is null
+        and sh.suspended_at is null
     )
   end
   from public.sleds s
@@ -358,9 +377,9 @@ $$;
 --   view                    x     x       x       x
 --   edit_sled               x     x
 --   add_records             x     x       x
---   edit_records            x     x
---   soft_delete_records     x     x
---   restore_records         x     x
+--   edit_records            x     x      (own)          see can_modify_sled_record()
+--   soft_delete_records     x
+--   restore_records         x
 --   manage_sled             x                         (delete/restore sled,
 --                                                      permanent delete,
 --                                                      sharing, ownership)
@@ -384,8 +403,10 @@ begin
       return v_role is not null;
     when 'manage_sled' then
       return coalesce(v_role = 'owner', false);
-    when 'edit_sled', 'edit_records', 'soft_delete_records', 'restore_records' then
+    when 'soft_delete_records', 'restore_records' then
       -- A sled in Recently Deleted is read-only until it is restored.
+      return coalesce(v_role = 'owner', false) and not v_sled_deleted;
+    when 'edit_sled', 'edit_records' then
       return coalesce(v_role in ('owner', 'editor'), false) and not v_sled_deleted;
     when 'add_records' then
       return coalesce(v_role in ('owner', 'editor', 'mechanic'), false) and not v_sled_deleted;
@@ -393,6 +414,30 @@ begin
       raise exception 'unknown sled permission: %', p_permission
         using errcode = '22023';
   end case;
+end;
+$$;
+
+-- Whether the current user may edit a record on a sled, given who created
+-- the record. Owners and editors may edit any record; mechanics only records
+-- they created. Later record tables use this in their UPDATE policies.
+create function private.can_modify_sled_record(p_sled_id uuid, p_record_created_by uuid)
+returns boolean
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_role text := private.sled_role(p_sled_id);
+begin
+  if exists (select 1 from public.sleds s where s.id = p_sled_id and s.deleted_at is not null) then
+    return false;
+  end if;
+  return coalesce(
+    v_role in ('owner', 'editor')
+    or (v_role = 'mechanic' and p_record_created_by = (select auth.uid())),
+    false
+  );
 end;
 $$;
 
@@ -410,6 +455,7 @@ as $$
   join public.sleds s on s.id = sh.sled_id
   where sh.user_id = (select auth.uid())
     and sh.revoked_at is null
+    and sh.suspended_at is null
     and s.deleted_at is null
   union
   select sh.user_id
@@ -426,6 +472,7 @@ grant execute on function
   private.shared_sled_ids(public.sled_share_role[]),
   private.sled_role(uuid),
   private.has_sled_permission(uuid, text),
+  private.can_modify_sled_record(uuid, uuid),
   private.connected_user_ids(),
   private.recovery_window()
 to authenticated;
@@ -592,6 +639,9 @@ $$;
 -- -----------------------------------------------------------------------------
 -- Audit trigger. Records inserts and updates (soft deletes and restores are
 -- updates). Never stores invitation token hashes. Skips no-op updates.
+-- The trigger argument is the audit category (see audit_log above):
+--   create trigger audit after insert or update on public.<table>
+--     for each row execute function private.tg_audit('maintenance');
 -- -----------------------------------------------------------------------------
 create function private.tg_audit()
 returns trigger
@@ -635,14 +685,106 @@ begin
   end if;
 
   insert into public.audit_log (
-    actor_id, action, table_name, record_id, garage_id, sled_id,
-    changed_fields, old_data, new_data
+    actor_id, action, category, table_name, record_id, record_created_by,
+    garage_id, sled_id, changed_fields, old_data, new_data
   ) values (
-    auth.uid(), lower(tg_op), tg_table_name, (v_row ->> 'id')::uuid, v_garage_id, v_sled_id,
-    v_changed, v_old, v_new
+    auth.uid(), lower(tg_op), tg_argv[0], tg_table_name, (v_row ->> 'id')::uuid,
+    (v_row ->> 'created_by')::uuid, v_garage_id, v_sled_id, v_changed, v_old, v_new
   );
 
   return null;
+end;
+$$;
+
+-- When a sled moves to Recently Deleted: suspend every active share and
+-- revoke pending invitations, so shared access stops immediately and is not
+-- restored automatically (Decision 6).
+create function private.tg_sleds_suspend_sharing()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if old.deleted_at is null and new.deleted_at is not null then
+    update public.sled_shares
+    set suspended_at = now()
+    where sled_id = new.id and revoked_at is null and suspended_at is null;
+
+    update public.sled_invitations
+    set revoked_at = now(), revoked_by = auth.uid()
+    where sled_id = new.id and accepted_at is null and revoked_at is null;
+  end if;
+  return null;
+end;
+$$;
+
+-- Guard for the record tables of later modules (maintenance, issues, parts,
+-- setups, ...). Each such table has sled_id, created_by, deleted_at and
+-- deleted_by, and attaches:
+--   before insert or update: private.tg_sled_record_guard()
+--   before insert or update: private.tg_stamp()
+--   after insert or update:  private.tg_audit('<category>')
+-- It enforces, for API callers: add_records to create; can_modify_sled_record
+-- to edit (mechanics: own records only); owner-only soft delete and restore
+-- within 30 days; records cannot move to another sled; deleted records are
+-- read-only until restored.
+create function private.tg_sled_record_guard()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+declare
+  v_uid uuid := auth.uid();
+begin
+  if tg_op = 'INSERT' then
+    if v_uid is not null and not private.has_sled_permission(new.sled_id, 'add_records') then
+      raise exception 'You do not have permission to add records to this snowmobile.'
+        using errcode = '42501';
+    end if;
+    new.deleted_at := null;
+    new.deleted_by := null;
+    return new;
+  end if;
+
+  if new.sled_id is distinct from old.sled_id then
+    raise exception 'Records cannot be moved to another snowmobile.' using errcode = '42501';
+  end if;
+
+  if v_uid is null then
+    return new;
+  end if;
+
+  if new.deleted_at is distinct from old.deleted_at then
+    if old.deleted_at is null then
+      if not private.has_sled_permission(old.sled_id, 'soft_delete_records') then
+        raise exception 'Only the owner can delete records.' using errcode = '42501';
+      end if;
+      new.deleted_at := now();
+      new.deleted_by := v_uid;
+    elsif new.deleted_at is null then
+      if not private.has_sled_permission(old.sled_id, 'restore_records') then
+        raise exception 'Only the owner can restore records.' using errcode = '42501';
+      end if;
+      if old.deleted_at < now() - private.recovery_window() then
+        raise exception 'This record is past the 30-day recovery period.' using errcode = '42501';
+      end if;
+      new.deleted_by := null;
+    else
+      new.deleted_at := old.deleted_at;
+      new.deleted_by := old.deleted_by;
+    end if;
+  else
+    new.deleted_by := old.deleted_by;
+    if old.deleted_at is not null then
+      raise exception 'Restore this record before editing it.' using errcode = '42501';
+    end if;
+    if not private.can_modify_sled_record(old.sled_id, old.created_by) then
+      raise exception 'You do not have permission to edit this record.' using errcode = '42501';
+    end if;
+  end if;
+
+  return new;
 end;
 $$;
 
@@ -651,7 +793,9 @@ revoke all on function
   private.tg_garages_guard(),
   private.tg_sleds_guard(),
   private.tg_sharing_guard(),
-  private.tg_audit()
+  private.tg_audit(),
+  private.tg_sleds_suspend_sharing(),
+  private.tg_sled_record_guard()
 from public;
 
 -- -----------------------------------------------------------------------------
@@ -680,13 +824,16 @@ create trigger guard before update on public.sled_shares
   for each row execute function private.tg_sharing_guard();
 
 create trigger audit after insert or update on public.garages
-  for each row execute function private.tg_audit();
+  for each row execute function private.tg_audit('garage');
 create trigger audit after insert or update on public.sleds
-  for each row execute function private.tg_audit();
+  for each row execute function private.tg_audit('sled');
 create trigger audit after insert or update on public.sled_invitations
-  for each row execute function private.tg_audit();
+  for each row execute function private.tg_audit('sharing');
 create trigger audit after insert or update on public.sled_shares
-  for each row execute function private.tg_audit();
+  for each row execute function private.tg_audit('sharing');
+
+create trigger suspend_sharing after update on public.sleds
+  for each row execute function private.tg_sleds_suspend_sharing();
 
 -- -----------------------------------------------------------------------------
 -- Table privileges. Supabase grants everything to anon/authenticated by
@@ -791,12 +938,23 @@ create policy "Owners and recipients can view shares"
     or sled_id in (select private.owned_sled_ids())
   );
 
--- audit_log: readable by the owner of the sled or garage; no write policies
-create policy "Owners can view audit history"
+-- audit_log: no write policies. Read access by category (see the table):
+-- owners everything; editors sled and maintenance history; mechanics only
+-- the history of maintenance records they created; viewers nothing.
+create policy "Role-based access to audit history"
   on public.audit_log for select to authenticated
   using (
     sled_id in (select private.owned_sled_ids())
     or garage_id in (select private.owned_garage_ids())
+    or (
+      category in ('sled', 'maintenance')
+      and sled_id in (select private.shared_sled_ids(array['editor']::public.sled_share_role[]))
+    )
+    or (
+      category = 'maintenance'
+      and record_created_by = (select auth.uid())
+      and sled_id in (select private.shared_sled_ids(array['mechanic']::public.sled_share_role[]))
+    )
   );
 
 -- -----------------------------------------------------------------------------
@@ -849,7 +1007,9 @@ begin
     join auth.users u on u.id = sh.user_id
     where sh.sled_id = p_sled_id and sh.revoked_at is null and lower(u.email) = v_email
   ) then
-    raise exception 'This person already has access to this snowmobile.' using errcode = '23505';
+    -- Includes suspended shares: reactivate those instead of re-inviting.
+    raise exception 'This person already has access to this snowmobile, or access that can be reactivated.'
+      using errcode = '23505';
   end if;
   if (
     select count(*) from public.sled_invitations i
@@ -985,7 +1145,35 @@ begin
 end;
 $$;
 
--- The owner removes someone's access, or a shared user leaves.
+-- The owner restores access for someone whose share was suspended when the
+-- sled was moved to Recently Deleted. Owner only; never automatic.
+create function public.reactivate_sled_share(p_share_id uuid)
+returns void
+language plpgsql
+volatile
+security definer
+set search_path = ''
+as $$
+declare
+  v_sled_id uuid;
+begin
+  select sh.sled_id into v_sled_id
+  from public.sled_shares sh
+  where sh.id = p_share_id and sh.revoked_at is null and sh.suspended_at is not null;
+
+  if v_sled_id is null or not private.has_sled_permission(v_sled_id, 'manage_sled') then
+    raise exception 'Share not found.' using errcode = 'P0002';
+  end if;
+  if exists (select 1 from public.sleds s where s.id = v_sled_id and s.deleted_at is not null) then
+    raise exception 'Restore this snowmobile before restoring access to it.' using errcode = '42501';
+  end if;
+
+  update public.sled_shares set suspended_at = null where id = p_share_id;
+end;
+$$;
+
+-- The owner removes someone's access, or a shared user leaves. Works for
+-- suspended shares too.
 create function public.revoke_sled_share(p_share_id uuid)
 returns void
 language plpgsql
@@ -1044,6 +1232,7 @@ revoke all on function
   public.revoke_sled_invitation(uuid),
   public.accept_sled_invitation(text),
   public.update_sled_share_role(uuid, public.sled_share_role),
+  public.reactivate_sled_share(uuid),
   public.revoke_sled_share(uuid),
   public.permanently_delete_sled(uuid)
 from public, anon;
@@ -1053,6 +1242,7 @@ grant execute on function
   public.revoke_sled_invitation(uuid),
   public.accept_sled_invitation(text),
   public.update_sled_share_role(uuid, public.sled_share_role),
+  public.reactivate_sled_share(uuid),
   public.revoke_sled_share(uuid),
   public.permanently_delete_sled(uuid)
 to authenticated;

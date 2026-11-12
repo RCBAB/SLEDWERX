@@ -267,3 +267,14 @@ Only after the pull request has been reviewed and approved:
    be applied, without changing anything.
 3. Verify in the dashboard: **Table Editor** shows the new tables with RLS
    enabled, and **Advisors → Security** reports no issues.
+
+### If something goes wrong
+
+- If `db push` fails, the migration is undone automatically as one
+  transaction. Nothing needs rolling back; re-run the read-only checks and
+  investigate.
+- If Migration 1 was applied but a post-deployment check fails **and no real
+  users exist yet**, follow [`supabase/rollback/README.md`](../supabase/rollback/README.md).
+  The rollback script requires explicit confirmation, refuses to run if any of
+  the seven tables has data, and is never run by the CLI or CI.
+- Once real users exist, never roll back. Fix forward with a new migration.

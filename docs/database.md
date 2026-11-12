@@ -236,6 +236,47 @@ repair-shop software: no work orders, assignments or shop scheduling.
 | `maintenance_entry_tasks` | entry | What was done: a task or free text. The task name is copied so history survives renames and deletions. |
 | `maintenance_entry_parts` | entry | Parts used: name, brand, part number, supplier, quantity, unit cost. |
 
+### Saving an entry: `save_maintenance_entry`
+
+The app should save logbook entries with one call to
+`save_maintenance_entry`, which saves the reading (optional), the entry, its
+checklist tasks and its parts **in one transaction**. If anything fails
+(validation, a reading lower than the history, a task the user may not use,
+missing permission), **nothing is saved**.
+
+```ts
+const { data, error } = await supabase.rpc("save_maintenance_entry", {
+  p_idempotency_key: key,            // crypto.randomUUID(), generated once per new entry
+  p_sled_id: sledId,
+  p_performed_on: "2026-08-01",
+  p_title: "Chaincase service",
+  p_done_by: "Me",                   // optional
+  p_notes: null,                     // optional
+  p_labor_cost: 30,                  // optional, USD
+  p_other_cost: null,                // optional, USD
+  p_completed: true,                 // false = open checklist
+  p_reading: { odometer_mi: 1500, engine_hours: 60 },  // optional; also odometer_reset,
+                                     // hour_meter_reset, engine_event, note, read_on
+  p_tasks: [{ task_id }, { task_name: "Adjusted track tension", note: "Two turns" }],
+  p_parts: [{ name: "Chaincase oil", part_number: "CC-1", quantity: 2, unit_cost: 11.25 }],
+});
+// data: { entry_id, reading_id, duplicate }
+```
+
+- **Permissions are not bypassed.** The function runs with the caller's own
+  permissions (`SECURITY INVOKER`). Every row goes through the same RLS
+  policies, guards, reading validation, versioning and audit triggers as a
+  direct insert.
+- **Duplicates.** Generate the idempotency key once per new entry and reuse
+  it for retries (for example after a timeout or a double tap). A repeat
+  returns the existing entry with `duplicate: true` and saves nothing. The key
+  is stored as `maintenance_entries.client_request_id`, cannot be changed, and
+  a unique index on `(created_by, client_request_id)` blocks duplicates even
+  when two submissions arrive at the same moment. Keys are per user. Reusing
+  a key for a different sled is rejected.
+- **Limits.** At most 100 tasks and 100 parts per entry. Each task needs a
+  `task_id` or a `task_name`.
+
 Views (callers' RLS applies): `sled_reading_history` adds `total_mi` and
 `total_engine_hours`. These are calculated, never stored, and continue
 across meter resets. `maintenance_entry_costs` gives labor + other + parts

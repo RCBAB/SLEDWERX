@@ -10,7 +10,8 @@
 --   maintenance_entries      the logbook
 --   maintenance_entry_tasks  what was done (checklist)
 --   maintenance_entry_parts  parts used (USD)
--- plus the views sled_reading_history and maintenance_entry_costs, and
+-- plus the views sled_reading_history and maintenance_entry_costs,
+-- save_maintenance_entry() for atomic, duplicate-safe saves, and
 -- restore_record_version() for Decision 6.
 --
 -- A personal maintenance book: no shop workflows. Sharing uses Migration 1's
@@ -253,7 +254,8 @@ create index maintenance_plans_task_id_idx on public.maintenance_plans (task_id)
 -- -----------------------------------------------------------------------------
 -- maintenance_entries: the logbook. completed = false is an open checklist.
 -- reading_id is the reading logged with the entry. Deleting the entry never
--- deletes that reading.
+-- deletes that reading. Apps should save entries with save_maintenance_entry()
+-- (all-or-nothing, duplicate-safe).
 -- -----------------------------------------------------------------------------
 create table public.maintenance_entries (
   id uuid primary key default gen_random_uuid(),
@@ -266,6 +268,9 @@ create table public.maintenance_entries (
   other_cost numeric(10, 2) check (other_cost >= 0),
   completed boolean not null default true,
   reading_id uuid references public.sled_readings (id) on delete set null,
+  -- Idempotency key from save_maintenance_entry(): a repeated submission with
+  -- the same key returns the existing entry instead of creating a duplicate.
+  client_request_id uuid,
   deleted_at timestamptz,
   deleted_by uuid,
   created_at timestamptz not null default now(),
@@ -277,6 +282,9 @@ create table public.maintenance_entries (
 
 create index maintenance_entries_sled_id_idx on public.maintenance_entries (sled_id, performed_on desc);
 create index maintenance_entries_reading_id_idx on public.maintenance_entries (reading_id);
+create unique index maintenance_entries_client_request_uniq
+  on public.maintenance_entries (created_by, client_request_id)
+  where client_request_id is not null;
 
 -- -----------------------------------------------------------------------------
 -- maintenance_entry_tasks: what was done. task_name is copied from the task
@@ -584,6 +592,9 @@ security definer
 set search_path = ''
 as $$
 begin
+  if tg_op = 'UPDATE' and new.client_request_id is distinct from old.client_request_id then
+    raise exception 'client_request_id cannot be changed.' using errcode = '42501';
+  end if;
   if new.reading_id is not null
      and (tg_op = 'INSERT' or new.reading_id is distinct from old.reading_id)
      and not exists (
@@ -1151,7 +1162,8 @@ begin
     and c.table_name = v_audit.table_name
     and c.column_name not in (
       'id', 'sled_id', 'entry_id', 'created_at', 'created_by',
-      'updated_at', 'updated_by', 'version', 'deleted_at', 'deleted_by'
+      'updated_at', 'updated_by', 'version', 'deleted_at', 'deleted_by',
+      'client_request_id'
     );
 
   -- The row's own guard re-checks permission with the caller's identity,
@@ -1170,6 +1182,155 @@ $$;
 
 revoke all on function public.restore_record_version(bigint) from public, anon;
 grant execute on function public.restore_record_version(bigint) to authenticated;
+
+-- -----------------------------------------------------------------------------
+-- save_maintenance_entry: save a complete logbook entry in one transaction:
+-- the reading (optional), the entry, its tasks and its parts. Either
+-- everything is saved or nothing is.
+--
+-- SECURITY INVOKER: every insert runs as the caller, through the same RLS
+-- policies, guards, validation, versioning and audit triggers as direct
+-- inserts. The function cannot grant anything the caller could not do.
+--
+-- Idempotency: the app generates p_idempotency_key once per new entry and
+-- reuses it on retries. A repeat returns the already-saved entry with
+-- duplicate = true and saves nothing new. A unique index on
+-- (created_by, client_request_id) guarantees this even for simultaneous
+-- submissions.
+--
+-- p_reading: {"read_on", "odometer_mi", "engine_hours", "odometer_reset",
+--             "hour_meter_reset", "engine_event", "note"}  (read_on defaults
+--             to p_performed_on)
+-- p_tasks:   [{"task_id" or "task_name", "done", "note"}, ...]   (max 100)
+-- p_parts:   [{"name", "brand", "part_number", "supplier", "quantity",
+--              "unit_cost", "note"}, ...]                           (max 100)
+-- Returns {"entry_id", "reading_id", "duplicate"}.
+-- -----------------------------------------------------------------------------
+create function public.save_maintenance_entry(
+  p_idempotency_key uuid,
+  p_sled_id uuid,
+  p_performed_on date,
+  p_title text,
+  p_done_by text default null,
+  p_notes text default null,
+  p_labor_cost numeric default null,
+  p_other_cost numeric default null,
+  p_completed boolean default true,
+  p_reading jsonb default null,
+  p_tasks jsonb default '[]'::jsonb,
+  p_parts jsonb default '[]'::jsonb
+)
+returns jsonb
+language plpgsql
+volatile
+security invoker
+set search_path = ''
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_tasks jsonb := coalesce(p_tasks, '[]'::jsonb);
+  v_parts jsonb := coalesce(p_parts, '[]'::jsonb);
+  v_entry_id uuid;
+  v_reading_id uuid;
+  v_existing record;
+  v_constraint text;
+begin
+  if v_uid is null then
+    raise exception 'Sign in to save maintenance.' using errcode = '42501';
+  end if;
+  if p_idempotency_key is null then
+    raise exception 'An idempotency key is required.' using errcode = '22023';
+  end if;
+  if p_reading is not null and jsonb_typeof(p_reading) <> 'object' then
+    raise exception 'p_reading must be an object.' using errcode = '22023';
+  end if;
+  if jsonb_typeof(v_tasks) <> 'array' or jsonb_typeof(v_parts) <> 'array' then
+    raise exception 'p_tasks and p_parts must be arrays.' using errcode = '22023';
+  end if;
+  if jsonb_array_length(v_tasks) > 100 or jsonb_array_length(v_parts) > 100 then
+    raise exception 'An entry can have at most 100 tasks and 100 parts.' using errcode = '22023';
+  end if;
+  if exists (
+    select 1 from jsonb_array_elements(v_tasks) t
+    where jsonb_typeof(t) <> 'object'
+       or (coalesce(t ->> 'task_id', '') = '' and coalesce(btrim(t ->> 'task_name'), '') = '')
+  ) then
+    raise exception 'Each task needs a task_id or a task_name.' using errcode = '22023';
+  end if;
+  if exists (select 1 from jsonb_array_elements(v_parts) p where jsonb_typeof(p) <> 'object') then
+    raise exception 'Each part must be an object.' using errcode = '22023';
+  end if;
+
+  -- Already saved by this user with this key: return it, save nothing.
+  select e.id, e.sled_id, e.reading_id into v_existing
+  from public.maintenance_entries e
+  where e.created_by = v_uid and e.client_request_id = p_idempotency_key;
+  if found then
+    if v_existing.sled_id is distinct from p_sled_id then
+      raise exception 'This idempotency key was already used for a different snowmobile.' using errcode = '22023';
+    end if;
+    return jsonb_build_object('entry_id', v_existing.id, 'reading_id', v_existing.reading_id, 'duplicate', true);
+  end if;
+
+  begin
+    if p_reading is not null then
+      insert into public.sled_readings (
+        sled_id, read_on, odometer_mi, engine_hours, odometer_reset, hour_meter_reset, engine_event, note
+      )
+      select p_sled_id, coalesce(r.read_on, p_performed_on), r.odometer_mi, r.engine_hours,
+             coalesce(r.odometer_reset, false), coalesce(r.hour_meter_reset, false), r.engine_event, r.note
+      from jsonb_to_record(p_reading) as r(
+        read_on date, odometer_mi numeric, engine_hours numeric, odometer_reset boolean,
+        hour_meter_reset boolean, engine_event public.engine_event, note text
+      )
+      returning id into v_reading_id;
+    end if;
+
+    insert into public.maintenance_entries (
+      sled_id, performed_on, title, done_by, notes, labor_cost, other_cost, completed,
+      reading_id, client_request_id
+    ) values (
+      p_sled_id, p_performed_on, p_title, p_done_by, p_notes, p_labor_cost, p_other_cost,
+      coalesce(p_completed, true), v_reading_id, p_idempotency_key
+    )
+    returning id into v_entry_id;
+
+    insert into public.maintenance_entry_tasks (entry_id, task_id, task_name, done, note, position)
+    select v_entry_id, t.task_id, nullif(btrim(t.task_name), ''), coalesce(t.done, true), t.note, (t.ord - 1)::integer
+    from rows from (jsonb_to_recordset(v_tasks) as (task_id uuid, task_name text, done boolean, note text))
+         with ordinality as t(task_id, task_name, done, note, ord);
+
+    insert into public.maintenance_entry_parts (entry_id, name, brand, part_number, supplier, quantity, unit_cost, note)
+    select v_entry_id, p.name, p.brand, p.part_number, p.supplier, coalesce(p.quantity, 1), p.unit_cost, p.note
+    from jsonb_to_recordset(v_parts) as p(
+      name text, brand text, part_number text, supplier text, quantity numeric, unit_cost numeric, note text
+    );
+  exception
+    when unique_violation then
+      -- A simultaneous submission with the same key won the race: everything
+      -- in this block (including the reading) is undone; return the winner.
+      get stacked diagnostics v_constraint = constraint_name;
+      if v_constraint = 'maintenance_entries_client_request_uniq' then
+        select e.id, e.sled_id, e.reading_id into v_existing
+        from public.maintenance_entries e
+        where e.created_by = v_uid and e.client_request_id = p_idempotency_key;
+        if found and v_existing.sled_id is not distinct from p_sled_id then
+          return jsonb_build_object('entry_id', v_existing.id, 'reading_id', v_existing.reading_id, 'duplicate', true);
+        end if;
+      end if;
+      raise;
+  end;
+
+  return jsonb_build_object('entry_id', v_entry_id, 'reading_id', v_reading_id, 'duplicate', false);
+end;
+$$;
+
+revoke all on function public.save_maintenance_entry(
+  uuid, uuid, date, text, text, text, numeric, numeric, boolean, jsonb, jsonb, jsonb
+) from public, anon;
+grant execute on function public.save_maintenance_entry(
+  uuid, uuid, date, text, text, text, numeric, numeric, boolean, jsonb, jsonb, jsonb
+) to authenticated;
 
 -- -----------------------------------------------------------------------------
 -- Cleanup: same as Migration 1, plus Migration 2's tables. Still unscheduled.

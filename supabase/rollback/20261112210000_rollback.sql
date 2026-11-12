@@ -49,8 +49,10 @@ begin
   end if;
 end $$;
 
--- 2. API function and views.
+-- 2. API functions and views.
 drop function if exists public.restore_record_version(bigint);
+drop function if exists public.save_maintenance_entry(
+  uuid, uuid, date, text, text, text, numeric, numeric, boolean, jsonb, jsonb, jsonb);
 drop view if exists public.maintenance_entry_costs;
 drop view if exists public.sled_reading_history;
 
@@ -216,7 +218,7 @@ begin
      or exists (select 1 from pg_type t join pg_namespace n on n.oid = t.typnamespace
                 where n.nspname = 'public' and t.typname = 'engine_event')
      or exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-                where (n.nspname = 'public' and p.proname = 'restore_record_version')
+                where (n.nspname = 'public' and p.proname in ('restore_record_version', 'save_maintenance_entry'))
                    or (n.nspname = 'private' and p.proname in ('shared_visible_task_ids', 'task_usable_on_sled')))
      or not exists (select 1 from pg_constraint where conname = 'audit_log_check'
                     and conrelid = 'public.audit_log'::regclass)

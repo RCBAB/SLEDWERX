@@ -27,7 +27,8 @@ depend on it.
 ## `20261112210000_rollback.sql` (Migration 2)
 
 Undoes `supabase/migrations/20261112210000_maintenance_logbook.sql`: the eight
-logbook tables, two views, `restore_record_version`, its helper functions and
+logbook tables, two views, `save_maintenance_entry`, `restore_record_version`,
+its helper functions and
 the `engine_event` type. It restores the three Migration 1 objects Migration 2
 changed (audit trigger, audit read policy and scope check, cleanup function) to
 their exact Migration 1 definitions. **Migration 1 and its data are untouched.**

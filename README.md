@@ -9,7 +9,7 @@
 - [Next.js](https://nextjs.org) (App Router) with TypeScript
 - [Tailwind CSS](https://tailwindcss.com) v4
 - ESLint (`eslint-config-next`)
-- [Supabase](https://supabase.com) for auth, PostgreSQL, and storage (planned, not connected yet)
+- [Supabase](https://supabase.com) for auth, PostgreSQL, and storage (clients configured with `@supabase/ssr`; no tables or auth screens yet)
 - [Vercel](https://vercel.com) for hosting (not deployed yet)
 - Progressive Web App support (a web app manifest is in place; offline/service worker support comes later)
 
@@ -80,27 +80,41 @@ Vercel detects Next.js and runs `npm run build`; no extra configuration is neede
 │   │   ├── layout.tsx      # Root layout, fonts, metadata, viewport
 │   │   ├── manifest.ts     # PWA web app manifest
 │   │   └── page.tsx        # Placeholder homepage
-│   └── lib/
-│       └── supabase/       # Supabase config placeholder (no client yet)
+│   ├── lib/
+│   │   └── supabase/
+│   │       ├── client.ts   # Browser client (Client Components)
+│   │       ├── server.ts   # Server client (Server Components, Server Functions, Route Handlers)
+│   │       ├── proxy.ts    # Session refresh used by src/proxy.ts
+│   │       └── env.ts      # Reads Supabase environment variables
+│   └── proxy.ts            # Next.js Proxy: refreshes the Supabase session on each request
 ├── .env.example            # Template for local environment variables
 ├── eslint.config.mjs
 ├── next.config.ts
 └── tsconfig.json
 ```
 
-Import from `src` using the `@/` alias, for example `import { getSupabaseConfig } from "@/lib/supabase/config"`.
+Import from `src` using the `@/` alias, for example `import { createClient } from "@/lib/supabase/server"`.
 
 ## Environment variables
 
-The app runs without any environment variables today. For future Supabase integration, copy the template and fill in values locally:
+Copy the template and fill in the values from your Supabase project (**Project Settings → API**):
 
 ```bash
 cp .env.example .env.local
 ```
 
-`.env.local` and all other `.env*` files (except `.env.example`) are git-ignored. **Never commit credentials, API keys, or secrets.** In production, set these values in the Vercel project settings.
+| Variable                               | Purpose                                         |
+| -------------------------------------- | ----------------------------------------------- |
+| `NEXT_PUBLIC_SUPABASE_URL`             | Supabase project URL                            |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Supabase publishable key (`sb_publishable_...`) |
 
-| Variable                        | Purpose                     |
-| ------------------------------- | --------------------------- |
-| `NEXT_PUBLIC_SUPABASE_URL`      | Supabase project URL        |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anonymous (public) key |
+`.env.local` and all other `.env*` files (except `.env.example`) are git-ignored. **Never commit credentials, API keys, or secrets**, and never put a secret or `service_role` key in a `NEXT_PUBLIC_` variable. For deployments, add the same variables in the Vercel project settings.
+
+If the variables are missing, the app still runs: the proxy skips the session refresh, and creating a Supabase client throws an error that names the missing variables.
+
+## Supabase
+
+- **Browser:** `import { createClient } from "@/lib/supabase/client"` in Client Components.
+- **Server:** `const supabase = await createClient()` from `@/lib/supabase/server` in Server Components, Server Functions, and Route Handlers. Create one per request.
+- **Session refresh:** `src/proxy.ts` (Next.js 16 renamed Middleware to Proxy) calls `supabase.auth.getClaims()` on each request, which validates the auth token and refreshes expired sessions in cookies.
+- To check who is signed in on the server, use `supabase.auth.getClaims()` or `getUser()`, not `getSession()`.

@@ -74,5 +74,12 @@ jobs:
           eval "$(npx supabase status -o env)"
           SUPABASE_URL="$API_URL" SUPABASE_ANON_KEY="${ANON_KEY:-$PUBLISHABLE_KEY}" \
             node scripts/db-api-smoke-test.mjs
+      # Exercises supabase/rollback/ against the throwaway local database only.
+      # Rollback scripts are never applied to any real database by CI.
+      - name: Rollback test (local stack)
+        run: scripts/test-migration-1-rollback.sh
+        env:
+          THROWAWAY_DATABASE: "yes"
+          PSQL: docker exec -i supabase_db_sledwerx psql -U postgres
       - if: always()
         run: npx supabase stop --no-backup

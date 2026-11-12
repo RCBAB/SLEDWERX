@@ -58,6 +58,15 @@ npm run start
 
 GitHub Actions (`.github/workflows/ci.yml`) runs lint, typecheck, and build on Node.js 22 for every pull request and every push to `main`.
 
+## Deployment
+
+SledWerx is hosted on [Vercel](https://vercel.com). The Vercel project is connected to this GitHub repository, so:
+
+- Each pull request gets its own **preview deployment**.
+- Merging into `main` creates a **production deployment**.
+
+Vercel detects Next.js and runs `npm run build`; no extra configuration is needed. Set environment variables (see [Environment variables](#environment-variables)) in the Vercel project settings, not in the repository.
+
 ## Project structure
 
 ```

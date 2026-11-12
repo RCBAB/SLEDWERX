@@ -50,18 +50,22 @@ or `viewer`. `private.has_sled_permission()` is the single source of truth:
 | `add_records` – add maintenance/service records and notes | ✓ | ✓ | ✓ | |
 | `edit_records` – edit any existing record | ✓ | ✓ | | |
 | edit records **they created** – `can_modify_sled_record(sled_id, created_by)` | ✓ | ✓ | ✓ | |
-| `soft_delete_records` / `restore_records` – Recently Deleted for records | ✓ | | | |
+| `soft_delete_records` / `restore_records` – move records to Recently Deleted and restore them | ✓ | ✓ | | |
 | `manage_sled` – delete/restore/permanently delete the sled, sharing, ownership | ✓ | | | |
 
 While a sled is in Recently Deleted, only `view` and `manage_sled` apply.
 
-- **Editors** (Decision 2) cannot move a sled to Recently Deleted, restore it,
-  permanently delete it, or manage sharing. They also cannot delete or restore
-  individual records; only the owner can.
+- **Owners** can delete and restore whole sleds and individual records.
+- **Editors** (Decision 2, option A) can delete and restore individual
+  records, but cannot move a whole sled to Recently Deleted, restore it,
+  permanently delete it, or manage sharing.
 - **Mechanics** (Decision 3) can create records and edit the records they
   created (`created_by` is set by the database and cannot be changed). They
-  cannot delete records, edit other people's records, delete or restore the
-  sled, manage sharing, or transfer ownership.
+  cannot delete or restore records (even their own), edit other people's
+  records, delete or restore the sled, manage sharing, or transfer ownership.
+- **Viewers** are read-only: no edits, deletions or restores.
+- Every record deletion is a soft delete into Recently Deleted, restorable for
+  30 days and audited (who deleted or restored it, and when).
 
 Shares and invitations can only be changed through these functions, so
 nobody can grant themselves access or raise their own role:
@@ -153,9 +157,10 @@ table:
    `updated_at`, `updated_by`, `version`.
 2. Triggers:
    - `before insert or update`: `private.tg_sled_record_guard()`. Requires
-     `add_records` to create and `can_modify_sled_record` to edit. Restricts
-     soft delete and restore to the owner within 30 days, stops records moving
-     to another sled, and makes deleted records read-only until restored.
+     `add_records` to create and `can_modify_sled_record` to edit. Allows
+     soft delete and restore only to owners and editors, within 30 days. Stops
+     records moving to another sled, and makes deleted records read-only until
+     restored.
    - `before insert or update`: `private.tg_stamp()`. Fills in the metadata
      and enforces the version check.
    - `after insert or update`: `private.tg_audit('maintenance')`, or another

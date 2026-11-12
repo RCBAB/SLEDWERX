@@ -8,7 +8,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set search_path = public, extensions;
 
-select plan(150);
+select plan(159);
 
 -- ---------------------------------------------------------------------------
 -- Fixtures
@@ -461,7 +461,8 @@ update public.test_service_records set note = 'Mechanic edit' where id = 'cccccc
 select is((select note from public.test_service_records where id = 'cccccccc-0000-0000-0000-000000000002'), 'Editor note',
   'mechanics cannot edit records created by others');
 select throws_ok($$ update public.test_service_records set deleted_at = now() where id = 'cccccccc-0000-0000-0000-000000000001' $$,
-  '42501', 'Only the owner can delete records.', 'mechanics cannot delete records');
+  '42501', 'You do not have permission to delete this record.', 'mechanics cannot delete records, even their own');
+select is(private.has_sled_permission('aaaaaaaa-0000-0000-0000-000000000005', 'restore_records'), false, 'mechanics cannot restore records');
 select throws_ok($$ update public.test_service_records set sled_id = 'aaaaaaaa-0000-0000-0000-000000000001' where id = 'cccccccc-0000-0000-0000-000000000001' $$,
   '42501', 'Records cannot be moved to another snowmobile.', 'records cannot be moved to another sled');
 select ok(exists (select 1 from public.audit_log where record_id = 'cccccccc-0000-0000-0000-000000000001'),
@@ -478,6 +479,11 @@ select throws_ok($$ insert into public.test_service_records (sled_id, note) valu
   '42501', null, 'viewers cannot create records');
 select is((select count(*)::int from public.test_service_records), 2, 'viewers can read maintenance records');
 select is_empty($$ select 1 from public.audit_log where sled_id = 'aaaaaaaa-0000-0000-0000-000000000005' $$, 'viewers cannot view any audit history');
+update public.test_service_records set deleted_at = now() where id = 'cccccccc-0000-0000-0000-000000000001';
+select is((select count(*)::int from public.test_service_records where deleted_at is null), 2,
+  'viewers cannot delete records');
+select is(private.has_sled_permission('aaaaaaaa-0000-0000-0000-000000000005', 'soft_delete_records'), false, 'viewers have no delete permission');
+select is(private.has_sled_permission('aaaaaaaa-0000-0000-0000-000000000005', 'restore_records'), false, 'viewers have no restore permission');
 
 -- Editor
 set local request.jwt.claims = '{"sub":"22222222-2222-2222-2222-222222222222","role":"authenticated"}';
@@ -494,15 +500,36 @@ select is_empty($$ select 1 from public.audit_log where new_data ? 'email' or ol
   'no invitation email addresses are visible to editors');
 select lives_ok($$ update public.test_service_records set note = 'Editor correction' where id = 'cccccccc-0000-0000-0000-000000000001' $$,
   'editors can edit any record');
-select throws_ok($$ update public.test_service_records set deleted_at = now() where id = 'cccccccc-0000-0000-0000-000000000002' $$,
-  '42501', 'Only the owner can delete records.', 'editors cannot delete records');
-select is(private.has_sled_permission('aaaaaaaa-0000-0000-0000-000000000005', 'restore_records'), false, 'editors cannot restore records');
+select lives_ok($$ update public.test_service_records set deleted_at = now() where id = 'cccccccc-0000-0000-0000-000000000001' $$,
+  'editors can move a record to Recently Deleted');
+select is((select deleted_by from public.test_service_records where id = 'cccccccc-0000-0000-0000-000000000001'),
+  '22222222-2222-2222-2222-222222222222'::uuid, 'the deleting editor is recorded');
+select ok(exists (select 1 from public.test_service_records where id = 'cccccccc-0000-0000-0000-000000000001'),
+  'editors can see records in Recently Deleted');
+select throws_ok($$ update public.test_service_records set note = 'edit while deleted' where id = 'cccccccc-0000-0000-0000-000000000001' $$,
+  '42501', 'Restore this record before editing it.', 'deleted records are read-only until restored');
+select lives_ok($$ update public.test_service_records set deleted_at = null where id = 'cccccccc-0000-0000-0000-000000000001' $$,
+  'editors can restore a record within 30 days');
+select ok(exists (select 1 from public.audit_log where record_id = 'cccccccc-0000-0000-0000-000000000001' and 'deleted_at' = any (changed_fields)
+                  and actor_id = '22222222-2222-2222-2222-222222222222'),
+  'record deletes and restores by editors are audited');
 select throws_ok($$ update public.sleds set deleted_at = now() where id = 'aaaaaaaa-0000-0000-0000-000000000005' $$,
   '42501', 'Only the owner can delete or restore a snowmobile.', 'editors cannot move a snowmobile to Recently Deleted');
 select throws_ok($$ select public.permanently_delete_sled('aaaaaaaa-0000-0000-0000-000000000005') $$,
   'P0002', null, 'editors cannot permanently delete a snowmobile');
 select throws_ok($$ select public.reactivate_sled_share((select id from public.sled_shares where sled_id = 'aaaaaaaa-0000-0000-0000-000000000005' and user_id = '22222222-2222-2222-2222-222222222222')) $$,
   'P0002', null, 'editors cannot manage shares');
+
+reset role;
+set local request.jwt.claims = '';
+alter table public.test_service_records disable trigger guard;
+insert into public.test_service_records (id, sled_id, note, deleted_at)
+values ('cccccccc-0000-0000-0000-000000000003', 'aaaaaaaa-0000-0000-0000-000000000005', 'Deleted long ago', now() - interval '31 days');
+alter table public.test_service_records enable trigger guard;
+set local role authenticated;
+set local request.jwt.claims = '{"sub":"22222222-2222-2222-2222-222222222222","role":"authenticated"}';
+select throws_ok($$ update public.test_service_records set deleted_at = null where id = 'cccccccc-0000-0000-0000-000000000003' $$,
+  '42501', 'This record is past the 30-day recovery period.', 'records cannot be restored after 30 days');
 
 -- Owner
 set local request.jwt.claims = '{"sub":"11111111-1111-1111-1111-111111111111","role":"authenticated"}';

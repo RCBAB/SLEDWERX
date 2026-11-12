@@ -378,8 +378,8 @@ $$;
 --   edit_sled               x     x
 --   add_records             x     x       x
 --   edit_records            x     x      (own)          see can_modify_sled_record()
---   soft_delete_records     x
---   restore_records         x
+--   soft_delete_records     x     x                 (records only, not the sled)
+--   restore_records         x     x
 --   manage_sled             x                         (delete/restore sled,
 --                                                      permanent delete,
 --                                                      sharing, ownership)
@@ -403,10 +403,9 @@ begin
       return v_role is not null;
     when 'manage_sled' then
       return coalesce(v_role = 'owner', false);
-    when 'soft_delete_records', 'restore_records' then
+    when 'edit_sled', 'edit_records', 'soft_delete_records', 'restore_records' then
       -- A sled in Recently Deleted is read-only until it is restored.
-      return coalesce(v_role = 'owner', false) and not v_sled_deleted;
-    when 'edit_sled', 'edit_records' then
+      -- Deleting or restoring the sled itself is manage_sled (owner only).
       return coalesce(v_role in ('owner', 'editor'), false) and not v_sled_deleted;
     when 'add_records' then
       return coalesce(v_role in ('owner', 'editor', 'mechanic'), false) and not v_sled_deleted;
@@ -726,9 +725,9 @@ $$;
 --   before insert or update: private.tg_stamp()
 --   after insert or update:  private.tg_audit('<category>')
 -- It enforces, for API callers: add_records to create; can_modify_sled_record
--- to edit (mechanics: own records only); owner-only soft delete and restore
--- within 30 days; records cannot move to another sled; deleted records are
--- read-only until restored.
+-- to edit (mechanics: own records only); soft delete and restore by owners
+-- and editors only, within 30 days; records cannot move to another sled;
+-- deleted records are read-only until restored.
 create function private.tg_sled_record_guard()
 returns trigger
 language plpgsql
@@ -758,13 +757,13 @@ begin
   if new.deleted_at is distinct from old.deleted_at then
     if old.deleted_at is null then
       if not private.has_sled_permission(old.sled_id, 'soft_delete_records') then
-        raise exception 'Only the owner can delete records.' using errcode = '42501';
+        raise exception 'You do not have permission to delete this record.' using errcode = '42501';
       end if;
       new.deleted_at := now();
       new.deleted_by := v_uid;
     elsif new.deleted_at is null then
       if not private.has_sled_permission(old.sled_id, 'restore_records') then
-        raise exception 'Only the owner can restore records.' using errcode = '42501';
+        raise exception 'You do not have permission to restore this record.' using errcode = '42501';
       end if;
       if old.deleted_at < now() - private.recovery_window() then
         raise exception 'This record is past the 30-day recovery period.' using errcode = '42501';

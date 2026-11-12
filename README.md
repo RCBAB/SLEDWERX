@@ -54,10 +54,15 @@ npm run build
 npm run start
 ```
 
+## Continuous integration
+
+GitHub Actions (`.github/workflows/ci.yml`) runs lint, typecheck, and build on Node.js 22 for every pull request and every push to `main`.
+
 ## Project structure
 
 ```
 .
+├── .github/workflows/      # CI (lint, typecheck, build)
 ├── public/
 │   └── icons/              # App icons (favicon, PWA)
 ├── src/

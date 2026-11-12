@@ -9,7 +9,7 @@
 - [Next.js](https://nextjs.org) (App Router) with TypeScript
 - [Tailwind CSS](https://tailwindcss.com) v4
 - ESLint (`eslint-config-next`)
-- [Supabase](https://supabase.com) for auth, PostgreSQL, and storage (clients configured with `@supabase/ssr`; no tables or auth screens yet)
+- [Supabase](https://supabase.com) for auth, PostgreSQL, and storage (clients configured with `@supabase/ssr`; schema built in staged migrations; no auth screens yet)
 - [Vercel](https://vercel.com) for hosting (not deployed yet)
 - Progressive Web App support (a web app manifest is in place; offline/service worker support comes later)
 
@@ -56,7 +56,7 @@ npm run start
 
 ## Continuous integration
 
-GitHub Actions (`.github/workflows/ci.yml`) runs lint, typecheck, and build on Node.js 22 for every pull request and every push to `main`.
+GitHub Actions (`.github/workflows/ci.yml`) runs lint, typecheck, build, and database tests on Node.js 22 for every pull request and every push to `main`. The database tests run against a temporary local Supabase database, never the live project.
 
 ## Deployment
 
@@ -71,7 +71,9 @@ Vercel detects Next.js and runs `npm run build`; no extra configuration is neede
 
 ```
 .
-├── .github/workflows/      # CI (lint, typecheck, build)
+├── .github/workflows/      # CI (lint, typecheck, build, database tests)
+├── docs/
+│   └── database.md         # Data model, permissions, migration workflow
 ├── public/
 │   └── icons/              # App icons (favicon, PWA)
 ├── src/
@@ -87,6 +89,10 @@ Vercel detects Next.js and runs `npm run build`; no extra configuration is neede
 │   │       ├── proxy.ts    # Session refresh used by src/proxy.ts
 │   │       └── env.ts      # Reads Supabase environment variables
 │   └── proxy.ts            # Next.js Proxy: refreshes the Supabase session on each request
+├── supabase/
+│   ├── config.toml         # Local Supabase settings (CLI)
+│   ├── migrations/         # Version-controlled SQL migrations
+│   └── tests/              # pgTAP database tests
 ├── .env.example            # Template for local environment variables
 ├── eslint.config.mjs
 ├── next.config.ts
@@ -111,6 +117,20 @@ cp .env.example .env.local
 `.env.local` and all other `.env*` files (except `.env.example`) are git-ignored. **Never commit credentials, API keys, or secrets**, and never put a secret or `service_role` key in a `NEXT_PUBLIC_` variable. For deployments, add the same variables in the Vercel project settings.
 
 If the variables are missing, the app still runs: the proxy skips the session refresh, and creating a Supabase client throws an error that names the missing variables.
+
+## Database
+
+The schema lives in version-controlled SQL migrations in `supabase/migrations/`, with pgTAP tests in `supabase/tests/`. Migrations are reviewed in pull requests and applied to the live project manually. CI never applies them. See [docs/database.md](docs/database.md) for the data model, permissions, and the steps for applying a migration.
+
+```bash
+npm run db:start
+```
+
+```bash
+npm run db:test
+```
+
+(`db:start` runs the local Supabase stack and requires Docker.)
 
 ## Supabase
 

@@ -67,7 +67,13 @@ link for the owner to send.
   moves a record to Recently Deleted; clearing it restores it.
 - Restores are allowed for 30 days (`private.recovery_window()`), and the
   database refuses them afterwards.
-- Deleted sleds are hidden from shared users and cannot be edited until restored.
+- Deleted sleds are hidden from shared users and are read-only until restored:
+  `has_sled_permission` allows only `view` and `manage_sled` on them, so later
+  modules cannot add or change their records.
+- A sled cannot be restored into a garage that is itself in Recently Deleted.
+  Restore the garage first, or restore the sled into another garage.
+- A garage row can never be removed while it still has sleds (no cascade), so
+  a mistaken garage delete cannot wipe out sleds and their history.
 - `private.purge_expired_records()` permanently removes records past 30 days,
   resolved invitations (which contain email addresses), and revoked shares
   older than 30 days. It is **not scheduled**. Run it manually from the SQL
@@ -88,16 +94,32 @@ link for the owner to send.
 
 - Every table has a `uuid` primary key that the device may generate, so records
   can be created offline.
-- `version` starts at 1 and is incremented by the database on every update.
-  `updated_at` is set by the server.
-- **Conflict detection:** devices update with
-  `.eq('id', id).eq('version', knownVersion)`. If zero rows are updated, the
-  record changed elsewhere: the device keeps both versions and asks the user
-  (conflict records and resolution arrive in migration 8). Nothing is
-  overwritten silently.
-- **Revocation:** a revoked share stays visible to the affected user (with
-  `revoked_at`) for 30 days so their devices can delete cached data for that
-  sled. The server refuses all access immediately.
+- `version` starts at 1 and is incremented by the database whenever a row
+  actually changes. Updates that change nothing keep the version, so they
+  never create false conflicts. `updated_at` is set by the server.
+- **Conflict detection:** every update must include the version the device
+  last saw, for example `.update({ nickname, version: knownVersion })`. If the
+  row has changed since, the database rejects the update with error code
+  `PT409` (HTTP 409 through the API). The device then keeps both versions and
+  asks the user; conflict records and resolution arrive in migration 8.
+  Nothing is overwritten silently. An update that omits `version` cannot be
+  checked, so the app's data layer must always send it.
+- **Retries:** if a device's update succeeded but the response was lost, the
+  retry gets `PT409`. The device should re-read the row: if it already matches
+  the local edit, there is no conflict.
+- **Revocation and deletion:** a revoked share stays visible to the affected
+  user (with `revoked_at`) for 30 days. On every sync, devices should also
+  fetch the list of sled ids they can currently read (`select id from sleds`)
+  and delete cached data for any sled not in it. This covers revoked access
+  and sleds moved to Recently Deleted. The server refuses all access
+  immediately either way.
+- **Long offline periods:** permanently removed records leave no trace, so a
+  device that has not synced for more than 30 days must do a full resync
+  rather than an incremental one.
+- **Incremental pulls:** `updated_at` is set when a transaction starts, so a
+  slow transaction can commit a row with an `updated_at` older than a cursor a
+  device has already used. Migration 8 must use an overlap window or a
+  commit-ordered change feed, not a plain `updated_at > cursor` query.
 - Indexes on `(owner_id, updated_at)` and `(user_id, updated_at)` support
   "changes since" queries.
 
@@ -127,15 +149,20 @@ npm run db:stop
 ```
 
 CI runs the same tests on every pull request against a throwaway local
-Supabase database. CI never connects to the live project.
+Supabase stack, followed by `scripts/db-api-smoke-test.mjs`. That script signs
+up real users through Supabase Auth and exercises sharing, RLS and conflict
+detection through the REST API with `supabase-js`. CI never connects to the
+live project.
 
 ## Applying a migration
 
 Only after the pull request has been reviewed and approved:
 
-1. In the Supabase dashboard, check **Authentication → Sign In / Providers →
-   Email → Confirm email** is **on**. Sharing invitations rely on confirmed
-   email addresses.
+1. In the Supabase dashboard, under **Authentication → Sign In / Providers →
+   Email**, check that **Confirm email** and **Secure email change** are both
+   **on**. Sharing invitations are matched to confirmed email addresses. With
+   either setting off, someone could claim another person's address and
+   accept an invitation meant for them.
 2. From a local checkout of the approved branch (or `main` after merge):
 
    ```bash

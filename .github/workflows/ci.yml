@@ -62,9 +62,17 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      # Starts a throwaway local Supabase Postgres in Docker on the runner and
-      # applies supabase/migrations to it. Never connects to the live project.
-      - run: npx supabase db start
+      # Starts a throwaway local Supabase stack (Postgres, Auth, REST API) in
+      # Docker on the runner and applies supabase/migrations to it.
+      # Never connects to the live project.
+      - run: >-
+          npx supabase start
+          -x realtime,storage-api,imgproxy,mailpit,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
       - run: npx supabase test db
+      - name: API smoke test (local stack)
+        run: |
+          eval "$(npx supabase status -o env)"
+          SUPABASE_URL="$API_URL" SUPABASE_ANON_KEY="${ANON_KEY:-$PUBLISHABLE_KEY}" \
+            node scripts/db-api-smoke-test.mjs
       - if: always()
         run: npx supabase stop --no-backup

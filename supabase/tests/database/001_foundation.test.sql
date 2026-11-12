@@ -8,7 +8,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set search_path = public, extensions;
 
-select plan(88);
+select plan(101);
 
 -- ---------------------------------------------------------------------------
 -- Fixtures
@@ -37,6 +37,13 @@ select is_empty($$ select tablename from pg_tables where schemaname = 'public' a
 select is_empty($$ select p.proname from pg_proc p join pg_namespace n on n.oid = p.pronamespace
   where n.nspname in ('public', 'private') and has_function_privilege('anon', p.oid, 'execute') $$,
   'anonymous users cannot execute any SledWerx function');
+select is_empty($$ select table_name from information_schema.role_table_grants
+  where grantee = 'anon' and table_schema = 'public' $$,
+  'anonymous users have no privileges on any public table');
+select is_empty($$ select table_name || ':' || privilege_type from information_schema.role_table_grants
+  where grantee = 'authenticated' and table_schema = 'public'
+    and privilege_type in ('DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER') $$,
+  'signed-in users cannot hard-delete or truncate any table');
 
 -- ---------------------------------------------------------------------------
 -- Sign-up
@@ -320,6 +327,45 @@ select is_empty($$ select 1 from public.audit_log where sled_id = 'aaaaaaaa-0000
   'permanent deletion removes the sled''s history');
 
 -- ---------------------------------------------------------------------------
+-- Offline version conflicts
+-- ---------------------------------------------------------------------------
+insert into t select 'v_s1', version::text from public.sleds where id = 'aaaaaaaa-0000-0000-0000-000000000001';
+update public.sleds set nickname = nickname where id = 'aaaaaaaa-0000-0000-0000-000000000001';
+select is((select version::text from public.sleds where id = 'aaaaaaaa-0000-0000-0000-000000000001'),
+  (select v from t where k = 'v_s1'), 'updates that change nothing do not bump the version');
+select throws_ok($$ update public.sleds set nickname = 'From an old copy', version = version - 1
+  where id = 'aaaaaaaa-0000-0000-0000-000000000001' $$,
+  'PT409', null, 'an update from an out-of-date copy is rejected as a conflict');
+select lives_ok($$ update public.sleds set nickname = 'Current copy',
+  version = (select v::int from t where k = 'v_s1')
+  where id = 'aaaaaaaa-0000-0000-0000-000000000001' $$,
+  'an update from the current copy succeeds');
+select is((select version from public.sleds where id = 'aaaaaaaa-0000-0000-0000-000000000001'),
+  (select v::int + 1 from t where k = 'v_s1'), 'a successful change bumps the version');
+
+-- ---------------------------------------------------------------------------
+-- Recently Deleted integrity
+-- ---------------------------------------------------------------------------
+insert into public.sleds (id, garage_id, model_year, make, model)
+values ('aaaaaaaa-0000-0000-0000-000000000004', 'bbbbbbbb-0000-0000-0000-000000000001', 2021, 'Arctic Cat', 'Riot');
+update public.sleds set deleted_at = now() where id = 'aaaaaaaa-0000-0000-0000-000000000004';
+select lives_ok($$ update public.garages set deleted_at = now() where id = 'bbbbbbbb-0000-0000-0000-000000000001' $$,
+  'a garage whose sleds are all in Recently Deleted can be deleted');
+select throws_ok($$ update public.sleds set deleted_at = null where id = 'aaaaaaaa-0000-0000-0000-000000000004' $$,
+  '42501', 'Restore the garage first, or move the snowmobile to another garage.',
+  'a sled cannot be restored into a deleted garage');
+select is(private.has_sled_permission('aaaaaaaa-0000-0000-0000-000000000004', 'add_records'), false,
+  'no records can be added to a sled in Recently Deleted');
+select is(private.has_sled_permission('aaaaaaaa-0000-0000-0000-000000000004', 'edit_records'), false,
+  'records of a sled in Recently Deleted cannot be edited');
+select is(private.has_sled_permission('aaaaaaaa-0000-0000-0000-000000000004', 'view'), true,
+  'the owner can still view a sled in Recently Deleted');
+select lives_ok($$ update public.sleds set deleted_at = null,
+  garage_id = (select v::uuid from t where k = 'garage_alex@example.com')
+  where id = 'aaaaaaaa-0000-0000-0000-000000000004' $$,
+  'a sled can be restored into another garage');
+
+-- ---------------------------------------------------------------------------
 -- Audit log
 -- ---------------------------------------------------------------------------
 select ok((select count(*) from public.audit_log where table_name = 'sled_shares'
@@ -350,6 +396,8 @@ select throws_ok($$ select public.accept_sled_invitation('x') $$, '42501', null,
 -- ---------------------------------------------------------------------------
 reset role;
 set local request.jwt.claims = '';
+select throws_ok($$ delete from public.garages where id = (select v::uuid from t where k = 'garage_alex@example.com') $$,
+  '23503', null, 'deleting a garage row directly cannot cascade-delete its sleds');
 select is((private.purge_expired_records() ->> 'sleds')::int, 1, 'cleanup removes sleds past 30 days');
 select is_empty($$ select 1 from public.sleds where id = 'aaaaaaaa-0000-0000-0000-000000000002' $$,
   'the expired sled is gone');

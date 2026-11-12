@@ -14,9 +14,11 @@
 --     offline creation), created_at/created_by, updated_at/updated_by, and
 --     version. These are maintained by private.tg_stamp() and cannot be set
 --     by clients.
---   * Clients detect offline conflicts by updating with
---     `.eq('id', id).eq('version', knownVersion)`: zero rows updated means the
---     record changed elsewhere, so nothing is silently overwritten.
+--   * Offline conflicts: clients send the version they last saw in every
+--     update (`version: knownVersion`). If the row has changed since, the
+--     update fails with error code PT409 (HTTP 409 through the API) instead
+--     of overwriting newer data.
+--     Updates that change nothing do not bump the version.
 --   * User-facing records are soft-deleted (deleted_at) and recoverable for
 --     30 days; see private.recovery_window().
 --   * US units in 1.0, stored in the column's named unit (e.g. *_mi, *_in,
@@ -65,11 +67,15 @@ set search_path = ''
 as $$ select interval '30 days' $$;
 
 -- Maintains id/created_*/updated_*/version. Clients cannot forge these.
+-- On update, a version that differs from the stored one means the client
+-- edited an out-of-date copy: reject it rather than overwrite newer data.
 create function private.tg_stamp()
 returns trigger
 language plpgsql
 set search_path = ''
 as $$
+declare
+  v_meta constant text[] := array['id', 'created_at', 'created_by', 'updated_at', 'updated_by', 'version'];
 begin
   if tg_op = 'INSERT' then
     new.created_at := now();
@@ -77,14 +83,28 @@ begin
     new.updated_at := new.created_at;
     new.updated_by := new.created_by;
     new.version := 1;
-  else
-    new.id := old.id;
-    new.created_at := old.created_at;
-    new.created_by := old.created_by;
-    new.updated_at := now();
-    new.updated_by := auth.uid();
-    new.version := old.version + 1;
+    return new;
   end if;
+
+  if new.version is distinct from old.version then
+    raise exception 'This record was changed elsewhere. Reload it and try again.'
+      using errcode = 'PT409', hint = 'version_conflict';
+  end if;
+
+  new.id := old.id;
+  new.created_at := old.created_at;
+  new.created_by := old.created_by;
+
+  -- Nothing changed: keep the version so other devices see no conflict.
+  if (to_jsonb(new) - v_meta) = (to_jsonb(old) - v_meta) then
+    new.updated_at := old.updated_at;
+    new.updated_by := old.updated_by;
+    return new;
+  end if;
+
+  new.updated_at := now();
+  new.updated_by := auth.uid();
+  new.version := old.version + 1;
   return new;
 end;
 $$;
@@ -153,7 +173,9 @@ create index garages_owner_id_idx on public.garages (owner_id);
 -- -----------------------------------------------------------------------------
 create table public.sleds (
   id uuid primary key default gen_random_uuid(),
-  garage_id uuid not null references public.garages (id) on delete cascade,
+  -- No cascade: a garage can only be removed once it has no sleds. (Account
+  -- deletion removes sleds through owner_id in the same statement.)
+  garage_id uuid not null references public.garages (id),
   owner_id uuid not null default auth.uid() references auth.users (id) on delete cascade,
   model_year smallint not null check (model_year between 1950 and 2100),
   make text not null check (char_length(btrim(make)) between 1 and 60),
@@ -342,6 +364,8 @@ $$;
 --   manage_sled             x                         (delete/restore sled,
 --                                                      permanent delete,
 --                                                      sharing, ownership)
+--
+--   While a sled is in Recently Deleted, only view and manage_sled apply.
 create function private.has_sled_permission(p_sled_id uuid, p_permission text)
 returns boolean
 language plpgsql
@@ -351,16 +375,20 @@ set search_path = ''
 as $$
 declare
   v_role text := private.sled_role(p_sled_id);
+  v_sled_deleted boolean := exists (
+    select 1 from public.sleds s where s.id = p_sled_id and s.deleted_at is not null
+  );
 begin
   case p_permission
     when 'view' then
       return v_role is not null;
-    when 'edit_sled', 'edit_records', 'soft_delete_records', 'restore_records' then
-      return coalesce(v_role in ('owner', 'editor'), false);
-    when 'add_records' then
-      return coalesce(v_role in ('owner', 'editor', 'mechanic'), false);
     when 'manage_sled' then
       return coalesce(v_role = 'owner', false);
+    when 'edit_sled', 'edit_records', 'soft_delete_records', 'restore_records' then
+      -- A sled in Recently Deleted is read-only until it is restored.
+      return coalesce(v_role in ('owner', 'editor'), false) and not v_sled_deleted;
+    when 'add_records' then
+      return coalesce(v_role in ('owner', 'editor', 'mechanic'), false) and not v_sled_deleted;
     else
       raise exception 'unknown sled permission: %', p_permission
         using errcode = '22023';
@@ -516,6 +544,12 @@ begin
     elsif new.deleted_at is null then
       if old.deleted_at < now() - private.recovery_window() then
         raise exception 'This snowmobile is past the 30-day recovery period.' using errcode = '42501';
+      end if;
+      if exists (
+        select 1 from public.garages g where g.id = new.garage_id and g.deleted_at is not null
+      ) then
+        raise exception 'Restore the garage first, or move the snowmobile to another garage.'
+          using errcode = '42501';
       end if;
       new.deleted_by := null;
     else

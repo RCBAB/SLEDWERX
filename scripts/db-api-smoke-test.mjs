@@ -160,6 +160,112 @@ check(accepted.data === sledId, "the invited user can accept", accepted.error);
     "reactivated access works again");
 }
 
+// Maintenance logbook (Migration 2), with the viewer's access active again
+{
+  const task = await alex.client.from("maintenance_tasks").insert({ name: "Chaincase oil" }).select("id").single();
+  check(!task.error, "owner can add a task to their library", task.error);
+  const secret = await alex.client.from("maintenance_tasks").insert({ name: "Private task" }).select("id").single();
+
+  const plan = await alex.client
+    .from("maintenance_plans")
+    .insert({ sled_id: sledId, task_id: task.data?.id, interval_mi: 500, interval_hours: 25, interval_days: 365 })
+    .select("id")
+    .single();
+  check(!plan.error, "owner can schedule by miles, engine hours and days", plan.error);
+
+  const reading = await alex.client
+    .from("sled_readings")
+    .insert({ sled_id: sledId, read_on: "2026-07-01", odometer_mi: 1000, engine_hours: 40 })
+    .select("id")
+    .single();
+  check(!reading.error, "owner can record mileage and engine hours", reading.error);
+
+  const entry = await alex.client
+    .from("maintenance_entries")
+    .insert({ sled_id: sledId, performed_on: "2026-07-01", title: "Chaincase service", labor_cost: 40, reading_id: reading.data?.id })
+    .select("id, version")
+    .single();
+  check(!entry.error, "owner can log maintenance", entry.error);
+  const entryTask = await alex.client
+    .from("maintenance_entry_tasks")
+    .insert({ entry_id: entry.data?.id, task_id: task.data?.id })
+    .select("task_name")
+    .single();
+  check(entryTask.data?.task_name === "Chaincase oil", "logged tasks keep the task name", entryTask.error);
+  const part = await alex.client
+    .from("maintenance_entry_parts")
+    .insert({ entry_id: entry.data?.id, name: "Chaincase oil 12 oz", quantity: 2, unit_cost: 10 });
+  check(!part.error, "owner can record parts used", part.error);
+  const cost = await alex.client.from("maintenance_entry_costs").select("total_cost").eq("entry_id", entry.data?.id).single();
+  check(Number(cost.data?.total_cost) === 60, "entry cost totals labor and parts", cost);
+
+  const stale = await alex.client
+    .from("maintenance_entries")
+    .update({ title: "From an old copy", version: entry.data.version - 1 })
+    .eq("id", entry.data?.id);
+  check(stale.error?.code === "PT409", "an out-of-date entry update is rejected", stale.error);
+
+  const seen = await blake.client.from("maintenance_tasks").select("id");
+  const ids = (seen.data ?? []).map((row) => row.id);
+  check(ids.includes(task.data?.id) && !ids.includes(secret.data?.id),
+    "shared users see only tasks used on the shared sled", seen);
+  const viewerEntry = await blake.client
+    .from("maintenance_entries")
+    .insert({ sled_id: sledId, performed_on: "2026-07-02", title: "Viewer entry" });
+  check(Boolean(viewerEntry.error), "viewers cannot log maintenance", viewerEntry.error);
+
+  const removed = await alex.client
+    .from("maintenance_entries")
+    .update({ deleted_at: new Date().toISOString(), version: entry.data.version })
+    .eq("id", entry.data?.id);
+  check(!removed.error, "owner can move an entry to Recently Deleted", removed.error);
+  const kept = await alex.client.from("sled_reading_history").select("id, total_mi").eq("id", reading.data?.id);
+  check(kept.data?.length === 1 && Number(kept.data[0].total_mi) === 1000,
+    "deleting the entry keeps its mileage reading", kept);
+}
+
+// Atomic, duplicate-safe saving (save_maintenance_entry)
+{
+  const key = crypto.randomUUID();
+  const args = {
+    p_idempotency_key: key,
+    p_sled_id: sledId,
+    p_performed_on: "2026-08-01",
+    p_title: "Track and clutch service",
+    p_labor_cost: 25,
+    p_reading: { odometer_mi: 1100, engine_hours: 45 },
+    p_tasks: [{ task_name: "Cleaned clutch" }],
+    p_parts: [{ name: "Clutch cleaner", quantity: 1, unit_cost: 9.5 }],
+  };
+  const first = await alex.client.rpc("save_maintenance_entry", args);
+  check(!first.error && first.data?.duplicate === false && first.data?.entry_id,
+    "a complete entry saves in one call", first.error ?? first.data);
+  const again = await alex.client.rpc("save_maintenance_entry", args);
+  check(again.data?.duplicate === true && again.data?.entry_id === first.data?.entry_id,
+    "resubmitting the same request returns the saved entry", again.error ?? again.data);
+  const entries = await alex.client.from("maintenance_entries").select("id").eq("client_request_id", key);
+  check(entries.data?.length === 1, "duplicate submissions create no duplicate entries", entries);
+
+  const readingsBefore = await alex.client.from("sled_readings").select("id").eq("sled_id", sledId);
+  const failed = await alex.client.rpc("save_maintenance_entry", {
+    ...args,
+    p_idempotency_key: crypto.randomUUID(),
+    p_reading: { odometer_mi: 1200 },
+    p_parts: [{ name: "Bad part", quantity: 0 }],
+  });
+  const readingsAfter = await alex.client.from("sled_readings").select("id").eq("sled_id", sledId);
+  check(Boolean(failed.error) && readingsAfter.data?.length === readingsBefore.data?.length,
+    "a failed save leaves nothing behind", failed.error);
+
+  const viewerSave = await blake.client.rpc("save_maintenance_entry", {
+    p_idempotency_key: crypto.randomUUID(),
+    p_sled_id: sledId,
+    p_performed_on: "2026-08-02",
+    p_title: "Viewer attempt",
+  });
+  check(Boolean(viewerSave.error), "viewers cannot save entries through the function", viewerSave.error);
+}
+
 // Revocation
 {
   const share = await alex.client.from("sled_shares").select("id").eq("sled_id", sledId).single();

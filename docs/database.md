@@ -12,10 +12,10 @@ the helpers created in stage 1.
 
 | # | Migration | Status |
 |---|---|---|
-| 1 | Foundation: profiles, preferences, garages, sleds, per-sled sharing, audit log, Recently Deleted, row versioning | This PR |
-| 2 | Odometer history (including odometer/engine replacements), maintenance task catalog (built-in + custom), schedules, service sessions/packages, checklists, completed service records with versioned corrections | Planned |
-| 3 | Stored reminders (upcoming / due / overdue, user thresholds), recalculated on service, odometer and interval changes | Planned |
-| 4 | Issues and repairs; parts and modifications with install/removal history; shopping list | Planned |
+| 1 | Foundation: profiles, preferences, garages, sleds, per-sled sharing, audit log, Recently Deleted, row versioning | Applied |
+| 2 | Personal maintenance logbook: mileage and engine-hour history (with meter resets and engine replacements), user-created tasks and packages, maintenance schedules (miles, engine hours, days), logbook entries with tasks, parts and USD costs, version restore | This PR |
+| 3 | Stored reminders (upcoming / due / overdue, user thresholds) for mileage, **engine-hour** and calendar intervals, recalculated on maintenance, reading and interval changes | Planned |
+| 4 | Issues and repairs; installed parts and modifications with install/removal history (can link to logbook parts); shopping list | Planned |
 | 5 | Suspension setups (standard + manufacturer-specific fields), revisions, tuning journal, test sessions; manual ride logs | Planned |
 | 6 | Attachments: private Storage bucket, file metadata, size/type validation, storage RLS, cleanup with Recently Deleted and account deletion | Planned |
 | 7 | Community library: opt-in rider profiles, published setup copies, reviews, moderation | Planned |
@@ -140,10 +140,18 @@ is stored. The provider is chosen when the sharing interface is built.
   copied from the record's `created_by`, which nobody can change. Editors and
   mechanics see history only while their share is active and the sled is not
   in Recently Deleted.
+- **Personal library rows** (library tasks, packages and their items) belong
+  to no sled. They are stored with `library_owner_id` and only that user can
+  read them. Shared users never see the owner's library history.
 - Retention: a sled's history is removed when the sled is permanently deleted
-  or the owner's account is deleted. Viewing and restoring previous versions
-  of maintenance records (from `old_data`) is built in migration 2. A restore
-  is itself an update, so it is audited too.
+  or the owner's account is deleted. A user's library history is removed when
+  their account is deleted.
+- **Restoring a previous version** (Decision 6):
+  `restore_record_version(audit_id)` puts back the values a reading,
+  schedule, entry, entry task or entry part had before the change recorded in
+  that audit row. Only people allowed to edit the record can use it (mechanics:
+  their own records), deleted records must be restored first, and the restore
+  is itself an audited update.
 
 ## Building a record table for a later module
 
@@ -213,11 +221,100 @@ table:
 - Indexes on `(owner_id, updated_at)` and `(user_id, updated_at)` support
   "changes since" queries.
 
+## Maintenance logbook (Migration 2)
+
+SledWerx is a personal maintenance book for owners of one or more sleds, not
+repair-shop software: no work orders, assignments or shop scheduling.
+
+| Table | Belongs to | Purpose |
+|---|---|---|
+| `sled_readings` | sled | Odometer miles and/or engine hours on a date. `odometer_reset` / `hour_meter_reset` mark a replaced or reset meter; `engine_event` marks an engine replacement or rebuild. |
+| `maintenance_tasks` | user library **or** one sled | User-created tasks. Library tasks are reusable across the user's sleds; sled tasks let owners and editors add a task to one sled without touching the owner's library. There are **no built-in tasks or preset intervals**. |
+| `maintenance_packages`, `maintenance_package_tasks` | user library | Reusable task lists. Private to their owner. |
+| `maintenance_plans` | sled | The owner's interval for a task: **miles, engine hours and/or days**, any combination (at least one). Optional "last done" starting point. Owners and editors only. |
+| `maintenance_entries` | sled | Logbook entry: date, title, done by (free text), notes, labor and other cost, completed (unticked = open checklist), and the reading logged with it. |
+| `maintenance_entry_tasks` | entry | What was done: a task or free text. The task name is copied so history survives renames and deletions. |
+| `maintenance_entry_parts` | entry | Parts used: name, brand, part number, supplier, quantity, unit cost. |
+
+### Saving an entry: `save_maintenance_entry`
+
+The app should save logbook entries with one call to
+`save_maintenance_entry`, which saves the reading (optional), the entry, its
+checklist tasks and its parts **in one transaction**. If anything fails
+(validation, a reading lower than the history, a task the user may not use,
+missing permission), **nothing is saved**.
+
+```ts
+const { data, error } = await supabase.rpc("save_maintenance_entry", {
+  p_idempotency_key: key,            // crypto.randomUUID(), generated once per new entry
+  p_sled_id: sledId,
+  p_performed_on: "2026-08-01",
+  p_title: "Chaincase service",
+  p_done_by: "Me",                   // optional
+  p_notes: null,                     // optional
+  p_labor_cost: 30,                  // optional, USD
+  p_other_cost: null,                // optional, USD
+  p_completed: true,                 // false = open checklist
+  p_reading: { odometer_mi: 1500, engine_hours: 60 },  // optional; also odometer_reset,
+                                     // hour_meter_reset, engine_event, note, read_on
+  p_tasks: [{ task_id }, { task_name: "Adjusted track tension", note: "Two turns" }],
+  p_parts: [{ name: "Chaincase oil", part_number: "CC-1", quantity: 2, unit_cost: 11.25 }],
+});
+// data: { entry_id, reading_id, duplicate }
+```
+
+- **Permissions are not bypassed.** The function runs with the caller's own
+  permissions (`SECURITY INVOKER`). Every row goes through the same RLS
+  policies, guards, reading validation, versioning and audit triggers as a
+  direct insert.
+- **Duplicates.** Generate the idempotency key once per new entry and reuse
+  it for retries (for example after a timeout or a double tap). A repeat
+  returns the existing entry with `duplicate: true` and saves nothing. The key
+  is stored as `maintenance_entries.client_request_id`, cannot be changed, and
+  a unique index on `(created_by, client_request_id)` blocks duplicates even
+  when two submissions arrive at the same moment. Keys are per user. Reusing
+  a key for a different sled is rejected.
+- **Limits.** At most 100 tasks and 100 parts per entry. Each task needs a
+  `task_id` or a `task_name`.
+
+Views (callers' RLS applies): `sled_reading_history` adds `total_mi` and
+`total_engine_hours`. These are calculated, never stored, and continue
+across meter resets. `maintenance_entry_costs` gives labor + other + parts
+totals.
+
+**Rules**
+- Readings on the same meter never go down. A lower value must be recorded as
+  a reset. A back-dated reading must fit the existing history. Reading
+  changes are serialized per sled (a transaction-level advisory lock), so two
+  simultaneous saves cannot each pass the check and together break it.
+- Adding tasks or parts to an entry counts as changing that entry. Mechanics
+  can add them only to entries they created; owners and editors can add them
+  to any entry on the sled.
+- An entry cannot be restored while its reading is in Recently Deleted.
+  Restore the reading first.
+- Deleting an entry sends its tasks and parts to Recently Deleted with it
+  (restoring brings them back) but **never deletes its reading**. A reading
+  used by an active entry cannot be deleted on its own.
+- Deleting a task that is in use is allowed (the app shows a warning first).
+  The task's active schedules and package memberships are deleted with it
+  atomically, and restoring the task within 30 days restores them. Completed
+  maintenance history keeps the task name. Schedules on a sled that is itself
+  in Recently Deleted stay frozen with that sled.
+- Shared users see the sled's tasks plus only those library tasks of the
+  owner that are used on the shared sled. The rest of the owner's library and
+  all packages stay private. Mechanics log work with existing tasks or free
+  text, and cannot create tasks or schedules.
+- Costs are USD. There is no currency setting.
+- Engine hours: Decision 1 of Migration 2 approves engine-hour intervals.
+  This replaces the original 1.0 note "no hour-based service reminders".
+  Reminders (Migration 3) must support hours as well as miles and days.
+
 ## Units
 
 1.0 uses US units, stored in the unit named by the column: `*_mi` (miles),
-`*_in` (inches), `*_f` (°F). Values are stored once in that unit and never
-converted on write. A future metric display converts on read.
+`*_in` (inches), `*_f` (°F), and engine hours as shown on the hour meter.
+Values are stored once in that unit and never converted on write. A future
+metric display converts on read. Costs are USD.
 
 ## Account deletion
 
@@ -239,10 +336,15 @@ npm run db:stop
 ```
 
 CI runs the same tests on every pull request against a throwaway local
-Supabase stack, followed by `scripts/db-api-smoke-test.mjs`. That script signs
-up real users through Supabase Auth and exercises sharing, RLS and conflict
-detection through the REST API with `supabase-js`. CI never connects to the
-live project.
+Supabase stack:
+- the pgTAP tests in `supabase/tests/database/`, one file per migration
+- `scripts/db-api-smoke-test.mjs`, which signs up real users through Supabase
+  Auth and exercises sharing, RLS, the maintenance logbook and conflict
+  detection through the REST API with `supabase-js`
+- the rollback tests: Migration 2 is rolled back first, then the Migration 1
+  tests run on the resulting state, then Migration 1's rollback is tested
+
+CI never connects to the live project.
 
 ## Applying a migration
 

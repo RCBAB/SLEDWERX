@@ -140,6 +140,20 @@ test("update mileage, refuse lower readings, replace a meter, fix and remove the
   await expect(page.getByTestId("current-odometer")).toHaveText("150 mi");
   await expect(page.getByTestId("current-hours")).toHaveText("12.5 hrs");
 
+  // Readings can't be dated after the user's own local today.
+  const localDate = (offsetDays: number) =>
+    page.evaluate((days) => {
+      const date = new Date();
+      date.setDate(date.getDate() + days);
+      return date.toLocaleDateString("en-CA");
+    }, offsetDays);
+  await form.getByLabel("Odometer (miles)").filter({ visible: true }).fill("160");
+  await form.getByLabel("Date").filter({ visible: true }).fill(await localDate(1));
+  await form.getByRole("button", { name: "Save reading" }).click();
+  await expect(form.getByText("The date can't be in the future.")).toBeVisible();
+  await expect(page.getByTestId("current-odometer")).toHaveText("150 mi");
+  await form.getByLabel("Date").filter({ visible: true }).fill(await localDate(0));
+
   await form.getByLabel("Odometer (miles)").filter({ visible: true }).fill("120");
   await form.getByRole("button", { name: "Save reading" }).click();
   await expect(form.getByText(/Odometer readings cannot go down/)).toBeVisible();

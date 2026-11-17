@@ -6,8 +6,10 @@ import {
   addReadingSchema,
   createSledSchema,
   fixReadingSchema,
+  futureDateError,
   isValidPhotoPath,
   latestAllowedDate,
+  userToday,
   updateSledSchema,
 } from "./validation";
 
@@ -118,5 +120,34 @@ describe("isValidPhotoPath", () => {
     ["nested folders", `${SLED}/x/${FILE}.jpg`],
   ])("rejects %s", (_label, path) => {
     expect(isValidPhotoPath(SLED, path)).toBe(false);
+  });
+});
+
+describe("future dates in the user's own time zone", () => {
+  // 03:00 UTC on Nov 18 is still the evening of Nov 17 in Denver.
+  const eveningInDenver = new Date("2026-11-18T03:00:00Z");
+
+  it("uses the user's local date, not the UTC date", () => {
+    expect(userToday("America/Denver", eveningInDenver)).toBe("2026-11-17");
+    expect(futureDateError("2026-11-17", "America/Denver", eveningInDenver)).toBeUndefined();
+    expect(futureDateError("2026-11-18", "America/Denver", eveningInDenver)).toBe("The date can't be in the future.");
+    expect(futureDateError("2026-11-19", "America/Denver", eveningInDenver)).toBeDefined();
+  });
+
+  it("allows tomorrow (UTC) for time zones ahead of UTC", () => {
+    const noonUtc = new Date("2026-11-17T12:00:00Z");
+    expect(userToday("Pacific/Auckland", noonUtc)).toBe("2026-11-18");
+    expect(futureDateError("2026-11-18", "Pacific/Auckland", noonUtc)).toBeUndefined();
+  });
+
+  it("falls back to the database's bound for a missing or unknown time zone", () => {
+    expect(userToday(undefined, eveningInDenver)).toBe("2026-11-19");
+    expect(userToday("Not/AZone", eveningInDenver)).toBe("2026-11-19");
+    expect(userToday("x".repeat(100), eveningInDenver)).toBe("2026-11-19");
+    expect(futureDateError("2026-11-20", null, eveningInDenver)).toBeDefined();
+  });
+
+  it("ignores empty dates", () => {
+    expect(futureDateError(undefined, "America/Denver", eveningInDenver)).toBeUndefined();
   });
 });

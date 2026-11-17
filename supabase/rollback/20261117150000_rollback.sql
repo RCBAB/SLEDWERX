@@ -5,9 +5,9 @@
 -- MANUAL USE ONLY. Read supabase/rollback/README.md first.
 --
 -- * Removes everything Migration 3 created: sleds.photo_path, the
---   sled-photos bucket and its four storage policies, create_sled() and
---   photo_sled_id(), and Migration 3's migration-history entry. All in ONE
---   transaction.
+--   sled-photos bucket and its four storage policies, create_sled(),
+--   photo_sled_id(), the reading-date trigger, and Migration 3's
+--   migration-history entry. All in ONE transaction.
 -- * REFUSES to run unless confirmed in the same session:
 --       set sledwerx.confirm_rollback = '20261117150000';
 -- * REFUSES to run while any sled has a photo or any file exists in the
@@ -54,6 +54,8 @@ delete from storage.buckets where id = 'sled-photos';
 
 -- 3. Functions and the column. No CASCADE: anything unexpected depending on
 --    them stops the rollback.
+drop trigger if exists date_check on public.sled_readings;
+drop function if exists private.tg_sled_readings_date_check();
 drop function if exists public.create_sled(text, text, integer, numeric, numeric, text, text, date, uuid);
 drop function if exists private.photo_sled_id(text);
 alter table public.sleds drop column if exists photo_path;
@@ -70,6 +72,8 @@ begin
      or exists (select 1 from pg_policies where schemaname = 'storage' and policyname like 'SledWerx:%')
      or to_regprocedure('public.create_sled(text,text,integer,numeric,numeric,text,text,date,uuid)') is not null
      or to_regprocedure('private.photo_sled_id(text)') is not null
+     or to_regprocedure('private.tg_sled_readings_date_check()') is not null
+     or exists (select 1 from pg_trigger where tgname = 'date_check' and tgrelid = 'public.sled_readings'::regclass)
   then
     raise exception 'Rollback verification failed: Migration 3 objects remain. Nothing was changed.';
   end if;

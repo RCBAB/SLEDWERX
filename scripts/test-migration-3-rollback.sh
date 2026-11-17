@@ -79,6 +79,8 @@ check '[[ -z "$(query "select 1 from pg_policies where schemaname = '\''storage'
   "the storage policies are removed"
 check '[[ -z "$(query "select to_regprocedure('\''public.create_sled(text,text,integer,numeric,numeric,text,text,date,uuid)'\'')")" ]]' \
   "create_sled is removed"
+check '[[ -z "$(query "select 1 from pg_trigger where tgname = '\''date_check'\'' and tgrelid = '\''public.sled_readings'\''::regclass")" ]]' \
+  "the reading-date trigger is removed"
 check '[[ "$(query "select count(*) from public.sleds where id = '\''$SLED_ID'\''") $(query "select count(*) from public.sled_readings where sled_id = '\''$SLED_ID'\''")" == "1 1" ]]' \
   "sleds and readings created with create_sled are kept"
 check '[[ -z "$(query "select 1 from supabase_migrations.schema_migrations where version = '\''20261117150000'\''")" ]]' \

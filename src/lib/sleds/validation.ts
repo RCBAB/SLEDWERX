@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { SLED_STATUSES } from "./constants";
+import { isoDate as isoDateIn } from "./format";
 
 /** Empty form values become undefined, so optional fields stay optional. */
 const blankToUndefined = (value: unknown) =>
@@ -45,6 +46,29 @@ const engineHours = meterValue("engine hours", 100_000);
 export function latestAllowedDate(now = new Date()): string {
   const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
   return tomorrow.toISOString().slice(0, 10);
+}
+
+/**
+ * The user's own "today" (YYYY-MM-DD) from the time zone their browser sent.
+ * Falls back to the UTC bound above when the zone is missing or unknown, and
+ * never goes past it (the database refuses later dates anyway).
+ */
+export function userToday(timeZone: unknown, now = new Date()): string {
+  const latest = latestAllowedDate(now);
+  if (typeof timeZone === "string" && timeZone.length > 0 && timeZone.length <= 64) {
+    try {
+      const local = isoDateIn(now, timeZone);
+      return local < latest ? local : latest;
+    } catch {
+      // Unknown time zone: use the UTC bound.
+    }
+  }
+  return latest;
+}
+
+/** An error message if the date is after the user's own today. */
+export function futureDateError(value: string | undefined, timeZone: unknown, now?: Date): string | undefined {
+  return value && value > userToday(timeZone, now) ? "The date can't be in the future." : undefined;
 }
 
 const isoDate = z.iso.date({ error: "Enter a valid date." });

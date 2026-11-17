@@ -8,7 +8,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set search_path = public, extensions;
 
-select plan(64);
+select plan(82);
 
 -- ---------------------------------------------------------------------------
 -- Fixtures: Olive (owner), Eli (editor), Max (mechanic), Val (viewer),
@@ -293,6 +293,78 @@ update public.sleds set deleted_at = now() where id = (select v::uuid from t whe
 select throws_ok(format($$ insert into storage.objects (bucket_id, name, owner_id) values ('sled-photos', %L, auth.uid()::text) $$,
                         (select v from t where k = 'photo_wrong_sled')),
   '42501', null, 'photos cannot be uploaded to a deleted sled');
+
+-- ---------------------------------------------------------------------------
+-- Regression: no future-dated readings on any write path
+-- ---------------------------------------------------------------------------
+select throws_ok(format($$ insert into public.sled_readings (sled_id, read_on, odometer_mi) values (%L, current_date + 2, 5000) $$,
+                        (select v from t where k = 'sled1')),
+  '22023', 'The reading date cannot be in the future.', 'a direct reading insert cannot be dated in the future');
+select lives_ok(format($$ with x as (
+                            insert into public.sled_readings (sled_id, read_on, odometer_mi) values (%L, current_date + 1, 5000) returning id)
+                          insert into t select 'reading_tomorrow', id::text from x $$,
+                       (select v from t where k = 'sled1')),
+  'tomorrow (UTC) is allowed, for time zones ahead of the database clock');
+select throws_ok(format($$ update public.sled_readings set read_on = current_date + 10, version = 1 where id = %L $$,
+                        (select v from t where k = 'reading_tomorrow')),
+  '22023', 'The reading date cannot be in the future.', 'a correction cannot move a reading into the future');
+select lives_ok(format($$ update public.sled_readings set engine_hours = 70, version = 1 where id = %L $$,
+                       (select v from t where k = 'reading_tomorrow')),
+  'correcting other fields of a reading is unaffected by the date rule');
+select throws_ok($$ select public.save_maintenance_entry(
+                      p_idempotency_key => '7c000000-0000-0000-0000-0000000000f1',
+                      p_sled_id => (select v::uuid from t where k = 'sled1'),
+                      p_performed_on => current_date + 3,
+                      p_title => 'Future service',
+                      p_reading => '{"odometer_mi": 6000}',
+                      p_tasks => '[{"task_name": "Check track"}]') $$,
+  '22023', 'The reading date cannot be in the future.', 'save_maintenance_entry cannot record a future-dated reading');
+select lives_ok($$ select public.create_sled('Yamaha', 'SRViper', 2025, 0, null, null, null, current_date + 1) $$,
+  'create_sled accepts tomorrow (UTC), the same bound as the table');
+
+-- ---------------------------------------------------------------------------
+-- Regression: photo permission edge cases
+-- ---------------------------------------------------------------------------
+select throws_ok($$ insert into storage.objects (bucket_id, name, owner_id)
+                    values ('sled-photos', '6fffffff-0000-4000-8000-000000000000/0b6c3c1e-1f7e-4f62-9a55-3c7b2f9d1e00.jpg', auth.uid()::text) $$,
+  '42501', null, 'photos cannot be uploaded for a sled that does not exist');
+select throws_ok(format($$ update storage.objects set name = %L where name = %L $$,
+                        (select v from t where k = 'photo_wrong_sled'), (select v from t where k = 'photo1')),
+  '42501', null, 'a photo cannot be moved into a sled that is in Recently Deleted');
+
+set local request.jwt.claims = '{"sub":"62222222-2222-2222-2222-222222222222","role":"authenticated"}';
+select throws_ok(format($$ update storage.objects set name = %L where name = %L $$,
+                        (select v from t where k = 'photo_wrong_sled'), (select v from t where k = 'photo1b')),
+  '42501', null, 'an editor cannot move a photo into a sled they cannot edit');
+select is((select count(*)::int from storage.objects where bucket_id = 'sled-photos'
+           and name like (select v from t where k = 'sled1') || '/%'), 2, 'the editor sees sled 1''s photos while it is active');
+
+-- Deleting sled 1 suspends its shares and freezes its photos.
+set local request.jwt.claims = '{"sub":"61111111-1111-1111-1111-111111111111","role":"authenticated"}';
+update public.sleds set deleted_at = now() where id = (select v::uuid from t where k = 'sled1');
+select is((select count(*)::int from storage.objects where bucket_id = 'sled-photos'
+           and name like (select v from t where k = 'sled1') || '/%'), 2,
+  'the owner can still see the photos of a sled in Recently Deleted');
+select is_empty(format($$ update storage.objects set metadata = '{}' where name = %L returning 1 $$, (select v from t where k = 'photo1')),
+  'the owner cannot replace photos of a deleted sled');
+select is_empty(format($$ delete from storage.objects where name = %L returning 1 $$, (select v from t where k = 'photo1')),
+  'the owner cannot delete photos of a deleted sled');
+select throws_ok(format($$ update public.sleds set photo_path = null where id = %L $$, (select v from t where k = 'sled1')),
+  '42501', 'Restore this snowmobile before editing it.', 'a deleted sled''s photo path cannot be changed');
+
+set local request.jwt.claims = '{"sub":"62222222-2222-2222-2222-222222222222","role":"authenticated"}';
+select is((select count(*)::int from storage.objects where bucket_id = 'sled-photos'), 0,
+  'an editor loses photo access when the sled is deleted');
+select throws_ok(format($$ insert into storage.objects (bucket_id, name, owner_id) values ('sled-photos', %L, auth.uid()::text) $$,
+                        (select v from t where k = 'sled1') || '/3e9f6f41-4ca1-4c95-8d88-6fae5c204133.jpg'),
+  '42501', null, 'and cannot upload to it');
+set local request.jwt.claims = '{"sub":"63333333-3333-3333-3333-333333333333","role":"authenticated"}';
+select is((select count(*)::int from storage.objects where bucket_id = 'sled-photos'), 0,
+  'a mechanic loses photo access when the sled is deleted');
+
+reset role;
+select is((select count(*)::int from storage.objects where bucket_id = 'sled-photos'), 2,
+  'no photo was changed or removed by any refused attempt');
 
 select * from finish();
 rollback;

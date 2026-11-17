@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { CheckboxField, Field } from "@/components/ui/field";
 import { SubmitButton } from "@/components/ui/submit-button";
 import { formatDate } from "@/lib/sleds/format";
-import { useLocalToday } from "@/lib/sleds/use-local-today";
+import { useLocalToday, useTimeZone } from "@/lib/sleds/use-local-today";
 
 type LastReading = {
   id: string;
@@ -31,6 +31,7 @@ function MeterFields({
   };
 }) {
   const today = useLocalToday();
+  const timeZone = useTimeZone();
   const errors = state.fieldErrors ?? {};
   const value = (key: "odometer" | "engineHours" | "readOn") => state.values?.[key] ?? defaults?.[key] ?? "";
   const checked = (key: "odometerReset" | "hourMeterReset") =>
@@ -38,6 +39,7 @@ function MeterFields({
 
   return (
     <>
+      <input type="hidden" name="timeZone" value={timeZone} />
       <div className="grid gap-4 sm:grid-cols-3">
         <Field
           label="Odometer (miles)"

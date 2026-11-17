@@ -15,6 +15,8 @@
 -- * public.create_sled(): creates a sled and its first odometer/engine-hour
 --   reading in one transaction. SECURITY INVOKER: the caller's RLS and every
 --   existing trigger (ownership, audit, reading checks) apply unchanged.
+-- * Reading dates: a trigger on sled_readings refuses dates in the future
+--   (more than one day past the database's UTC date) on every write path.
 --
 -- Additive only. Migrations 1 and 2 are not modified.
 -- Rollback (manual only): supabase/rollback/20261117150000_rollback.sql
@@ -95,6 +97,34 @@ create policy "SledWerx: owners and editors can remove sled photos"
     bucket_id = 'sled-photos'
     and private.has_sled_permission(private.photo_sled_id(name), 'edit_sled')
   );
+
+-- -----------------------------------------------------------------------------
+-- Reading dates: no reading may be dated in the future, on every write path
+-- (Update mileage, Fix last reading, create_sled, save_maintenance_entry and
+-- direct API calls). Migration 2 had no such rule, so a far-future reading
+-- would become the "latest" reading and block every later real one.
+-- One day of slack covers time zones ahead of the database clock (UTC); the
+-- app also checks against the user's own local date. Only new dates are
+-- checked, so editing other fields of an existing reading never fails here.
+-- -----------------------------------------------------------------------------
+create function private.tg_sled_readings_date_check()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if new.read_on > current_date + 1
+     and (tg_op = 'INSERT' or new.read_on is distinct from old.read_on) then
+    raise exception 'The reading date cannot be in the future.' using errcode = '22023';
+  end if;
+  return new;
+end;
+$$;
+
+revoke all on function private.tg_sled_readings_date_check() from public, anon, authenticated;
+
+create trigger date_check before insert or update of read_on on public.sled_readings
+  for each row execute function private.tg_sled_readings_date_check();
 
 -- -----------------------------------------------------------------------------
 -- create_sled: a new sled and its first reading, together or not at all.

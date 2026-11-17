@@ -12,6 +12,7 @@ import {
   addReadingSchema,
   createSledSchema,
   fixReadingSchema,
+  futureDateError,
   isValidPhotoPath,
   sledIdSchema,
   updateSledSchema,
@@ -49,7 +50,14 @@ function sledIdFrom(formData: FormData): string | null {
 function readingFieldErrors(message: string): SledActionState["fieldErrors"] {
   if (message.startsWith("Odometer")) return { odometer: [message] };
   if (message.startsWith("Engine-hour")) return { engineHours: [message] };
+  if (message.startsWith("The reading date")) return { readOn: [message] };
   return undefined;
+}
+
+/** Refuses dates after the user's own today (time zone sent by their browser). */
+function futureDateErrors(formData: FormData, field: string, value: string | undefined) {
+  const error = futureDateError(value, formData.get("timeZone"));
+  return error ? { [field]: [error] } : undefined;
 }
 
 async function removePhotoObject(path: string | null | undefined) {
@@ -71,6 +79,9 @@ export async function createSled(_prev: SledActionState, formData: FormData): Pr
   if (!parsed.success) return { fieldErrors: fieldErrorsOf(parsed.error), values: raw };
 
   const sled = parsed.data;
+  const dateErrors = futureDateErrors(formData, "readOn", sled.readOn);
+  if (dateErrors) return { fieldErrors: dateErrors, error: dateErrors.readOn[0], values: raw };
+
   const supabase = await createClient();
   const { data: sledId, error } = await supabase.rpc("create_sled", {
     p_make: sled.make,
@@ -134,6 +145,8 @@ export async function updateSled(_prev: SledActionState, formData: FormData): Pr
   const parsed = updateSledSchema.safeParse(raw);
   if (!parsed.success) return { fieldErrors: fieldErrorsOf(parsed.error), values: raw };
   const input = parsed.data;
+  const dateErrors = futureDateErrors(formData, "purchaseDate", input.purchaseDate);
+  if (dateErrors) return { fieldErrors: dateErrors, values: raw };
 
   const current = await getSled(sledId, user.id);
   if (!current) return { error: "Snowmobile not found." };
@@ -190,6 +203,8 @@ export async function addReading(_prev: SledActionState, formData: FormData): Pr
   const parsed = addReadingSchema.safeParse(raw);
   if (!parsed.success) return { fieldErrors: fieldErrorsOf(parsed.error), values: raw };
   const reading = parsed.data;
+  const dateErrors = futureDateErrors(formData, "readOn", reading.readOn);
+  if (dateErrors) return { fieldErrors: dateErrors, values: raw };
 
   const supabase = await createClient();
   const { error } = await supabase.from("sled_readings").insert({
@@ -245,6 +260,8 @@ export async function fixLastReading(_prev: SledActionState, formData: FormData)
       return { error: "You don't have permission to do that." };
     }
     const reading = parsed.data;
+    const dateErrors = futureDateErrors(formData, "readOn", reading.readOn);
+    if (dateErrors) return { fieldErrors: dateErrors, values: raw };
     query = supabase
       .from("sled_readings")
       .update({

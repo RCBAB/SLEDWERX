@@ -28,7 +28,8 @@ depends on it is still applied.
 
 Undoes `supabase/migrations/20261117150000_sled_photos_and_create_sled.sql`:
 `sleds.photo_path`, the `sled-photos` bucket and its four storage policies,
-`create_sled()`, `private.photo_sled_id()` and the migration-history entry.
+`create_sled()`, `private.photo_sled_id()`, the reading-date trigger
+(`date_check` on `sled_readings`) and the migration-history entry.
 **Sleds and readings created with `create_sled()` are kept**: they are
 ordinary Migration 1 and 2 data.
 

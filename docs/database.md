@@ -14,7 +14,7 @@ the helpers created in stage 1.
 |---|---|---|
 | 1 | Foundation: profiles, preferences, garages, sleds, per-sled sharing, audit log, Recently Deleted, row versioning | Applied |
 | 2 | Personal maintenance logbook: mileage and engine-hour history (with meter resets and engine replacements), user-created tasks and packages, maintenance schedules (miles, engine hours, days), logbook entries with tasks, parts and USD costs, version restore | Applied |
-| 3 | Snowmobile photos (private Storage bucket, `sleds.photo_path`, storage policies that follow sled sharing) and atomic `create_sled()` | Ready for review, **not applied** |
+| 3 | Snowmobile photos (private Storage bucket, `sleds.photo_path`, storage policies that follow sled sharing), atomic `create_sled()`, and no future-dated readings | Ready for review, **not applied** |
 | 4 | Stored reminders (upcoming / due / overdue, user thresholds) for mileage, **engine-hour** and calendar intervals, recalculated on maintenance, reading and interval changes | Planned |
 | 5 | Issues and repairs; installed parts and modifications with install/removal history (can link to logbook parts); shopping list | Planned |
 | 6 | Suspension setups (standard + manufacturer-specific fields), revisions, tuning journal, test sessions; manual ride logs | Planned |
@@ -344,6 +344,15 @@ only; Migrations 1 and 2 are unchanged.
   caller's oldest garage. The odometer is required (0 allowed); engine hours
   are optional; the date defaults to today and may be at most one day ahead
   (time zones ahead of UTC).
+- **No future-dated readings** (`date_check` trigger on `sled_readings`):
+  every write path (Update mileage, Fix last reading, `create_sled`,
+  `save_maintenance_entry`, direct API calls) refuses a `read_on` more than
+  one day past the database's UTC date. Migration 2 had no such rule, and a
+  far-future reading would become the "latest" one and block every later
+  real reading. The one day of slack covers time zones ahead of UTC; the app
+  additionally checks against the user's own local date (browser time zone),
+  so in practice no reading is dated after the user's today. Only new dates
+  are checked: editing other fields of an existing reading is unaffected.
 - **Reading corrections** in the app ("Fix last reading") use Migration 2's
   existing rules: owners and editors can correct or remove any reading,
   mechanics can correct only readings they added and cannot remove them.

@@ -13,3 +13,8 @@ const subscribe = () => () => {};
 export function useLocalToday(): string {
   return useSyncExternalStore(subscribe, () => isoDate(new Date()), () => "");
 }
+
+/** The browser's IANA time zone (e.g. "America/Denver"); empty during server rendering. */
+export function useTimeZone(): string {
+  return useSyncExternalStore(subscribe, () => Intl.DateTimeFormat().resolvedOptions().timeZone ?? "", () => "");
+}

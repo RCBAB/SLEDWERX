@@ -11,7 +11,7 @@ import { CheckboxField, Field, SelectField, TextareaField } from "@/components/u
 import { SubmitButton } from "@/components/ui/submit-button";
 import { MAKE_SUGGESTIONS, SLED_STATUSES, STATUS_LABELS, type SledStatus } from "@/lib/sleds/constants";
 import { discardUploadedPhoto, PhotoError, resizePhoto, uploadSledPhoto } from "@/lib/sleds/photo-upload";
-import { useLocalToday } from "@/lib/sleds/use-local-today";
+import { useLocalToday, useTimeZone } from "@/lib/sleds/use-local-today";
 
 import { SledPhoto } from "./sled-photo";
 
@@ -40,6 +40,7 @@ function textOf(value: string | number | null | undefined) {
 export function SledForm(props: Props) {
   const router = useRouter();
   const today = useLocalToday();
+  const timeZone = useTimeZone();
   const sled = props.mode === "edit" ? props.sled : null;
   const [photoError, setPhotoError] = useState<string | null>(null);
 
@@ -108,6 +109,7 @@ export function SledForm(props: Props) {
 
   return (
     <form action={formAction} className="space-y-8" noValidate key={formKey}>
+      <input type="hidden" name="timeZone" value={timeZone} />
       {sled ? (
         <>
           <input type="hidden" name="sledId" value={sled.id} />

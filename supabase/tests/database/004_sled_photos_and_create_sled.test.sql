@@ -199,6 +199,9 @@ select is((select count(*)::int from storage.objects where bucket_id = 'sled-pho
            and name like (select v from t where k = 'sled1') || '/%'), 2, 'a viewer can view the sled''s photos');
 select is_empty(format($$ update storage.objects set metadata = '{}' where name = %L returning 1 $$, (select v from t where k = 'photo1')),
   'a viewer cannot replace a photo');
+-- Supabase blocks direct SQL deletes on storage tables unless this is set (the
+-- Storage API sets it). Set it here so only the row-level policy decides.
+select set_config('storage.allow_delete_query', 'true', true);
 select is_empty(format($$ delete from storage.objects where name = %L returning 1 $$, (select v from t where k = 'photo1')),
   'a viewer cannot delete a photo');
 

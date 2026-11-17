@@ -1,5 +1,5 @@
 import type { EmailOtpType } from "@supabase/supabase-js";
-import { NextResponse, type NextRequest } from "next/server";
+import type { NextRequest } from "next/server";
 
 import { safeNextPath } from "@/lib/auth/redirect";
 import { createClient } from "@/lib/supabase/server";
@@ -30,9 +30,17 @@ export async function GET(request: NextRequest) {
   }
 
   if (!ok) {
-    return NextResponse.redirect(new URL("/login?error=link", request.url));
+    return redirectTo("/login?error=link");
   }
 
-  const destination = type === "recovery" ? "/reset-password" : next;
-  return NextResponse.redirect(new URL(destination, request.url));
+  return redirectTo(type === "recovery" ? "/reset-password" : next);
+}
+
+/**
+ * Same-origin redirect with a relative Location, so the browser stays on the
+ * host it used. (request.url can name the server's own hostname instead,
+ * which would drop the session cookie this route just set.)
+ */
+function redirectTo(path: string) {
+  return new Response(null, { status: 303, headers: { Location: path, "Cache-Control": "no-store" } });
 }

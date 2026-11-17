@@ -2,18 +2,34 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { Suspense } from "react";
 
 import { cn } from "@/components/ui/cn";
 
 import { NAV_ITEMS } from "./nav-items";
 
-function isActive(pathname: string, href: string) {
-  return pathname === href || pathname.startsWith(`${href}/`);
+function isActive(pathname: string | null, href: string) {
+  return pathname != null && (pathname === href || pathname.startsWith(`${href}/`));
 }
+
+// The current path is request data on dynamic routes (e.g. /garage/[sledId]),
+// so the active state streams in behind Suspense. The fallback is the same
+// navigation without highlighting, so nothing moves.
 
 /** Desktop sidebar navigation. */
 export function SideNav() {
-  const pathname = usePathname();
+  return (
+    <Suspense fallback={<SideNavView pathname={null} />}>
+      <SideNavLive />
+    </Suspense>
+  );
+}
+
+function SideNavLive() {
+  return <SideNavView pathname={usePathname()} />;
+}
+
+function SideNavView({ pathname }: { pathname: string | null }) {
   return (
     <nav aria-label="Main" className="space-y-1">
       {NAV_ITEMS.map(({ href, label, icon: Icon }) => {
@@ -39,7 +55,18 @@ export function SideNav() {
 
 /** Mobile bottom navigation, sized for gloved thumbs. */
 export function BottomNav() {
-  const pathname = usePathname();
+  return (
+    <Suspense fallback={<BottomNavView pathname={null} />}>
+      <BottomNavLive />
+    </Suspense>
+  );
+}
+
+function BottomNavLive() {
+  return <BottomNavView pathname={usePathname()} />;
+}
+
+function BottomNavView({ pathname }: { pathname: string | null }) {
   return (
     <nav
       aria-label="Main"

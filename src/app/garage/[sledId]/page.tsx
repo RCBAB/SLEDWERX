@@ -1,0 +1,211 @@
+import { Pencil } from "lucide-react";
+import type { Metadata } from "next";
+import { notFound } from "next/navigation";
+import { Suspense } from "react";
+
+import { BackLink } from "@/components/sleds/back-link";
+import { AddReadingForm, FixLastReadingForm } from "@/components/sleds/reading-forms";
+import { SledSkeleton } from "@/components/sleds/skeletons";
+import { SledPhoto } from "@/components/sleds/sled-photo";
+import { StatusBadge } from "@/components/sleds/status-badge";
+import { Alert } from "@/components/ui/alert";
+import { ButtonLink } from "@/components/ui/button";
+import { requireUser } from "@/lib/auth/session";
+import { formatDate, formatHours, formatMiles, sledDescription, sledName } from "@/lib/sleds/format";
+import { canFixReading, ROLE_LABELS, sledCapabilities } from "@/lib/sleds/permissions";
+import { getSled, type SledDetail } from "@/lib/sleds/queries";
+
+export const metadata: Metadata = { title: "Snowmobile" };
+
+const NOTICES: Record<string, { tone: "success" | "error"; text: string }> = {
+  added: { tone: "success", text: "Snowmobile added." },
+  saved: { tone: "success", text: "Changes saved." },
+  photo: {
+    tone: "error",
+    text: "The snowmobile was added, but its photo couldn't be uploaded. Try again from Edit details.",
+  },
+};
+
+export default function SledPage({ params, searchParams }: PageProps<"/garage/[sledId]">) {
+  return (
+    <div className="mx-auto max-w-5xl">
+      <BackLink href="/garage">My Snowmobiles</BackLink>
+      <Suspense fallback={<SledSkeleton />}>
+        <SledDashboard params={params} searchParams={searchParams} />
+      </Suspense>
+    </div>
+  );
+}
+
+async function SledDashboard({ params, searchParams }: Pick<PageProps<"/garage/[sledId]">, "params" | "searchParams">) {
+  const { sledId } = await params;
+  const query = await searchParams;
+  const user = await requireUser(`/garage/${sledId}`);
+  const sled = await getSled(sledId, user.id);
+  if (!sled) notFound();
+
+  const can = sledCapabilities(sled.role);
+  const name = sledName(sled);
+  const notice =
+    query.photo === "failed" ? NOTICES.photo : query.saved === "1" ? NOTICES.saved : query.added === "1" ? NOTICES.added : null;
+  const last = sled.readings[0];
+
+  return (
+    <>
+      {notice ? (
+        <div className="mt-4">
+          <Alert tone={notice.tone}>{notice.text}</Alert>
+        </div>
+      ) : null}
+
+      <section className="mt-4 grid gap-6 lg:grid-cols-2" aria-labelledby="sled-name">
+        <SledPhoto url={sled.photoUrl} alt={name} className="aspect-[16/10] w-full rounded-2xl border border-white/10" />
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <StatusBadge status={sled.status} />
+            {sled.role !== "owner" ? (
+              <span className="inline-flex rounded-full bg-white/5 px-3 py-1 text-xs font-semibold text-muted">
+                Shared with you · {ROLE_LABELS[sled.role]}
+              </span>
+            ) : null}
+          </div>
+          <h1
+            id="sled-name"
+            className="mt-3 font-display text-4xl font-extrabold uppercase italic leading-none tracking-tight sm:text-5xl"
+          >
+            {name}
+          </h1>
+          <p className="mt-2 text-lg text-muted">
+            {sledDescription({ model_year: sled.modelYear, make: sled.make, model: sled.model })}
+          </p>
+
+          <dl className="mt-6 grid grid-cols-2 gap-4">
+            <Meter label="Odometer" reading={sled.meters.odometer} format={formatMiles} testId="current-odometer" />
+            <Meter label="Engine hours" reading={sled.meters.engineHours} format={formatHours} testId="current-hours" />
+          </dl>
+
+          {can.canEdit ? (
+            <ButtonLink href={`/garage/${sled.id}/edit`} variant="secondary" className="mt-6">
+              <Pencil aria-hidden className="size-4" />
+              Edit details
+            </ButtonLink>
+          ) : null}
+        </div>
+      </section>
+
+      <Details sled={sled} />
+
+      <section className="mt-10" aria-labelledby="mileage-heading">
+        <h2 id="mileage-heading" className="font-display text-2xl font-bold uppercase tracking-wide">
+          Mileage &amp; engine hours
+        </h2>
+
+        {can.canAddReading ? (
+          <div className="mt-4 rounded-2xl border border-white/10 bg-surface/70 p-5 sm:p-6" data-testid="update-mileage">
+            <h3 className="mb-4 font-semibold">Update mileage</h3>
+            <AddReadingForm sledId={sled.id} />
+          </div>
+        ) : null}
+
+        {last && canFixReading(sled.role, last.createdBy, user.id) ? (
+          <div className="mt-4">
+            <FixLastReadingForm sledId={sled.id} reading={last} canRemove={can.canRemoveReading} />
+          </div>
+        ) : null}
+
+        <ReadingHistory sled={sled} />
+      </section>
+    </>
+  );
+}
+
+function Meter({
+  label,
+  reading,
+  format,
+  testId,
+}: {
+  label: string;
+  reading: SledDetail["meters"]["odometer"];
+  format: (value: number | null | undefined) => string;
+  testId: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-surface/70 p-4">
+      <dt className="text-xs font-semibold uppercase tracking-[0.15em] text-muted">{label}</dt>
+      <dd className="mt-1">
+        <span data-testid={testId} className="block font-display text-3xl font-bold tabular-nums">
+          {reading ? format(reading.value) : "Not recorded"}
+        </span>
+        {reading ? (
+          <span className="mt-1 block text-xs text-muted">
+            as of {formatDate(reading.readOn)}
+            {reading.total != null && reading.total !== reading.value ? ` · ${format(reading.total)} lifetime` : ""}
+          </span>
+        ) : null}
+      </dd>
+    </div>
+  );
+}
+
+function Details({ sled }: { sled: SledDetail }) {
+  const rows: [string, string | null][] = [
+    ["VIN / serial", sled.vin],
+    ["Purchase date", sled.purchaseDate ? formatDate(sled.purchaseDate) : null],
+    ["Engine", sled.engineDescription],
+    ["Displacement", sled.displacementCc ? `${sled.displacementCc} cc` : null],
+  ];
+  const shown = rows.filter(([, value]) => value);
+  if (!shown.length && !sled.notes) return null;
+  return (
+    <section className="mt-10" aria-labelledby="details-heading">
+      <h2 id="details-heading" className="font-display text-2xl font-bold uppercase tracking-wide">
+        Details
+      </h2>
+      <dl className="mt-4 grid gap-x-6 gap-y-4 rounded-2xl border border-white/10 bg-surface/70 p-5 sm:grid-cols-2">
+        {shown.map(([label, value]) => (
+          <div key={label}>
+            <dt className="text-xs font-semibold uppercase tracking-[0.15em] text-muted">{label}</dt>
+            <dd className="mt-1 break-words">{value}</dd>
+          </div>
+        ))}
+        {sled.notes ? (
+          <div className="sm:col-span-2">
+            <dt className="text-xs font-semibold uppercase tracking-[0.15em] text-muted">Notes</dt>
+            <dd className="mt-1 whitespace-pre-line break-words">{sled.notes}</dd>
+          </div>
+        ) : null}
+      </dl>
+    </section>
+  );
+}
+
+function ReadingHistory({ sled }: { sled: SledDetail }) {
+  const recent = sled.readings.slice(0, 10);
+  if (!recent.length) {
+    return <p className="mt-6 text-muted">No readings yet.</p>;
+  }
+  return (
+    <div className="mt-6">
+      <h3 className="text-sm font-semibold uppercase tracking-[0.2em] text-muted">Recent readings</h3>
+      <ul className="mt-3 divide-y divide-white/10 rounded-2xl border border-white/10 bg-surface/40" data-testid="reading-history">
+        {recent.map((reading) => (
+          <li key={reading.id} className="flex flex-wrap items-center justify-between gap-x-6 gap-y-1 px-5 py-3 text-sm">
+            <span className="font-medium">{formatDate(reading.readOn)}</span>
+            <span className="flex flex-wrap gap-x-6 gap-y-1 tabular-nums text-foreground/90">
+              {reading.odometer != null ? <span>{formatMiles(reading.odometer)}</span> : null}
+              {reading.engineHours != null ? <span>{formatHours(reading.engineHours)}</span> : null}
+              {reading.odometerReset || reading.hourMeterReset ? (
+                <span className="text-amber-300">
+                  {[reading.odometerReset && "Odometer replaced", reading.hourMeterReset && "Hour meter replaced"]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </span>
+              ) : null}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}

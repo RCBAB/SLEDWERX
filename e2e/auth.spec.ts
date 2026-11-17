@@ -1,11 +1,11 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
+
+import { NEEDS_SUPABASE, hasSupabase, signIn, signOut, signUp, uniqueEmail } from "./helpers";
 
 // Needs a running Supabase Auth server (CI uses the local Supabase stack) and
 // its Mailpit inbox for the password-reset email.
 const MAILPIT_URL = process.env.MAILPIT_URL;
-test.skip(!process.env.E2E_SUPABASE, "Set E2E_SUPABASE=1 with a local Supabase stack to run auth tests.");
-
-const PASSWORD = "snow-trail-2026";
+test.skip(!hasSupabase, NEEDS_SUPABASE);
 
 // On failure, print where the page ended up and what it shows (CI logs).
 test.afterEach(async ({ page }, testInfo) => {
@@ -13,31 +13,6 @@ test.afterEach(async ({ page }, testInfo) => {
   const text = await page.locator("body").innerText().catch(() => "(no body)");
   console.log(`[${testInfo.title}] url=${page.url()}\n${text.slice(0, 1500)}`);
 });
-
-function uniqueEmail(label: string) {
-  return `e2e-${label}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@example.com`;
-}
-
-async function signUp(page: Page, email: string, name?: string) {
-  await page.goto("/signup");
-  if (name) await page.getByLabel("Name (optional)").fill(name);
-  await page.getByLabel("Email").fill(email);
-  await page.getByLabel("Password", { exact: true }).fill(PASSWORD);
-  await page.getByLabel("Confirm password").fill(PASSWORD);
-  await page.getByRole("button", { name: "Create account" }).click();
-  await expect(page).toHaveURL(/\/garage$/);
-}
-
-async function signIn(page: Page, email: string, password = PASSWORD) {
-  await page.getByLabel("Email").fill(email);
-  await page.getByLabel("Password", { exact: true }).fill(password);
-  await page.getByRole("button", { name: "Sign in" }).click();
-}
-
-async function signOut(page: Page) {
-  await page.getByRole("button", { name: "Sign out" }).click();
-  await expect(page).toHaveURL(/\/login\?signed_out=1$/);
-}
 
 test("sign up lands in an empty garage with the profile name", async ({ page }) => {
   await signUp(page, uniqueEmail("signup"), "Alex Rider");

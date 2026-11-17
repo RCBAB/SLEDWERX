@@ -76,18 +76,24 @@ Vercel detects Next.js and runs `npm run build`; no extra configuration is neede
 
 ```
 .
-├── .github/workflows/      # CI (lint, typecheck, build, database tests)
+├── .github/workflows/      # CI (lint, typecheck, unit, build, database and browser tests)
 ├── docs/
 │   └── database.md         # Data model, permissions, migration workflow
 ├── public/
 │   └── icons/              # App icons (favicon, PWA)
 ├── src/
 │   ├── app/                # App Router routes, layouts, global styles
+│   │   ├── (auth)/         # Sign in, sign up, password reset
+│   │   ├── auth/confirm/   # Email link handler
+│   │   ├── garage/         # Signed-in app: My Snowmobiles, sled pages, Server Actions
 │   │   ├── globals.css     # Tailwind import and theme tokens
 │   │   ├── layout.tsx      # Root layout, fonts, metadata, viewport
 │   │   ├── manifest.ts     # PWA web app manifest
-│   │   └── page.tsx        # Placeholder homepage
+│   │   └── page.tsx        # Public homepage
+│   ├── components/         # UI building blocks (ui/), app shell (app/), snowmobiles (sleds/)
 │   ├── lib/
+│   │   ├── auth/           # Session helpers, redirects, auth error messages
+│   │   ├── sleds/          # Snowmobile queries, validation, photo upload, formatting
 │   │   └── supabase/
 │   │       ├── client.ts   # Browser client (Client Components)
 │   │       ├── server.ts   # Server client (Server Components, Server Functions, Route Handlers)
@@ -97,7 +103,9 @@ Vercel detects Next.js and runs `npm run build`; no extra configuration is neede
 ├── supabase/
 │   ├── config.toml         # Local Supabase settings (CLI)
 │   ├── migrations/         # Version-controlled SQL migrations
+│   ├── rollback/           # Manual-only rollback scripts (never run by CLI or CI)
 │   └── tests/              # pgTAP database tests
+├── e2e/                    # Playwright browser tests
 ├── .env.example            # Template for local environment variables
 ├── eslint.config.mjs
 ├── next.config.ts
@@ -136,6 +144,8 @@ npm run db:test
 ```
 
 (`db:start` runs the local Supabase stack and requires Docker.)
+
+Snowmobile photos are stored in the private `sled-photos` Storage bucket created by Migration 3. Photos are resized in the browser, uploaded with the user's own session, and shown through short-lived signed URLs. Storage policies follow per-sled sharing (see docs/database.md).
 
 ## Supabase
 

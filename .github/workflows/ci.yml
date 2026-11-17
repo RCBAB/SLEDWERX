@@ -77,9 +77,10 @@ jobs:
       # Starts a throwaway local Supabase stack (Postgres, Auth, REST API) in
       # Docker on the runner and applies supabase/migrations to it.
       # Never connects to the live project.
+      # Storage is kept running: Migration 3 creates a bucket and storage policies.
       - run: >-
           npx supabase start
-          -x realtime,storage-api,imgproxy,mailpit,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
+          -x realtime,imgproxy,mailpit,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
       - run: npx supabase test db
       - name: API smoke test (local stack)
         run: |
@@ -88,8 +89,20 @@ jobs:
             node scripts/db-api-smoke-test.mjs
       # Exercises supabase/rollback/ against the throwaway local database only.
       # Rollback scripts are never applied to any real database by CI.
-      # Order: roll back Migration 2 (leaving Migration 1), re-run the
-      # Migration 1 tests on that state, then test Migration 1's rollback.
+      # Order: newest first. Roll back Migration 3 and re-run the Migration 1
+      # and 2 tests; roll back Migration 2 and re-run the Migration 1 tests;
+      # then test Migration 1's rollback.
+      - name: Migration 3 rollback test (local stack)
+        run: scripts/test-migration-3-rollback.sh
+        env:
+          THROWAWAY_DATABASE: "yes"
+          PSQL: docker exec -i supabase_db_sledwerx psql -U postgres
+      - name: Migration 1 and 2 tests after Migration 3 rollback (local stack)
+        run: >-
+          npx supabase test db
+          supabase/tests/database/001_foundation.test.sql
+          supabase/tests/database/002_maintenance_logbook.test.sql
+          supabase/tests/database/003_save_maintenance_entry.test.sql
       - name: Migration 2 rollback test (local stack)
         run: scripts/test-migration-2-rollback.sh
         env:
@@ -115,11 +128,11 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      # Throwaway local Supabase stack with Auth and the Mailpit inbox (for the
-      # password-reset email). Never connects to the live project.
+      # Throwaway local Supabase stack with Auth, Storage (sled photos) and the
+      # Mailpit inbox (password-reset email). Never connects to the live project.
       - run: >-
           npx supabase start
-          -x realtime,storage-api,imgproxy,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
+          -x realtime,imgproxy,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
       - name: Generated database types are up to date
         run: |
           eval "$(npx supabase status -o env)"

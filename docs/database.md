@@ -13,13 +13,14 @@ the helpers created in stage 1.
 | # | Migration | Status |
 |---|---|---|
 | 1 | Foundation: profiles, preferences, garages, sleds, per-sled sharing, audit log, Recently Deleted, row versioning | Applied |
-| 2 | Personal maintenance logbook: mileage and engine-hour history (with meter resets and engine replacements), user-created tasks and packages, maintenance schedules (miles, engine hours, days), logbook entries with tasks, parts and USD costs, version restore | This PR |
-| 3 | Stored reminders (upcoming / due / overdue, user thresholds) for mileage, **engine-hour** and calendar intervals, recalculated on maintenance, reading and interval changes | Planned |
-| 4 | Issues and repairs; installed parts and modifications with install/removal history (can link to logbook parts); shopping list | Planned |
-| 5 | Suspension setups (standard + manufacturer-specific fields), revisions, tuning journal, test sessions; manual ride logs | Planned |
-| 6 | Attachments: private Storage bucket, file metadata, size/type validation, storage RLS, cleanup with Recently Deleted and account deletion | Planned |
-| 7 | Community library: opt-in rider profiles, published setup copies, reviews, moderation | Planned |
-| 8 | Offline sync: change feed, conflict records and resolution | Planned |
+| 2 | Personal maintenance logbook: mileage and engine-hour history (with meter resets and engine replacements), user-created tasks and packages, maintenance schedules (miles, engine hours, days), logbook entries with tasks, parts and USD costs, version restore | Applied |
+| 3 | Snowmobile photos (private Storage bucket, `sleds.photo_path`, storage policies that follow sled sharing) and atomic `create_sled()` | Ready for review, **not applied** |
+| 4 | Stored reminders (upcoming / due / overdue, user thresholds) for mileage, **engine-hour** and calendar intervals, recalculated on maintenance, reading and interval changes | Planned |
+| 5 | Issues and repairs; installed parts and modifications with install/removal history (can link to logbook parts); shopping list | Planned |
+| 6 | Suspension setups (standard + manufacturer-specific fields), revisions, tuning journal, test sessions; manual ride logs | Planned |
+| 7 | Attachments: private Storage bucket, file metadata, size/type validation, storage RLS, cleanup with Recently Deleted and account deletion | Planned |
+| 8 | Community library: opt-in rider profiles, published setup copies, reviews, moderation | Planned |
+| 9 | Offline sync: change feed, conflict records and resolution | Planned |
 
 ## Ownership model
 
@@ -307,7 +308,51 @@ totals.
 - Costs are USD. There is no currency setting.
 - Engine hours: Decision 1 of Migration 2 approves engine-hour intervals.
   This replaces the original 1.0 note "no hour-based service reminders".
-  Reminders (Migration 3) must support hours as well as miles and days.
+  Reminders (Migration 4) must support hours as well as miles and days.
+
+## Snowmobile photos and `create_sled` (Migration 3)
+
+`supabase/migrations/20261117150000_sled_photos_and_create_sled.sql`. Additive
+only; Migrations 1 and 2 are unchanged.
+
+- **`sleds.photo_path`**: the sled's photo in the private `sled-photos`
+  bucket, named `<sled id>/<random uuid>.jpg` (or `.webp`). A check
+  constraint requires the first segment to be the sled's own id, so a sled
+  can never point at another sled's photo. Changes are audited like any
+  other sled field.
+- **Bucket `sled-photos`**: private, 5 MB per file, JPEG and WebP only. The
+  app resizes photos in the browser (longest side 1600 px, re-encoded as
+  JPEG, which also strips EXIF data such as GPS) and uploads them with the
+  user's own session. Photos are shown through signed URLs valid for one
+  hour.
+- **Storage policies** (signed-in users only) reuse the sled permissions:
+
+  | Action on a photo | Allowed for |
+  |---|---|
+  | View (and create signed URLs) | Anyone who can view the sled: owner, editor, mechanic, viewer |
+  | Upload, replace, remove | Owner and editors (`edit_sled`), and not while the sled is in Recently Deleted |
+
+  `private.photo_sled_id(name)` reads the sled id from an object name and
+  returns null for anything that isn't a valid photo path, so such objects
+  match no policy. Revoking or suspending a share removes photo access
+  immediately.
+- **`create_sled(p_make, p_model, p_model_year, p_odometer_mi, p_engine_hours,
+  p_nickname, p_vin, p_read_on, p_garage_id)`** creates a sled and its first
+  odometer/engine-hour reading in one transaction: both or neither. It runs
+  as the caller (`SECURITY INVOKER`), so RLS and every existing trigger
+  (ownership, audit, reading checks) apply unchanged. It defaults to the
+  caller's oldest garage. The odometer is required (0 allowed); engine hours
+  are optional; the date defaults to today and may be at most one day ahead
+  (time zones ahead of UTC).
+- **Reading corrections** in the app ("Fix last reading") use Migration 2's
+  existing rules: owners and editors can correct or remove any reading,
+  mechanics can correct only readings they added and cannot remove them.
+  Removal is a soft delete. Every correction keeps the old values in the
+  audit history and uses the row version (conflicts are refused).
+- **Known limitation:** when a sled is permanently deleted (after 30 days in
+  Recently Deleted, or by `permanently_delete_sled`), its photo file stays in
+  the bucket until the Phase 7 cleanup, which removes files through the
+  Storage API. Such files are unreachable: no sled matches their path.
 
 ## Units
 
@@ -324,8 +369,9 @@ profile, preferences, garages, sleds, shares, invitations for their sleds, and
 those sleds' audit history. Actor columns (`created_by`, `updated_by`, etc.)
 are plain ids without foreign keys, so deletion never rewrites other owners'
 records. Once the account is gone, those ids no longer identify anyone.
-Storage files are removed by the attachments cleanup (migration 6), which must
-run before the auth user is deleted.
+Storage files (sled photos, and later attachments) are removed by the
+Storage cleanup (Phase 7 / migration 7), which must run before the auth user
+is deleted.
 
 ## Testing
 
@@ -341,8 +387,9 @@ Supabase stack:
 - `scripts/db-api-smoke-test.mjs`, which signs up real users through Supabase
   Auth and exercises sharing, RLS, the maintenance logbook and conflict
   detection through the REST API with `supabase-js`
-- the rollback tests: Migration 2 is rolled back first, then the Migration 1
-  tests run on the resulting state, then Migration 1's rollback is tested
+- the rollback tests, newest first: Migration 3 is rolled back and the
+  Migration 1 and 2 tests run on the result; Migration 2 is rolled back and
+  the Migration 1 tests run; then Migration 1's rollback is tested
 
 CI never connects to the live project.
 

@@ -2,6 +2,7 @@ import "server-only";
 
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
+import { connection } from "next/server";
 
 import type { Database } from "./database.types";
 import { getSupabaseEnv } from "./env";
@@ -13,8 +14,11 @@ import { getSupabaseEnv } from "./env";
  * There is no service-role client in this app.
  */
 export async function createClient() {
-  // Read cookies first: it marks the render as per-request, so a missing
-  // env var fails at request time rather than during the build.
+  // Always per request: session checks compare token expiry with the current
+  // time, so they must never run while prerendering (including runtime
+  // prefetches). This also means a missing env var fails at request time
+  // rather than during the build.
+  await connection();
   const cookieStore = await cookies();
   const { url, publishableKey } = getSupabaseEnv();
 

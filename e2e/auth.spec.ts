@@ -7,6 +7,13 @@ test.skip(!process.env.E2E_SUPABASE, "Set E2E_SUPABASE=1 with a local Supabase s
 
 const PASSWORD = "snow-trail-2026";
 
+// On failure, print where the page ended up and what it shows (CI logs).
+test.afterEach(async ({ page }, testInfo) => {
+  if (testInfo.status === testInfo.expectedStatus) return;
+  const text = await page.locator("body").innerText().catch(() => "(no body)");
+  console.log(`[${testInfo.title}] url=${page.url()}\n${text.slice(0, 1500)}`);
+});
+
 function uniqueEmail(label: string) {
   return `e2e-${label}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@example.com`;
 }
@@ -94,6 +101,7 @@ test("password reset by email", async ({ page }) => {
   await signOut(page);
 
   await page.getByRole("link", { name: "Forgot your password?" }).click();
+  await expect(page.getByRole("heading", { name: "Reset password" })).toBeVisible();
   await page.getByLabel("Email").fill(email);
   await page.getByRole("button", { name: "Send reset link" }).click();
   await expect(page.getByText(/If an account exists/)).toBeVisible();

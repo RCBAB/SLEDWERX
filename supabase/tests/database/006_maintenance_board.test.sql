@@ -17,7 +17,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set search_path = public, extensions;
 
-select plan(61);
+select plan(62);
 
 insert into auth.users (id, email, email_confirmed_at) values
   ('a1111111-1111-1111-1111-111111111111', 'olive5@example.com', now()),
@@ -154,6 +154,9 @@ select is((select array_agg(status_rank order by status_rank, urgency nulls last
 select is((select array_agg(task_name order by status_rank, urgency nulls last, task_name)
            from public.maintenance_board where sled_id = (select v::uuid from t where k = 'sled') and status_rank = 0),
   array['Clutch', 'Coolant', 'Oil'], 'most overdue first (largest share of the interval past due)');
+select is((select (array_agg(task_name order by status_rank, urgency nulls last, task_name))[1]
+           from public.maintenance_board where sled_id = (select v::uuid from t where k = 'sled') and status_rank = 1),
+  'Never', 'no record yet sorts first among the yellow rows');
 
 -- ---------------------------------------------------------------------------
 -- Mark Done is an ordinary service record; the board recalculates

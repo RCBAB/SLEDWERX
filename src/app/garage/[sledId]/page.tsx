@@ -4,6 +4,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
 
+import { MaintenanceBoard } from "@/components/board/maintenance-board";
 import { QuickService } from "@/components/service/quick-service";
 import { ServiceHistory } from "@/components/service/service-history";
 import { BackLink } from "@/components/sleds/back-link";
@@ -15,7 +16,8 @@ import { Alert } from "@/components/ui/alert";
 import { ButtonLink } from "@/components/ui/button";
 import { requireUser } from "@/lib/auth/session";
 import type { RangeReading } from "@/lib/service/meter-range";
-import { listServiceRecords, taskOptionsForSled } from "@/lib/service/queries";
+import { getBoard } from "@/lib/board/queries";
+import { listPackages, listServiceRecords, taskOptionsForSled } from "@/lib/service/queries";
 import { formatDate, formatHours, formatMiles, sledDescription, sledName } from "@/lib/sleds/format";
 import { canFixReading, ROLE_LABELS, serviceCapabilities, sledCapabilities } from "@/lib/sleds/permissions";
 import { getSled, type SledDetail } from "@/lib/sleds/queries";
@@ -66,9 +68,11 @@ async function SledDashboard({ params, searchParams }: Pick<PageProps<"/garage/[
               ? NOTICES.serviceUpdated
               : null;
   const last = sled.readings[0];
-  const [services, taskOptions] = await Promise.all([
+  const [services, taskOptions, board, packages] = await Promise.all([
     listServiceRecords(sled.id),
     can.canLogService ? taskOptionsForSled(sled) : Promise.resolve([]),
+    getBoard(sled.id),
+    can.canLogService ? listPackages(user.id) : Promise.resolve([]),
   ]);
   const lastService = last ? services.find((service) => service.readingId === last.id) : undefined;
   // Oldest first, so readings of the same day keep the order they were entered.
@@ -126,21 +130,16 @@ async function SledDashboard({ params, searchParams }: Pick<PageProps<"/garage/[
         </div>
       </section>
 
-      <Details sled={sled} />
-
-      <section id="service-history" className="mt-10 scroll-mt-24" aria-labelledby="service-heading">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h2 id="service-heading" className="font-display text-2xl font-bold uppercase tracking-wide">
-            Service history
-          </h2>
-          {can.canLogService ? (
-            <ButtonLink href={`/garage/${sled.id}/service/new`} variant="secondary">
-              Full service record
-            </ButtonLink>
-          ) : null}
-        </div>
-        <ServiceHistory sledId={sled.id} records={services} role={sled.role} userId={user.id} />
-      </section>
+      <MaintenanceBoard
+        sledId={sled.id}
+        rows={board}
+        canManage={can.canManageSledTasks}
+        canComplete={can.canLogService}
+        taskOptions={taskOptions}
+        packages={packages}
+        readings={rangeReadings}
+        current={currentMeters}
+      />
 
       <section className="mt-10" aria-labelledby="mileage-heading">
         <h2 id="mileage-heading" className="font-display text-2xl font-bold uppercase tracking-wide">
@@ -175,6 +174,22 @@ async function SledDashboard({ params, searchParams }: Pick<PageProps<"/garage/[
 
         <ReadingHistory sled={sled} />
       </section>
+
+      <section id="service-history" className="mt-10 scroll-mt-24" aria-labelledby="service-heading">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 id="service-heading" className="font-display text-2xl font-bold uppercase tracking-wide">
+            Service history
+          </h2>
+          {can.canLogService ? (
+            <ButtonLink href={`/garage/${sled.id}/service/new`} variant="secondary">
+              Full service record
+            </ButtonLink>
+          ) : null}
+        </div>
+        <ServiceHistory sledId={sled.id} records={services} role={sled.role} userId={user.id} />
+      </section>
+
+      <Details sled={sled} />
     </>
   );
 }

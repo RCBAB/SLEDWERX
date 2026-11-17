@@ -15,8 +15,8 @@ the helpers created in stage 1.
 | 1 | Foundation: profiles, preferences, garages, sleds, per-sled sharing, audit log, Recently Deleted, row versioning | Applied |
 | 2 | Personal maintenance logbook: mileage and engine-hour history (with meter resets and engine replacements), user-created tasks and packages, maintenance schedules (miles, engine hours, days), logbook entries with tasks, parts and USD costs, version restore | Applied |
 | 3 | Snowmobile photos (private Storage bucket, `sleds.photo_path`, storage policies that follow sled sharing), atomic `create_sled()`, and no future-dated readings | Applied |
-| 4 | Service records: categories, `edited_at`, no future service dates, `save_maintenance_entry` with a category, atomic `update_maintenance_entry()`, items that follow their record (mechanics can fix their own records) | Ready for review, **not applied** |
-| 5 | Stored reminders (upcoming / due / overdue, user thresholds) for mileage, **engine-hour** and calendar intervals, recalculated on maintenance, reading and interval changes | Planned |
+| 4 | Service records: categories, `edited_at`, no future service dates, `save_maintenance_entry` with a category, atomic `update_maintenance_entry()`, items that follow their record (mechanics can fix their own records) | Applied |
+| 5 | Maintenance Board: a calculated `maintenance_board` view (last done, next due, status) for mileage, **engine-hour**, calendar and once-a-season schedules; plans without an interval; no future "done before" dates. Replaces the planned stored reminders | Ready for review, **not applied** |
 | 6 | Issues and repairs; installed parts and modifications with install/removal history (can link to logbook parts); shopping list | Planned |
 | 7 | Suspension setups (standard + manufacturer-specific fields), revisions, tuning journal, test sessions; manual ride logs | Planned |
 | 8 | Attachments: private Storage bucket, file metadata, size/type validation, storage RLS, cleanup with Recently Deleted and account deletion | Planned |
@@ -309,7 +309,7 @@ totals.
 - Costs are USD. There is no currency setting.
 - Engine hours: Decision 1 of Migration 2 approves engine-hour intervals.
   This replaces the original 1.0 note "no hour-based service reminders".
-  Reminders (Migration 5) must support hours as well as miles and days.
+  The Maintenance Board (Migration 5) supports hours as well as miles and days.
 
 ## Snowmobile photos and `create_sled` (Migration 3)
 
@@ -409,6 +409,65 @@ Phase 3 builds on Migration 2's logbook. Migrations 1-3 are unchanged.
 | Remove the mileage (reading) | ✅ | ❌ | ❌ | ❌ |
 | Delete the record | ✅ | ❌ | ❌ | ❌ |
 
+## Maintenance Board (Migration 5)
+
+`supabase/migrations/20261119090000_maintenance_board.sql`. No new tables:
+the board is **calculated** from the schedules (`maintenance_plans`) and the
+service history every time it is read, so there is nothing to keep in sync
+and no stored reminders. Editing, deleting or backdating a service updates the
+board automatically. Migrations 1-4 are unchanged.
+
+- **Schema changes to `maintenance_plans`:**
+  - `season_due_month`, `season_due_day` (both or neither): "once a season,
+    due by Nov 1". Seasons run July to June. Feb 29 is accepted and treated
+    as Feb 28 in years without it.
+  - Migration 2's rule "at least one interval" (`maintenance_plans_check`) is
+    replaced by `maintenance_plans_season_check`: a plan may now have no
+    interval at all, which keeps the task on the board as "Not scheduled".
+  - `last_done_on` (the "done before SledWerx" starting point) cannot be in
+    the future (trigger `date_check`, same one-day margin as readings).
+- **`public.maintenance_board`** (view, `security_invoker = true`, so the
+  caller's RLS applies; `select` for `authenticated` only). One row per active
+  plan with: last done (date, mileage, hours and whether it came from a
+  service or the "done before" starting point), next due (date, mileage,
+  hours), remaining, the warning window used, `status`, `status_rank` and
+  `urgency`.
+- **What counts as done**: a task linked to the board task (`task_id`) and
+  ticked done, on a completed, non-deleted service record. The newest by
+  service date wins; a "done before SledWerx" date counts only if no service
+  is newer. Free-text tasks with the same name do not count.
+- **Mileage is never estimated.** A completion's mileage and hours are the
+  service's own reading (lifetime totals, so meter resets and engine
+  replacements are handled). A service without mileage shows "Mileage
+  unknown" (`mileage_unknown = true`); a nearby reading is never used.
+- **Status** (`status_rank` sorts the board; `urgency`, the share of the
+  interval left on the closest dimension, sorts within a rank):
+
+  | Status | Colour | Rank |
+  |---|---|---|
+  | `overdue` | red | 0 |
+  | `no_record` (scheduled, never done, no starting point) | yellow, first | 1 |
+  | `upcoming` (inside the warning window) | yellow | 1 |
+  | `mileage_unknown` (nothing else to measure) | yellow | 1 |
+  | `good` | green | 2 |
+  | `unscheduled`, `paused` | grey | 3 |
+
+- **Warning window**: 10% of the interval, at least 50 mi, 2 hrs or 7 days,
+  and at most 30 days. Seasonal items warn 30 days before their date. The
+  values come from `private.maintenance_warning_settings(user_id)`, so
+  per-user settings can be added later by changing only that function (and a
+  settings table) without changing the view or the app.
+- **Mark Done** is an ordinary service record created with
+  `save_maintenance_entry` (Migration 4). Completing several tasks, or a
+  package, creates one record. All the usual rules apply: RLS, audit,
+  idempotency key, no future dates, mileage validated against the history.
+
+| Action on the board | Owner / editor | Mechanic | Viewer |
+|---|---|---|---|
+| See the board | ✅ | ✅ | ✅ |
+| Mark tasks done (creates a service record) | ✅ | ✅ | ❌ |
+| Add, schedule, pause, remove | ✅ | ❌ | ❌ |
+
 ## Units
 
 1.0 uses US units, stored in the unit named by the column: `*_mi` (miles),
@@ -442,7 +501,7 @@ Supabase stack:
 - `scripts/db-api-smoke-test.mjs`, which signs up real users through Supabase
   Auth and exercises sharing, RLS, the maintenance logbook and conflict
   detection through the REST API with `supabase-js`
-- the rollback tests, newest first: 4, 3, 2, 1. After each rollback, the
+- the rollback tests, newest first: 5, 4, 3, 2, 1. After each rollback, the
   tests of the remaining migrations run again on the result
 
 CI never connects to the live project.

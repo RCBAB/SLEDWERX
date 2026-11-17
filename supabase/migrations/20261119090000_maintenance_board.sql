@@ -284,11 +284,15 @@ select
     else 2
   end as status_rank,
   -- Fraction of the interval left on the closest dimension (lower = sooner).
-  least(
+  -- Never done with no starting point sorts first among the yellow rows.
+  case
+    when not (c.paused or c.unscheduled) and coalesce(c.worst, 0) not in (1, 2)
+         and c.last_done_source is null and c.season_due_month is null then -1
+    else least(
     c.remaining_mi / nullif(c.interval_mi, 0),
     c.remaining_hours / nullif(c.interval_hours, 0),
-    c.remaining_days::numeric / nullif(coalesce(c.interval_days, 365), 0)
-  ) as urgency
+    c.remaining_days::numeric / nullif(coalesce(c.interval_days, 365), 0))
+  end as urgency
 from classified c;
 
 comment on view public.maintenance_board is

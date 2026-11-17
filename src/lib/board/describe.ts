@@ -106,3 +106,35 @@ export function lastDoneLine(row: BoardRow): string {
   if (row.lastDoneHours != null) meters.push(`${number.format(row.lastDoneHours)} hrs`);
   return `${prefix} ${when}${meters.length ? ` · ${meters.join(" · ")}` : ""}`;
 }
+
+/**
+ * "Next due Jun 5, 2027 · 2,200 mi · 140 hrs". Mileage and hours are on the
+ * sled's current odometer and hour meter (current reading + what's left), so
+ * they match the gauges even after a meter reset. Never estimated: with no
+ * known mileage, only the date (if any) is shown.
+ */
+export function nextDueLine(row: BoardRow, current: { odometer: number | null; engineHours: number | null }): string {
+  if (row.status === "paused") return "Paused";
+  if (row.status === "unscheduled") return "Not scheduled";
+  const parts: string[] = [];
+  if (row.dueOn) parts.push(formatDate(row.dueOn));
+  if (row.remainingMi != null && current.odometer != null) parts.push(`${number.format(Math.max(0, current.odometer + row.remainingMi))} mi`);
+  if (row.remainingHours != null && current.engineHours != null)
+    parts.push(`${number.format(Math.max(0, current.engineHours + row.remainingHours))} hrs`);
+  if (parts.length) return `Next due ${parts.join(" · ")}`;
+  if (row.status === "no_record") return "Next due: starts once it's first done";
+  if (row.status === "mileage_unknown") return "Next due: mileage unknown";
+  return "Next due: not set";
+}
+
+/** Last done for tight spaces (Compact view): "Dec 5, 2025 · 1,200 mi", "Never". */
+export function lastDoneShort(row: BoardRow): string {
+  if (!row.lastDoneSource) return "Never";
+  return lastDoneLine(row).replace(/^(Last done|Done before SledWerx) /, (_, prefix: string) => (prefix === "Last done" ? "" : "Before SledWerx: "));
+}
+
+/** Next due for tight spaces (Compact view): "Jun 5, 2027 · 2,200 mi". */
+export function nextDueShort(row: BoardRow, current: { odometer: number | null; engineHours: number | null }): string {
+  const line = nextDueLine(row, current).replace(/^Next due:? /, "");
+  return line.charAt(0).toUpperCase() + line.slice(1);
+}

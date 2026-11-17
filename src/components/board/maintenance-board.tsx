@@ -1,16 +1,9 @@
 "use client";
 
 import { Check, CheckSquare, ListChecks, Plus, Settings2, Square } from "lucide-react";
-import { useActionState, useRef, useState } from "react";
+import { useActionState, useLayoutEffect, useState } from "react";
 
-import {
-  addToBoard,
-  completeTasks,
-  removeFromBoard,
-  saveSchedule,
-  type BoardActionState,
-} from "@/app/garage/board-actions";
-import { ServiceMeterFields, useServiceMeters } from "@/components/service/mileage";
+import { addToBoard, removeFromBoard, saveSchedule, type BoardActionState } from "@/app/garage/board-actions";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/components/ui/cn";
@@ -18,45 +11,24 @@ import { CheckboxField, Field, SelectField } from "@/components/ui/field";
 import { SubmitButton } from "@/components/ui/submit-button";
 import { STATUS_LABEL, STATUS_TONE, daysToInterval, lastDoneLine, scheduleSummary, statusLine } from "@/lib/board/describe";
 import type { BoardRow } from "@/lib/board/types";
-import type { RangeReading } from "@/lib/service/meter-range";
-import type { MaintenancePackage, TaskOption } from "@/lib/service/queries";
 import { useLocalToday, useTimeZone } from "@/lib/sleds/use-local-today";
-import { randomUuid } from "@/lib/uuid";
 
+import { CompleteForm, PackageForm, TONE_BAR, TONE_TEXT, type CompletionContext, type TaskRef } from "./complete-form";
 import { Sheet } from "./sheet";
+import { useRefreshOnReturn } from "./use-refresh-on-return";
 
-type Props = {
-  sledId: string;
+type Props = CompletionContext & {
   rows: BoardRow[];
   canManage: boolean;
   canComplete: boolean;
-  taskOptions: TaskOption[];
-  packages: MaintenancePackage[];
-  readings: RangeReading[];
-  current: { odometer: number | null; engineHours: number | null };
 };
 
-type TaskRef = { taskId?: string; name: string };
 type OpenSheet =
   | { kind: "done"; tasks: TaskRef[]; title?: string; choose?: boolean }
   | { kind: "schedule"; row: BoardRow }
   | { kind: "add" }
   | { kind: "package" }
   | null;
-
-const TONE_BAR = {
-  red: "bg-red-500",
-  yellow: "bg-amber-400",
-  green: "bg-emerald-500",
-  neutral: "bg-white/20",
-} as const;
-
-const TONE_TEXT = {
-  red: "text-red-300",
-  yellow: "text-amber-300",
-  green: "text-emerald-300",
-  neutral: "text-muted",
-} as const;
 
 export function MaintenanceBoard(props: Props) {
   const { rows, canManage, canComplete, packages } = props;
@@ -70,6 +42,10 @@ export function MaintenanceBoard(props: Props) {
     setSheet(next);
   };
   const close = () => setSheet(null);
+  // Next.js keeps a page hidden (not unmounted) after navigating away; close
+  // any open sheet then, so it isn't still open on return.
+  useLayoutEffect(() => () => setSheet(null), []);
+  useRefreshOnReturn();
   const toggle = (planId: string) =>
     setSelected((ids) => (ids.includes(planId) ? ids.filter((i) => i !== planId) : [...ids, planId]));
   const selectedRows = rows.filter((r) => selected.includes(r.planId));
@@ -245,111 +221,6 @@ export function MaintenanceBoard(props: Props) {
         {sheet?.kind === "add" ? <AddForm key={session} {...props} onDone={close} /> : null}
       </Sheet>
     </section>
-  );
-}
-
-/** Date, mileage and hours for a completion (today and the current meters by default). */
-function CompleteForm({
-  sledId,
-  tasks,
-  title,
-  readings,
-  current,
-  onDone,
-}: Props & { tasks: TaskRef[]; title?: string; onDone: () => void }) {
-  const today = useLocalToday();
-  const timeZone = useTimeZone();
-  const meters = useServiceMeters({ today, current, prefillToday: true });
-  const key = useRef<string | null>(null);
-  const [state, action] = useActionState<BoardActionState, FormData>(async (prev, formData) => {
-    key.current ??= randomUuid();
-    formData.set("idempotencyKey", key.current);
-    const result = await completeTasks(prev, formData);
-    if (result.ok) onDone();
-    return result;
-  }, {});
-  const errors = state.fieldErrors ?? {};
-
-  return (
-    <form action={action} className="space-y-5" noValidate>
-      <input type="hidden" name="sledId" value={sledId} />
-      <input type="hidden" name="timeZone" value={timeZone} />
-      <input type="hidden" name="tasks" value={JSON.stringify(tasks)} />
-      {title ? <input type="hidden" name="title" value={title} /> : null}
-      {state.error && !state.fieldErrors ? <Alert tone="error">{state.error}</Alert> : null}
-      {errors.tasks ? <Alert tone="error">{errors.tasks[0]}</Alert> : null}
-      {tasks.length > 1 ? (
-        <ul className="list-inside list-disc text-sm text-foreground/90" data-testid="done-tasks">
-          {tasks.map((t) => (
-            <li key={t.taskId ?? t.name}>{t.name}</li>
-          ))}
-        </ul>
-      ) : null}
-      <ServiceMeterFields meters={meters} readings={readings} errors={errors} today={today} />
-      <SubmitButton pendingText="Saving…">Save</SubmitButton>
-    </form>
-  );
-}
-
-/** Pick a package, tick the tasks you did, then save like Mark Done. */
-function PackageForm(props: Props & { onDone: () => void }) {
-  const { packages } = props;
-  const [packageId, setPackageId] = useState(packages[0]?.id ?? "");
-  const pkg = packages.find((p) => p.id === packageId);
-  const [unticked, setUnticked] = useState<string[]>([]);
-  const ticked = (pkg?.items ?? []).filter((i) => !unticked.includes(i.taskId));
-  const linkable = new Set(props.taskOptions.map((o) => o.id));
-  const someNotLinked = ticked.some((i) => !linkable.has(i.taskId));
-
-  return (
-    <div className="space-y-5">
-      <SelectField
-        label="Package"
-        name="package"
-        value={packageId}
-        onChange={(event) => {
-          setPackageId(event.target.value);
-          setUnticked([]);
-        }}
-      >
-        {packages.map((p) => (
-          <option key={p.id} value={p.id}>
-            {p.name}
-          </option>
-        ))}
-      </SelectField>
-      {pkg?.items.length ? (
-        <fieldset className="space-y-2">
-          <legend className="mb-2 text-sm font-medium text-foreground/90">Tasks done</legend>
-          {pkg.items.map((item) => (
-            <CheckboxField
-              key={item.id}
-              label={item.name}
-              name={`task-${item.taskId}`}
-              checked={!unticked.includes(item.taskId)}
-              onChange={(event) =>
-                setUnticked((ids) => (event.target.checked ? ids.filter((i) => i !== item.taskId) : [...ids, item.taskId]))
-              }
-            />
-          ))}
-        </fieldset>
-      ) : (
-        <p className="text-sm text-muted">This package has no tasks yet.</p>
-      )}
-      {someNotLinked ? (
-        <p className="text-sm text-muted">
-          Some of these tasks aren&apos;t on this snowmobile&apos;s task list, so they&apos;ll be saved by name and won&apos;t update the board.
-        </p>
-      ) : null}
-      {ticked.length ? (
-        <CompleteForm
-          key={`${packageId}-${ticked.length}`}
-          {...props}
-          title={pkg?.name}
-          tasks={ticked.map((i) => ({ taskId: i.taskId, name: i.name }))}
-        />
-      ) : null}
-    </div>
   );
 }
 

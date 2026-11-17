@@ -16,7 +16,7 @@ the helpers created in stage 1.
 | 2 | Personal maintenance logbook: mileage and engine-hour history (with meter resets and engine replacements), user-created tasks and packages, maintenance schedules (miles, engine hours, days), logbook entries with tasks, parts and USD costs, version restore | Applied |
 | 3 | Snowmobile photos (private Storage bucket, `sleds.photo_path`, storage policies that follow sled sharing), atomic `create_sled()`, and no future-dated readings | Applied |
 | 4 | Service records: categories, `edited_at`, no future service dates, `save_maintenance_entry` with a category, atomic `update_maintenance_entry()`, items that follow their record (mechanics can fix their own records) | Applied |
-| 5 | Maintenance Board: a calculated `maintenance_board` view (last done, next due, status) for mileage, **engine-hour**, calendar and once-a-season schedules; plans without an interval; no future "done before" dates. Replaces the planned stored reminders | Ready for review, **not applied** |
+| 5 | Maintenance Board: a calculated `maintenance_board` view (last done, next due, status) for mileage, **engine-hour**, calendar and once-a-season schedules; plans without an interval; no future "done before" dates. Replaces the planned stored reminders | Applied |
 | 6 | Issues and repairs; installed parts and modifications with install/removal history (can link to logbook parts); shopping list | Planned |
 | 7 | Suspension setups (standard + manufacturer-specific fields), revisions, tuning journal, test sessions; manual ride logs | Planned |
 | 8 | Attachments: private Storage bucket, file metadata, size/type validation, storage RLS, cleanup with Recently Deleted and account deletion | Planned |
@@ -468,6 +468,27 @@ board automatically. Migrations 1-4 are unchanged.
 | Mark tasks done (creates a service record) | ✅ | ✅ | ❌ |
 | Add, schedule, pause, remove | ✅ | ❌ | ❌ |
 
+## Garage Board (Phase 5, no migration)
+
+The Garage Board (`/garage/board`) shows every sled the user can see and its
+maintenance, like a dry-erase board on the garage wall. It adds **no tables,
+views, functions or policies**:
+
+- It reads `maintenance_board` (Migration 5) for all visible sleds in one
+  query (`sled_id in (...)`). The view is `security_invoker`, so RLS returns
+  exactly the sleds the user owns or that are shared with them.
+- Done and Complete package call the same `completeTasks` action as the
+  sled's own Maintenance Board, which saves an ordinary service record with
+  `save_maintenance_entry`. There is no second maintenance system.
+- The layout choice (Full Cards or Compact) is kept in
+  `user_preferences.garage_mode` (Migration 1), as `{"layout": "cards" |
+  "compact"}`. The app merges it into the existing object, so other Garage
+  Mode settings can live beside it. The row is private to its user (RLS).
+
+Tests: `supabase/tests/database/007_garage_board.test.sql` (multi-sled reads
+follow sharing, a mechanic's completion updates the shared sled's board, the
+preference is private).
+
 ## Units
 
 1.0 uses US units, stored in the unit named by the column: `*_mi` (miles),
@@ -498,6 +519,7 @@ npm run db:stop
 CI runs the same tests on every pull request against a throwaway local
 Supabase stack:
 - the pgTAP tests in `supabase/tests/database/`, one file per migration
+  (plus `007_garage_board`, which tests Phase 5 against existing objects)
 - `scripts/db-api-smoke-test.mjs`, which signs up real users through Supabase
   Auth and exercises sharing, RLS, the maintenance logbook and conflict
   detection through the REST API with `supabase-js`

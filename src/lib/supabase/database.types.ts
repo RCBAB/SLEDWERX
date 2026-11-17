@@ -188,14 +188,14 @@ isOneToOne: false
                   ]
                 },"maintenance_plans": {
                   Row: {
-                    "created_at": string,"created_by": string | null,"deleted_at": string | null,"deleted_by": string | null,"id": string,"interval_days": number | null,"interval_hours": number | null,"interval_mi": number | null,"last_done_hours": number | null,"last_done_mi": number | null,"last_done_on": string | null,"notes": string | null,"paused": boolean,"sled_id": string,"task_id": string,"updated_at": string,"updated_by": string | null,"version": number
+                    "created_at": string,"created_by": string | null,"deleted_at": string | null,"deleted_by": string | null,"id": string,"interval_days": number | null,"interval_hours": number | null,"interval_mi": number | null,"last_done_hours": number | null,"last_done_mi": number | null,"last_done_on": string | null,"notes": string | null,"paused": boolean,"season_due_day": number | null,"season_due_month": number | null,"sled_id": string,"task_id": string,"updated_at": string,"updated_by": string | null,"version": number
                   }
                   ComputedFields: never
                   Insert: {
-                    "created_at"?: string,"created_by"?: string | null,"deleted_at"?: string | null,"deleted_by"?: string | null,"id"?: string,"interval_days"?: number | null,"interval_hours"?: number | null,"interval_mi"?: number | null,"last_done_hours"?: number | null,"last_done_mi"?: number | null,"last_done_on"?: string | null,"notes"?: string | null,"paused"?: boolean,"sled_id": string,"task_id": string,"updated_at"?: string,"updated_by"?: string | null,"version"?: number
+                    "created_at"?: string,"created_by"?: string | null,"deleted_at"?: string | null,"deleted_by"?: string | null,"id"?: string,"interval_days"?: number | null,"interval_hours"?: number | null,"interval_mi"?: number | null,"last_done_hours"?: number | null,"last_done_mi"?: number | null,"last_done_on"?: string | null,"notes"?: string | null,"paused"?: boolean,"season_due_day"?: number | null,"season_due_month"?: number | null,"sled_id": string,"task_id": string,"updated_at"?: string,"updated_by"?: string | null,"version"?: number
                   }
                   Update: {
-                    "created_at"?: string,"created_by"?: string | null,"deleted_at"?: string | null,"deleted_by"?: string | null,"id"?: string,"interval_days"?: number | null,"interval_hours"?: number | null,"interval_mi"?: number | null,"last_done_hours"?: number | null,"last_done_mi"?: number | null,"last_done_on"?: string | null,"notes"?: string | null,"paused"?: boolean,"sled_id"?: string,"task_id"?: string,"updated_at"?: string,"updated_by"?: string | null,"version"?: number
+                    "created_at"?: string,"created_by"?: string | null,"deleted_at"?: string | null,"deleted_by"?: string | null,"id"?: string,"interval_days"?: number | null,"interval_hours"?: number | null,"interval_mi"?: number | null,"last_done_hours"?: number | null,"last_done_mi"?: number | null,"last_done_on"?: string | null,"notes"?: string | null,"paused"?: boolean,"season_due_day"?: number | null,"season_due_month"?: number | null,"sled_id"?: string,"task_id"?: string,"updated_at"?: string,"updated_by"?: string | null,"version"?: number
                   }
                   Relationships: [
                     {
@@ -343,7 +343,27 @@ isOneToOne: false
                 }
           }
           Views: {
-            "maintenance_entry_costs": {
+            "maintenance_board": {
+                  Row: {
+                    "baseline_hours": number | null,"baseline_mi": number | null,"baseline_on": string | null,"created_by": string | null,"current_hours": number | null,"current_mi": number | null,"due_hours": number | null,"due_mi": number | null,"due_on": string | null,"hours_unknown": boolean | null,"interval_days": number | null,"interval_hours": number | null,"interval_mi": number | null,"last_done_entry_id": string | null,"last_done_hours": number | null,"last_done_mi": number | null,"last_done_on": string | null,"last_done_source": string | null,"mileage_unknown": boolean | null,"notes": string | null,"paused": boolean,"plan_id": string,"remaining_days": number | null,"remaining_hours": number | null,"remaining_mi": number | null,"season_due_day": number | null,"season_due_month": number | null,"sled_id": string,"status": string | null,"status_rank": number | null,"task_id": string,"task_name": string,"urgency": number | null,"version": number,"warn_days": number | null,"warn_hours": number | null,"warn_mi": number | null,"warn_season_days": number | null
+                  }
+                  ComputedFields: never
+                  Relationships: [
+                    {
+      foreignKeyName: "maintenance_plans_sled_id_fkey"
+      columns: ["sled_id"]
+isOneToOne: false
+      referencedRelation: "sleds"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "maintenance_plans_task_id_fkey"
+      columns: ["task_id"]
+isOneToOne: false
+      referencedRelation: "maintenance_tasks"
+      referencedColumns: ["id"]
+    }
+                  ]
+                },"maintenance_entry_costs": {
                   Row: {
                     "entry_id": string,"labor_cost": number | null,"other_cost": number | null,"parts_cost": number | null,"sled_id": string,"total_cost": number | null
                   }

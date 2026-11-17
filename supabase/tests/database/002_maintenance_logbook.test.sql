@@ -119,9 +119,11 @@ select lives_ok($$ insert into public.maintenance_plans (id, sled_id, task_id, i
   values ('5d000000-0000-0000-0000-000000000001', '5aaaaaaa-0000-0000-0000-000000000001',
           '5b000000-0000-0000-0000-000000000001', 500, 365) $$,
   'owner can schedule a library task by miles and days');
-select throws_ok($$ insert into public.maintenance_plans (sled_id, task_id)
-  values ('5aaaaaaa-0000-0000-0000-000000000002', '5b000000-0000-0000-0000-000000000001') $$,
-  '23514', null, 'a schedule needs at least one interval');
+-- (Migration 5 allows a plan without an interval: an unscheduled board item.
+-- That rule is tested in 006; this checks what holds before and after it.)
+select throws_ok($$ insert into public.maintenance_plans (sled_id, task_id, interval_mi)
+  values ('5aaaaaaa-0000-0000-0000-000000000002', '5b000000-0000-0000-0000-000000000001', 0) $$,
+  '23514', null, 'schedule intervals must be positive');
 select throws_ok($$ insert into public.maintenance_plans (sled_id, task_id, interval_days)
   values ('5aaaaaaa-0000-0000-0000-000000000001', '5b000000-0000-0000-0000-000000000001', 30) $$,
   '23505', null, 'one active schedule per task per sled');

@@ -18,9 +18,61 @@ below call for it, and preferably after talking it through.
 
 ## Order matters
 
-Roll back the newest migration first: Migration 4, then 3, then 2, then 1. Each
+Roll back the newest migration first: Migration 5, then 4, then 3, then 2, then 1. Each
 older rollback fails safely (changing nothing) while a newer migration that
 depends on it is still applied.
+
+---
+
+## `20261119090000_rollback.sql` (Migration 5)
+
+Undoes `supabase/migrations/20261119090000_maintenance_board.sql`: the
+`maintenance_board` view, `private.maintenance_warning_settings()`, the
+"done before" date trigger, the season rule and the `season_due_month` /
+`season_due_day` columns. It restores Migration 2's rule that every schedule
+has at least one interval (`maintenance_plans_check`), exactly as it was.
+**Schedules and service records are kept.**
+
+### When to use it
+
+Only when **all** of these are true:
+
+1. Migration 5 was applied (`20261119090000` is listed under Remote).
+2. A post-deployment check failed.
+3. No schedule is seasonal and every schedule has an interval (Step 1).
+4. The app version that uses Migration 5 is not deployed (roll back in
+   Vercel first): its sled page reads `maintenance_board`.
+
+### Step 1: Confirm nothing depends on Migration 5 (read-only)
+
+```sql
+select count(*) from public.maintenance_plans
+where season_due_month is not null
+   or num_nonnulls(interval_mi, interval_hours, interval_days) = 0;
+```
+
+The count must be `0` (removed schedules count too, because the restored
+rule applies to every row). Otherwise the script refuses to run and changes
+nothing: once people use these features, fix forward instead of rolling back.
+
+### Step 2: Run the rollback
+
+In **SQL Editor**, first line:
+```sql
+set sledwerx.confirm_rollback = '20261119090000';
+```
+then paste the whole of `20261119090000_rollback.sql` and run it once. The
+expected result is a `Rollback complete` notice. Any error means nothing
+changed.
+
+### Step 3: Verify (read-only)
+
+`npx supabase migration list --remote` should show `20261119090000` under
+Local only, and this should return no rows:
+
+```sql
+select viewname from pg_views where schemaname = 'public' and viewname = 'maintenance_board';
+```
 
 ---
 
@@ -312,7 +364,7 @@ touched.
 ### Testing
 
 CI tests every rollback script on every pull request against a throwaway
-local Supabase database (Migration 4 first, then 3, 2 and 1). It checks that
+local Supabase database (Migration 5 first, then 4, 3, 2 and 1). It checks that
 each script:
 
 - refuses to run without confirmation

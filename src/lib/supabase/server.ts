@@ -13,8 +13,10 @@ import { getSupabaseEnv } from "./env";
  * There is no service-role client in this app.
  */
 export async function createClient() {
-  const { url, publishableKey } = getSupabaseEnv();
+  // Read cookies first: it marks the render as per-request, so a missing
+  // env var fails at request time rather than during the build.
   const cookieStore = await cookies();
+  const { url, publishableKey } = getSupabaseEnv();
 
   return createServerClient<Database>(url, publishableKey, {
     cookies: {

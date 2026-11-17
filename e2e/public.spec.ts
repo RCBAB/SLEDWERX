@@ -23,9 +23,9 @@ test("signed-out visitors are sent from snowmobile pages to sign in", async ({ p
 
 test("sign-up form validates before contacting the server", async ({ page }) => {
   await page.goto("/signup");
-  await page.getByLabel("Email").fill("someone@example.com");
-  await page.getByLabel("Password", { exact: true }).fill("long-enough-1");
-  await page.getByLabel("Confirm password").fill("does-not-match");
+  await page.getByLabel("Email").filter({ visible: true }).fill("someone@example.com");
+  await page.getByLabel("Password", { exact: true }).filter({ visible: true }).fill("long-enough-1");
+  await page.getByLabel("Confirm password").filter({ visible: true }).fill("does-not-match");
   await page.getByRole("button", { name: "Create account" }).click();
   await expect(page.getByText("Passwords don't match.")).toBeVisible();
   await expect(page).toHaveURL(/\/signup$/);

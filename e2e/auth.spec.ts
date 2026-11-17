@@ -77,7 +77,7 @@ test("password reset by email", async ({ page }) => {
 
   await page.getByRole("link", { name: "Forgot your password?" }).click();
   await expect(page.getByRole("heading", { name: "Reset password" })).toBeVisible();
-  await page.getByLabel("Email").fill(email);
+  await page.getByLabel("Email").filter({ visible: true }).fill(email);
   await page.getByRole("button", { name: "Send reset link" }).click();
   await expect(page.getByText(/If an account exists/)).toBeVisible();
 
@@ -87,8 +87,8 @@ test("password reset by email", async ({ page }) => {
   await expect(page).toHaveURL(/\/reset-password$/);
 
   const newPassword = "fresh-powder-2026";
-  await page.getByLabel("New password", { exact: true }).fill(newPassword);
-  await page.getByLabel("Confirm new password").fill(newPassword);
+  await page.getByLabel("New password", { exact: true }).filter({ visible: true }).fill(newPassword);
+  await page.getByLabel("Confirm new password").filter({ visible: true }).fill(newPassword);
   await page.getByRole("button", { name: "Save new password" }).click();
   await expect(page).toHaveURL(/\/garage$/);
 

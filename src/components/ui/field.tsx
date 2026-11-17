@@ -1,59 +1,21 @@
 "use client";
 
-import { useId, type ComponentProps } from "react";
+import { useId, type ComponentProps, type ReactNode } from "react";
 
 import { cn } from "./cn";
 
-/**
- * A unique id for a field. Next.js can keep a previously visited page mounted
- * (hidden) for instant back navigation, so ids derived from field names alone
- * could collide across pages and point labels at the wrong input.
- */
-function useFieldId(id: string | undefined, name: string) {
-  const unique = useId();
-  return id ?? `${name}-${unique.replace(/[^a-zA-Z0-9_-]/g, "")}`;
+// Labels wrap their control instead of pointing at it by id. Next.js keeps
+// recently visited pages mounted (hidden) for instant back navigation, so an
+// id-based label could end up pointing at the same field on a hidden page.
+// A wrapping label can only ever belong to its own control. The control also
+// gets the label as its accessible name, so typed values never change it.
+
+/** An id for hint and error text (only referenced from within this field). */
+function useMessageId(name: string) {
+  return `${name}-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
 }
 
-/** A labelled input with its validation message. */
-export function Field({
-  label,
-  name,
-  error,
-  hint,
-  className,
-  ...inputProps
-}: ComponentProps<"input"> & { label: string; name: string; error?: string; hint?: string }) {
-  const id = useFieldId(inputProps.id, name);
-  const describedBy = error ? `${id}-error` : hint ? `${id}-hint` : undefined;
-  return (
-    <div className={cn("space-y-1.5", className)}>
-      <label htmlFor={id} className="block text-sm font-medium text-foreground/90">
-        {label}
-      </label>
-      <input
-        {...inputProps}
-        id={id}
-        name={name}
-        aria-invalid={error ? true : undefined}
-        aria-describedby={describedBy}
-        className={cn(
-          "block h-12 w-full rounded-lg border bg-black/30 px-3.5 text-base text-foreground",
-          "placeholder:text-muted/70 focus:outline-2 focus:outline-offset-0 focus:outline-accent",
-          error ? "border-accent" : "border-white/15",
-        )}
-      />
-      {error ? (
-        <p id={`${id}-error`} className="text-sm text-accent-hot">
-          {error}
-        </p>
-      ) : hint ? (
-        <p id={`${id}-hint`} className="text-sm text-muted">
-          {hint}
-        </p>
-      ) : null}
-    </div>
-  );
-}
+const labelText = "block text-sm font-medium text-foreground/90";
 
 const controlClasses = (error?: string) =>
   cn(
@@ -77,6 +39,46 @@ function FieldMessage({ id, error, hint }: { id: string; error?: string; hint?: 
   ) : null;
 }
 
+function describedBy(id: string, error?: string, hint?: string) {
+  return error ? `${id}-error` : hint ? `${id}-hint` : undefined;
+}
+
+function LabelledControl({ label, className, children }: { label: string; className?: string; children: ReactNode }) {
+  return (
+    <label className={cn("block space-y-1.5", className)}>
+      <span className={labelText}>{label}</span>
+      {children}
+    </label>
+  );
+}
+
+/** A labelled input with its validation message. */
+export function Field({
+  label,
+  name,
+  error,
+  hint,
+  className,
+  ...inputProps
+}: ComponentProps<"input"> & { label: string; name: string; error?: string; hint?: string }) {
+  const messageId = useMessageId(name);
+  return (
+    <div className={cn("space-y-1.5", className)}>
+      <LabelledControl label={label}>
+        <input
+          {...inputProps}
+          name={name}
+          aria-label={label}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={describedBy(messageId, error, hint)}
+          className={cn(controlClasses(error), "h-12")}
+        />
+      </LabelledControl>
+      <FieldMessage id={messageId} error={error} hint={hint} />
+    </div>
+  );
+}
+
 /** A labelled select with its validation message. */
 export function SelectField({
   label,
@@ -87,23 +89,22 @@ export function SelectField({
   children,
   ...props
 }: ComponentProps<"select"> & { label: string; name: string; error?: string; hint?: string }) {
-  const id = useFieldId(props.id, name);
+  const messageId = useMessageId(name);
   return (
     <div className={cn("space-y-1.5", className)}>
-      <label htmlFor={id} className="block text-sm font-medium text-foreground/90">
-        {label}
-      </label>
-      <select
-        {...props}
-        id={id}
-        name={name}
-        aria-invalid={error ? true : undefined}
-        aria-describedby={error ? `${id}-error` : hint ? `${id}-hint` : undefined}
-        className={cn(controlClasses(error), "h-12")}
-      >
-        {children}
-      </select>
-      <FieldMessage id={id} error={error} hint={hint} />
+      <LabelledControl label={label}>
+        <select
+          {...props}
+          name={name}
+          aria-label={label}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={describedBy(messageId, error, hint)}
+          className={cn(controlClasses(error), "h-12")}
+        >
+          {children}
+        </select>
+      </LabelledControl>
+      <FieldMessage id={messageId} error={error} hint={hint} />
     </div>
   );
 }
@@ -117,22 +118,21 @@ export function TextareaField({
   className,
   ...props
 }: ComponentProps<"textarea"> & { label: string; name: string; error?: string; hint?: string }) {
-  const id = useFieldId(props.id, name);
+  const messageId = useMessageId(name);
   return (
     <div className={cn("space-y-1.5", className)}>
-      <label htmlFor={id} className="block text-sm font-medium text-foreground/90">
-        {label}
-      </label>
-      <textarea
-        {...props}
-        id={id}
-        name={name}
-        rows={4}
-        aria-invalid={error ? true : undefined}
-        aria-describedby={error ? `${id}-error` : hint ? `${id}-hint` : undefined}
-        className={cn(controlClasses(error), "py-3")}
-      />
-      <FieldMessage id={id} error={error} hint={hint} />
+      <LabelledControl label={label}>
+        <textarea
+          {...props}
+          name={name}
+          rows={4}
+          aria-label={label}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={describedBy(messageId, error, hint)}
+          className={cn(controlClasses(error), "py-3")}
+        />
+      </LabelledControl>
+      <FieldMessage id={messageId} error={error} hint={hint} />
     </div>
   );
 }
@@ -145,27 +145,25 @@ export function CheckboxField({
   className,
   ...props
 }: ComponentProps<"input"> & { label: string; name: string; hint?: string }) {
-  const id = useFieldId(props.id, name);
+  const messageId = useMessageId(name);
   return (
-    <div className={cn("flex gap-3", className)}>
-      <input
-        {...props}
-        id={id}
-        name={name}
-        type="checkbox"
-        aria-describedby={hint ? `${id}-hint` : undefined}
-        className="mt-0.5 size-5 shrink-0 rounded border-white/20 bg-black/30 accent-[var(--color-accent)]"
-      />
-      <div>
-        <label htmlFor={id} className="text-sm font-medium text-foreground/90">
-          {label}
-        </label>
-        {hint ? (
-          <p id={`${id}-hint`} className="text-sm text-muted">
-            {hint}
-          </p>
-        ) : null}
-      </div>
+    <div className={className}>
+      <label className="flex gap-3">
+        <input
+          {...props}
+          name={name}
+          type="checkbox"
+          aria-label={label}
+          aria-describedby={hint ? `${messageId}-hint` : undefined}
+          className="mt-0.5 size-5 shrink-0 rounded border-white/20 bg-black/30 accent-[var(--color-accent)]"
+        />
+        <span className="text-sm font-medium text-foreground/90">{label}</span>
+      </label>
+      {hint ? (
+        <p id={`${messageId}-hint`} className="ml-8 text-sm text-muted">
+          {hint}
+        </p>
+      ) : null}
     </div>
   );
 }

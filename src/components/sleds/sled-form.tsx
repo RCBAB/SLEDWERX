@@ -317,14 +317,13 @@ function PhotoField({
         <SledPhoto url={shown} alt="Snowmobile photo" className="aspect-[16/10] w-full rounded-xl sm:w-56" />
         <div className="space-y-3">
           <label
-            htmlFor={inputId}
+
             className="inline-flex h-11 cursor-pointer items-center gap-2 rounded-lg border border-white/15 bg-white/5 px-4 text-sm font-semibold hover:bg-white/10 focus-within:outline-2 focus-within:outline-accent"
           >
             <ImagePlus aria-hidden className="size-4" />
             {shown ? "Choose a different photo" : "Choose a photo"}
             <input
               ref={inputRef}
-              id={inputId}
               name="photo"
               type="file"
               accept="image/*"

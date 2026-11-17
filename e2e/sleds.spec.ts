@@ -24,9 +24,9 @@ type NewSled = { make: string; model: string; year: string; odometer: string; ho
 
 async function addSled(page: Page, sled: NewSled, photo = false): Promise<string> {
   await page.goto("/garage/new");
-  await page.getByLabel("Manufacturer").fill(sled.make);
-  await page.getByLabel("Model", { exact: true }).fill(sled.model);
-  await page.getByLabel("Model year").fill(sled.year);
+  await page.getByLabel("Manufacturer").filter({ visible: true }).fill(sled.make);
+  await page.getByLabel("Model", { exact: true }).filter({ visible: true }).fill(sled.model);
+  await page.getByLabel("Model year").filter({ visible: true }).fill(sled.year);
   if (sled.nickname) await page.getByLabel("Nickname (optional)").fill(sled.nickname);
   if (sled.vin) await page.getByLabel("VIN or serial number (optional)").fill(sled.vin);
   await page.getByLabel("Odometer (miles)").fill(sled.odometer);
@@ -76,15 +76,15 @@ test("add a snowmobile with every field and a private photo", async ({ page }) =
 test("validation, and several snowmobiles shown as cards", async ({ page }) => {
   await signUp(page, uniqueEmail("multi"));
   await page.goto("/garage/new");
-  await page.getByLabel("Manufacturer").fill("Ski-Doo");
-  await page.getByLabel("Model", { exact: true }).fill("Summit");
-  await page.getByLabel("Model year").fill("1890");
+  await page.getByLabel("Manufacturer").filter({ visible: true }).fill("Ski-Doo");
+  await page.getByLabel("Model", { exact: true }).filter({ visible: true }).fill("Summit");
+  await page.getByLabel("Model year").filter({ visible: true }).fill("1890");
   await page.getByRole("button", { name: "Add snowmobile" }).click();
   await expect(page.getByText("Model year must be 1950 or later.")).toBeVisible();
   await expect(page.getByText(/Enter the current odometer reading/)).toBeVisible();
   await expect(page).toHaveURL(/\/garage\/new$/);
   // What was typed is kept.
-  await expect(page.getByLabel("Model", { exact: true })).toHaveValue("Summit");
+  await expect(page.getByLabel("Model", { exact: true }).filter({ visible: true })).toHaveValue("Summit");
 
   await addSled(page, { make: "Ski-Doo", model: "Summit X", year: "2021", odometer: "0" });
   await expect(page.getByTestId("current-odometer")).toHaveText("0 mi");
@@ -107,10 +107,10 @@ test("edit details, including More details", async ({ page }) => {
   await expect(page).toHaveURL(new RegExp(`/garage/${id}/edit$`));
   await page.getByLabel("Nickname (optional)").fill("Yellow Jacket");
   await page.getByText("More details").click();
-  await page.getByLabel("Status").selectOption("stored");
-  await page.getByLabel("Engine", { exact: true }).fill("998 turbo triple");
+  await page.getByLabel("Status").filter({ visible: true }).selectOption("stored");
+  await page.getByLabel("Engine", { exact: true }).filter({ visible: true }).fill("998 turbo triple");
   await page.getByLabel("Displacement (cc)").fill("998");
-  await page.getByLabel("Notes").fill("Summer storage in the shed.");
+  await page.getByLabel("Notes").filter({ visible: true }).fill("Summer storage in the shed.");
   await page.getByRole("button", { name: "Save changes" }).click();
 
   await expect(page).toHaveURL(new RegExp(`/garage/${id}\\?saved=1$`));
@@ -123,7 +123,7 @@ test("edit details, including More details", async ({ page }) => {
 
   // Invalid input is rejected and nothing is saved.
   await page.getByRole("link", { name: "Edit details" }).click();
-  await page.getByLabel("Model", { exact: true }).fill("");
+  await page.getByLabel("Model", { exact: true }).filter({ visible: true }).fill("");
   await page.getByRole("button", { name: "Save changes" }).click();
   await expect(page.getByText("Enter the model.")).toBeVisible();
 });
@@ -134,7 +134,7 @@ test("update mileage, refuse lower readings, replace a meter, fix and remove the
 
   const form = updateMileage(page);
   await form.getByLabel("Odometer (miles)").fill("150");
-  await form.getByLabel("Engine hours").fill("12.5");
+  await form.getByLabel("Engine hours").filter({ visible: true }).fill("12.5");
   await form.getByRole("button", { name: "Save reading" }).click();
   await expect(form.getByText("Mileage updated.")).toBeVisible();
   await expect(page.getByTestId("current-odometer")).toHaveText("150 mi");
@@ -147,7 +147,7 @@ test("update mileage, refuse lower readings, replace a meter, fix and remove the
 
   // A replaced odometer starts again; lifetime miles carry on.
   await form.getByText("Meter replaced or reset?").click();
-  await form.getByLabel("The odometer was replaced or reset").check();
+  await form.getByLabel("The odometer was replaced or reset").filter({ visible: true }).check();
   await form.getByLabel("Odometer (miles)").fill("5");
   await form.getByRole("button", { name: "Save reading" }).click();
   await expect(form.getByText("Mileage updated.")).toBeVisible();

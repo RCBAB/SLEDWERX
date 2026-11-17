@@ -12,16 +12,16 @@ export function uniqueEmail(label: string) {
 export async function signUp(page: Page, email: string, name?: string) {
   await page.goto("/signup");
   if (name) await page.getByLabel("Name (optional)").fill(name);
-  await page.getByLabel("Email").fill(email);
-  await page.getByLabel("Password", { exact: true }).fill(PASSWORD);
-  await page.getByLabel("Confirm password").fill(PASSWORD);
+  await page.getByLabel("Email").filter({ visible: true }).fill(email);
+  await page.getByLabel("Password", { exact: true }).filter({ visible: true }).fill(PASSWORD);
+  await page.getByLabel("Confirm password").filter({ visible: true }).fill(PASSWORD);
   await page.getByRole("button", { name: "Create account" }).click();
   await expect(page).toHaveURL(/\/garage$/);
 }
 
 export async function signIn(page: Page, email: string, password = PASSWORD) {
-  await page.getByLabel("Email").fill(email);
-  await page.getByLabel("Password", { exact: true }).fill(password);
+  await page.getByLabel("Email").filter({ visible: true }).fill(email);
+  await page.getByLabel("Password", { exact: true }).filter({ visible: true }).fill(password);
   await page.getByRole("button", { name: "Sign in" }).click();
 }
 

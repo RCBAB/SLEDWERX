@@ -23,14 +23,12 @@ type LastReading = {
 function MeterFields({
   state,
   defaults,
-  idPrefix,
 }: {
   state: SledActionState;
   defaults?: Partial<Record<"odometer" | "engineHours" | "readOn", string>> & {
     odometerReset?: boolean;
     hourMeterReset?: boolean;
   };
-  idPrefix: string;
 }) {
   const today = useLocalToday();
   const errors = state.fieldErrors ?? {};
@@ -42,7 +40,6 @@ function MeterFields({
     <>
       <div className="grid gap-4 sm:grid-cols-3">
         <Field
-          id={`${idPrefix}-odometer`}
           label="Odometer (miles)"
           name="odometer"
           inputMode="decimal"
@@ -50,7 +47,6 @@ function MeterFields({
           error={errors.odometer?.[0]}
         />
         <Field
-          id={`${idPrefix}-engineHours`}
           label="Engine hours"
           name="engineHours"
           inputMode="decimal"
@@ -60,7 +56,6 @@ function MeterFields({
         <Field
           // Re-mount once the local date is known so the default is the user's own "today".
           key={today}
-          id={`${idPrefix}-readOn`}
           label="Date"
           name="readOn"
           type="date"
@@ -74,14 +69,12 @@ function MeterFields({
         <summary className="cursor-pointer text-muted hover:text-foreground">Meter replaced or reset?</summary>
         <div className="mt-3 space-y-3">
           <CheckboxField
-            id={`${idPrefix}-odometerReset`}
             label="The odometer was replaced or reset"
             name="odometerReset"
             defaultChecked={checked("odometerReset")}
             hint="Enter what the new odometer shows. Lifetime miles carry on from the old one."
           />
           <CheckboxField
-            id={`${idPrefix}-hourMeterReset`}
             label="The hour meter was replaced or reset"
             name="hourMeterReset"
             defaultChecked={checked("hourMeterReset")}
@@ -101,7 +94,7 @@ export function AddReadingForm({ sledId }: { sledId: string }) {
       <input type="hidden" name="sledId" value={sledId} />
       {state.error && !state.fieldErrors ? <Alert tone="error">{state.error}</Alert> : null}
       {state.ok && state.message ? <Alert tone="success">{state.message}</Alert> : null}
-      <MeterFields state={state.ok ? {} : state} idPrefix="add" />
+      <MeterFields state={state.ok ? {} : state} />
       <div className="sm:w-56">
         <SubmitButton pendingText="Saving…">Save reading</SubmitButton>
       </div>
@@ -140,7 +133,6 @@ export function FixLastReadingForm({
         </p>
         <MeterFields
           state={state}
-          idPrefix="fix"
           defaults={{
             odometer: reading.odometer == null ? "" : String(reading.odometer),
             engineHours: reading.engineHours == null ? "" : String(reading.engineHours),

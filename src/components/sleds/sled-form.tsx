@@ -2,7 +2,7 @@
 
 import { ImagePlus, X } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useActionState, useEffect, useState, type ChangeEvent } from "react";
+import { useActionState, useEffect, useId, useRef, useState, type ChangeEvent } from "react";
 
 import { attachNewSledPhoto, createSled, updateSled, type SledActionState } from "@/app/garage/actions";
 import { Alert } from "@/components/ui/alert";
@@ -286,6 +286,8 @@ function PhotoField({
 }) {
   const [preview, setPreview] = useState<string | null>(null);
   const [removed, setRemoved] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const inputId = `photo-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
 
   useEffect(() => () => {
     if (preview) URL.revokeObjectURL(preview);
@@ -315,27 +317,28 @@ function PhotoField({
         <SledPhoto url={shown} alt="Snowmobile photo" className="aspect-[16/10] w-full rounded-xl sm:w-56" />
         <div className="space-y-3">
           <label
-            htmlFor="photo"
+            htmlFor={inputId}
             className="inline-flex h-11 cursor-pointer items-center gap-2 rounded-lg border border-white/15 bg-white/5 px-4 text-sm font-semibold hover:bg-white/10 focus-within:outline-2 focus-within:outline-accent"
           >
             <ImagePlus aria-hidden className="size-4" />
             {shown ? "Choose a different photo" : "Choose a photo"}
             <input
-              id="photo"
+              ref={inputRef}
+              id={inputId}
               name="photo"
               type="file"
               accept="image/*"
               className="sr-only"
-              aria-describedby={error ? "photo-error" : "photo-hint"}
+              aria-describedby={error ? `${inputId}-error` : `${inputId}-hint`}
               onChange={onChange}
             />
           </label>
           {error ? (
-            <p id="photo-error" className="text-sm text-accent-hot">
+            <p id={`${inputId}-error`} className="text-sm text-accent-hot">
               {error}
             </p>
           ) : (
-            <p id="photo-hint" className="text-sm text-muted">
+            <p id={`${inputId}-hint`} className="text-sm text-muted">
               Resized before upload. Only you and people you share this snowmobile with can see it.
             </p>
           )}
@@ -353,8 +356,7 @@ function PhotoField({
               className="inline-flex items-center gap-1 text-sm text-muted hover:text-foreground"
               onClick={() => {
                 setPreview(null);
-                const input = document.getElementById("photo") as HTMLInputElement | null;
-                if (input) input.value = "";
+                if (inputRef.current) inputRef.current.value = "";
               }}
             >
               <X aria-hidden className="size-4" /> Don&apos;t use this photo

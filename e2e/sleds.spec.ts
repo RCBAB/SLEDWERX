@@ -161,9 +161,12 @@ test("update mileage, refuse lower readings, replace a meter, fix and remove the
   await fix.getByRole("button", { name: "Save correction" }).click();
   await expect(page.getByTestId("current-odometer")).toHaveText("8 mi");
 
+  // The section may still be open after the correction; open it only if needed.
+  if (!(await fix.evaluate((details: HTMLDetailsElement) => details.open))) {
+    await fix.getByText("Fix last reading").click();
+  }
   page.once("dialog", (dialog) => dialog.accept());
-  await page.getByTestId("fix-reading").getByText("Fix last reading").click();
-  await page.getByTestId("fix-reading").getByRole("button", { name: "Remove last reading" }).click();
+  await fix.getByRole("button", { name: "Remove last reading" }).click();
   await expect(page.getByTestId("current-odometer")).toHaveText("150 mi");
   await expect(page.getByTestId("reading-history").getByRole("listitem")).toHaveCount(2);
 });

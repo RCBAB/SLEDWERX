@@ -18,9 +18,59 @@ below call for it, and preferably after talking it through.
 
 ## Order matters
 
-Roll back the newest migration first: Migration 3, then 2, then 1. Each
+Roll back the newest migration first: Migration 4, then 3, then 2, then 1. Each
 older rollback fails safely (changing nothing) while a newer migration that
 depends on it is still applied.
+
+---
+
+## `20261118090000_rollback.sql` (Migration 4)
+
+Undoes `supabase/migrations/20261118090000_service_records.sql`: the
+`category` and `edited_at` columns, the service-date trigger,
+`update_maintenance_entry()`, the item guard and `entry_created_by()`. It
+restores what Migration 4 replaced to the exact Migration 2 definitions:
+`save_maintenance_entry()` without a category, the item view and edit
+policies, and Migration 1's guard on items. **Service records, items and
+readings are kept.**
+
+### When to use it
+
+Only when **all** of these are true:
+
+1. Migration 4 was applied (`20261118090000` is listed under Remote).
+2. A post-deployment check failed.
+3. No service record has a category.
+4. The app version that uses Migration 4 is not deployed (roll back in
+   Vercel first): it calls `update_maintenance_entry` and saves categories.
+
+### Step 1: Confirm no categories are used (read-only)
+
+```sql
+select count(*) from public.maintenance_entries where category is not null;
+```
+
+The count must be `0`.
+
+### Step 2: Run the rollback
+
+In **SQL Editor**, first line:
+```sql
+set sledwerx.confirm_rollback = '20261118090000';
+```
+then paste the whole of `20261118090000_rollback.sql` and run it once. The
+expected result is the notice `Rollback complete: Migration 4 removed;
+Migrations 1-3 untouched.` Any error means nothing changed.
+
+### Step 3: Verify (read-only)
+
+`npx supabase migration list --remote` should show `20261118090000` under
+Local only, and this should return no rows:
+
+```sql
+select column_name from information_schema.columns
+where table_name = 'maintenance_entries' and column_name in ('category', 'edited_at');
+```
 
 ---
 
@@ -262,7 +312,7 @@ touched.
 ### Testing
 
 CI tests every rollback script on every pull request against a throwaway
-local Supabase database (Migration 3 first, then 2, then 1). It checks that
+local Supabase database (Migration 4 first, then 3, 2 and 1). It checks that
 each script:
 
 - refuses to run without confirmation

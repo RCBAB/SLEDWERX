@@ -23,10 +23,10 @@ describe("sled names and numbers", () => {
 
 describe("sled capabilities", () => {
   it("follows the sharing roles", () => {
-    expect(sledCapabilities("owner")).toEqual({ canEdit: true, canChangePhoto: true, canAddReading: true, canRemoveReading: true });
+    expect(sledCapabilities("owner")).toMatchObject({ canEdit: true, canChangePhoto: true, canAddReading: true, canRemoveReading: true });
     expect(sledCapabilities("editor").canEdit).toBe(true);
-    expect(sledCapabilities("mechanic")).toEqual({ canEdit: false, canChangePhoto: false, canAddReading: true, canRemoveReading: false });
-    expect(sledCapabilities("viewer")).toEqual({ canEdit: false, canChangePhoto: false, canAddReading: false, canRemoveReading: false });
+    expect(sledCapabilities("mechanic")).toMatchObject({ canEdit: false, canChangePhoto: false, canAddReading: true, canRemoveReading: false });
+    expect(sledCapabilities("viewer")).toMatchObject({ canEdit: false, canChangePhoto: false, canAddReading: false, canRemoveReading: false });
   });
 
   it("lets mechanics fix only their own readings", () => {

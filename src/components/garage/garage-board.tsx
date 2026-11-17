@@ -397,7 +397,7 @@ function SledCard(props: SledProps) {
                   <div className="flex min-w-0 flex-1 items-center gap-3 p-3">
                     <div className="min-w-0 flex-1">
                       <p className={cn("break-words font-semibold", big && "text-lg")}>
-                        {row.taskName}
+                        <span>{row.taskName}</span>
                         <span className="sr-only">: {STATUS_LABEL[row.status]}</span>
                       </p>
                       <p className={cn("font-semibold", big ? "text-base" : "text-sm", TONE_TEXT[tone])} data-testid="board-status">
@@ -483,7 +483,7 @@ function SledTable(props: SledProps) {
                   )}
                 >
                   <td className="col-start-1 min-w-0 break-words font-semibold sm:py-3 sm:pl-4 sm:pr-3">
-                    {row.taskName}
+                    <span>{row.taskName}</span>
                     <span className="sr-only">: {STATUS_LABEL[row.status]}</span>
                   </td>
                   <td className={cn("col-start-1 min-w-0 font-semibold sm:px-3 sm:py-3", TONE_TEXT[tone])} data-testid="board-status">

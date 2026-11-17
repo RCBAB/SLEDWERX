@@ -184,6 +184,30 @@ export async function taskOptionsForSled(sled: { id: string; ownerId: string }):
   return (data ?? []).map((t) => ({ id: t.id, name: t.name, scope: t.sled_id ? "sled" : "library" }));
 }
 
+/** taskOptionsForSled() for several sleds in one query (Garage Board), with the same rules. */
+export async function taskOptionsForSleds(sleds: { id: string; ownerId: string }[]): Promise<Map<string, TaskOption[]>> {
+  const options = new Map<string, TaskOption[]>(sleds.map((s) => [s.id, []]));
+  if (!sleds.length) return options;
+  const supabase = await createClient();
+  const owners = [...new Set(sleds.map((s) => s.ownerId))];
+  const { data, error } = await supabase
+    .from("maintenance_tasks")
+    .select("id, name, sled_id, owner_id")
+    .is("deleted_at", null)
+    .or(`sled_id.in.(${sleds.map((s) => s.id).join(",")}),owner_id.in.(${owners.join(",")})`)
+    .order("name", { ascending: true });
+  if (error) throw new Error("Could not load your tasks.");
+  for (const sled of sleds) {
+    options.set(
+      sled.id,
+      (data ?? [])
+        .filter((t) => t.sled_id === sled.id || (t.sled_id == null && t.owner_id === sled.ownerId))
+        .map((t) => ({ id: t.id, name: t.name, scope: t.sled_id ? "sled" : "library" })),
+    );
+  }
+  return options;
+}
+
 export type LibraryTask = { id: string; name: string; version: number };
 export type PackageItem = { id: string; taskId: string; name: string; position: number; version: number };
 export type MaintenancePackage = { id: string; name: string; version: number; items: PackageItem[] };

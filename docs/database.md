@@ -468,6 +468,27 @@ board automatically. Migrations 1-4 are unchanged.
 | Mark tasks done (creates a service record) | ✅ | ✅ | ❌ |
 | Add, schedule, pause, remove | ✅ | ❌ | ❌ |
 
+## Garage Board (Phase 5, no migration)
+
+The Garage Board (`/garage/board`) shows every sled the user can see and its
+maintenance, like a dry-erase board on the garage wall. It adds **no tables,
+views, functions or policies**:
+
+- It reads `maintenance_board` (Migration 5) for all visible sleds in one
+  query (`sled_id in (...)`). The view is `security_invoker`, so RLS returns
+  exactly the sleds the user owns or that are shared with them.
+- Done and Complete package call the same `completeTasks` action as the
+  sled's own Maintenance Board, which saves an ordinary service record with
+  `save_maintenance_entry`. There is no second maintenance system.
+- The layout choice (Full Cards or Compact) is kept in
+  `user_preferences.garage_mode` (Migration 1), as `{"layout": "cards" |
+  "compact"}`. The app merges it into the existing object, so other Garage
+  Mode settings can live beside it. The row is private to its user (RLS).
+
+Tests: `supabase/tests/database/007_garage_board.test.sql` (multi-sled reads
+follow sharing, a mechanic's completion updates the shared sled's board, the
+preference is private).
+
 ## Units
 
 1.0 uses US units, stored in the unit named by the column: `*_mi` (miles),
@@ -498,6 +519,7 @@ npm run db:stop
 CI runs the same tests on every pull request against a throwaway local
 Supabase stack:
 - the pgTAP tests in `supabase/tests/database/`, one file per migration
+  (plus `007_garage_board`, which tests Phase 5 against existing objects)
 - `scripts/db-api-smoke-test.mjs`, which signs up real users through Supabase
   Auth and exercises sharing, RLS, the maintenance logbook and conflict
   detection through the REST API with `supabase-js`

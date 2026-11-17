@@ -2,6 +2,7 @@ import "server-only";
 
 import { cache } from "react";
 
+import type { RangeReading } from "@/lib/service/meter-range";
 import { createClient } from "@/lib/supabase/server";
 
 import { PHOTO_BUCKET, PHOTO_URL_TTL, type SledRole, type SledStatus } from "./constants";
@@ -102,6 +103,24 @@ async function signedPhotoUrls(paths: string[]): Promise<Map<string, string>> {
 
 /** Sleds the user owns or that are shared with them, oldest first. */
 export async function listSleds(): Promise<SledListItem[]> {
+  return (await loadSleds()).map((sled) => {
+    const { readings, ...item } = sled;
+    void readings;
+    return item;
+  });
+}
+
+export type GarageSled = SledListItem & {
+  /** Up to the newest 200 readings, oldest first (as on the sled page), for checking service mileage. */
+  readings: RangeReading[];
+};
+
+/** listSleds() plus each sled's readings, for the Garage Board. */
+export async function listGarageSleds(): Promise<GarageSled[]> {
+  return loadSleds();
+}
+
+async function loadSleds(): Promise<GarageSled[]> {
   const supabase = await createClient();
   const { data: sleds, error } = await supabase
     .from("sleds")
@@ -132,17 +151,31 @@ export async function listSleds(): Promise<SledListItem[]> {
     bySled.set(reading.sled_id!, list);
   }
 
-  return sleds.map((s) => ({
-    id: s.id,
-    ownerId: s.owner_id,
-    make: s.make,
-    model: s.model,
-    modelYear: s.model_year,
-    nickname: s.nickname,
-    status: s.status,
-    photoUrl: s.photo_path ? (photos.get(s.photo_path) ?? null) : null,
-    meters: summarizeMeters(bySled.get(s.id) ?? []),
-  }));
+  return sleds.map((s) => {
+    const rows = bySled.get(s.id) ?? [];
+    return {
+      id: s.id,
+      ownerId: s.owner_id,
+      make: s.make,
+      model: s.model,
+      modelYear: s.model_year,
+      nickname: s.nickname,
+      status: s.status,
+      photoUrl: s.photo_path ? (photos.get(s.photo_path) ?? null) : null,
+      meters: summarizeMeters(rows),
+      readings: rows
+        .slice(0, 200)
+        .reverse()
+        .map((r) => ({
+          id: r.id!,
+          readOn: r.read_on!,
+          odometer: r.odometer_mi,
+          engineHours: r.engine_hours,
+          odometerReset: Boolean(r.odometer_reset),
+          hourMeterReset: Boolean(r.hour_meter_reset),
+        })),
+    };
+  });
 }
 
 /**

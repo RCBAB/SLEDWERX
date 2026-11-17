@@ -8,21 +8,30 @@ const DATABASE_MESSAGES = [
   "Enter the current odometer reading.",
   "This reading belongs to a maintenance entry.",
   "Restore this snowmobile before editing it.",
+  "The service date cannot be in the future.",
+  "Only the owner or an editor can remove the mileage from a service record.",
+  "This task cannot be used on this snowmobile.",
+  "Restore this record before editing it.",
+  "Only tasks from your own library can be added to a package.",
 ];
 
 /** Turns database errors into short, friendly messages. Never echoes raw SQL errors. */
-export function sledErrorMessage(error: DbError): string {
+export function sledErrorMessage(error: DbError, subject = "snowmobile"): string {
   const message = error?.message ?? "";
   const known = DATABASE_MESSAGES.find((prefix) => message.startsWith(prefix));
   if (known) return message;
 
   switch (error?.code) {
     case "PT409":
-      return "This snowmobile was changed somewhere else. Reload the page and try again.";
+      return `This ${subject} was changed somewhere else. Reload the page and try again.`;
     case "42501":
       return "You don't have permission to do that.";
     case "23503":
       return "Your garage could not be found. Reload the page and try again.";
+    case "23505":
+      return "You already have one with that name.";
+    case "P0002":
+      return `This ${subject} could not be found. Reload the page and try again.`;
     case "23514":
     case "22P02":
     case "22003":

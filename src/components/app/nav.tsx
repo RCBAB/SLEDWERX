@@ -8,8 +8,14 @@ import { cn } from "@/components/ui/cn";
 
 import { NAV_ITEMS } from "./nav-items";
 
+function matches(pathname: string, href: string) {
+  return pathname === href || pathname.startsWith(`${href}/`);
+}
+
+/** Only the most specific matching item is active ("/garage/library" over "/garage"). */
 function isActive(pathname: string | null, href: string) {
-  return pathname != null && (pathname === href || pathname.startsWith(`${href}/`));
+  if (pathname == null || !matches(pathname, href)) return false;
+  return !NAV_ITEMS.some((item) => item.href.length > href.length && matches(pathname, item.href));
 }
 
 // The current path is request data on dynamic routes (e.g. /garage/[sledId]),

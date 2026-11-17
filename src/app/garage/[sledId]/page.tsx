@@ -1,8 +1,11 @@
 import { Pencil } from "lucide-react";
 import type { Metadata } from "next";
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
 
+import { QuickService } from "@/components/service/quick-service";
+import { ServiceHistory } from "@/components/service/service-history";
 import { BackLink } from "@/components/sleds/back-link";
 import { AddReadingForm, FixLastReadingForm } from "@/components/sleds/reading-forms";
 import { SledSkeleton } from "@/components/sleds/skeletons";
@@ -11,8 +14,10 @@ import { StatusBadge } from "@/components/sleds/status-badge";
 import { Alert } from "@/components/ui/alert";
 import { ButtonLink } from "@/components/ui/button";
 import { requireUser } from "@/lib/auth/session";
+import type { RangeReading } from "@/lib/service/meter-range";
+import { listServiceRecords, taskOptionsForSled } from "@/lib/service/queries";
 import { formatDate, formatHours, formatMiles, sledDescription, sledName } from "@/lib/sleds/format";
-import { canFixReading, ROLE_LABELS, sledCapabilities } from "@/lib/sleds/permissions";
+import { canFixReading, ROLE_LABELS, serviceCapabilities, sledCapabilities } from "@/lib/sleds/permissions";
 import { getSled, type SledDetail } from "@/lib/sleds/queries";
 
 export const metadata: Metadata = { title: "Snowmobile" };
@@ -20,6 +25,8 @@ export const metadata: Metadata = { title: "Snowmobile" };
 const NOTICES: Record<string, { tone: "success" | "error"; text: string }> = {
   added: { tone: "success", text: "Snowmobile added." },
   saved: { tone: "success", text: "Changes saved." },
+  serviceSaved: { tone: "success", text: "Service saved." },
+  serviceUpdated: { tone: "success", text: "Service record updated." },
   photo: {
     tone: "error",
     text: "The snowmobile was added, but its photo couldn't be uploaded. Try again from Edit details.",
@@ -47,8 +54,29 @@ async function SledDashboard({ params, searchParams }: Pick<PageProps<"/garage/[
   const can = sledCapabilities(sled.role);
   const name = sledName(sled);
   const notice =
-    query.photo === "failed" ? NOTICES.photo : query.saved === "1" ? NOTICES.saved : query.added === "1" ? NOTICES.added : null;
+    query.photo === "failed"
+      ? NOTICES.photo
+      : query.saved === "1"
+        ? NOTICES.saved
+        : query.added === "1"
+          ? NOTICES.added
+          : query.service === "saved"
+            ? NOTICES.serviceSaved
+            : query.service === "updated"
+              ? NOTICES.serviceUpdated
+              : null;
   const last = sled.readings[0];
+  const [services, taskOptions] = await Promise.all([
+    listServiceRecords(sled.id),
+    can.canLogService ? taskOptionsForSled(sled) : Promise.resolve([]),
+  ]);
+  const lastService = last ? services.find((service) => service.readingId === last.id) : undefined;
+  // Oldest first, so readings of the same day keep the order they were entered.
+  const rangeReadings: RangeReading[] = [...sled.readings].reverse();
+  const currentMeters = {
+    odometer: sled.meters.odometer?.value ?? null,
+    engineHours: sled.meters.engineHours?.value ?? null,
+  };
 
   return (
     <>
@@ -84,16 +112,35 @@ async function SledDashboard({ params, searchParams }: Pick<PageProps<"/garage/[
             <Meter label="Engine hours" reading={sled.meters.engineHours} format={formatHours} testId="current-hours" />
           </dl>
 
-          {can.canEdit ? (
-            <ButtonLink href={`/garage/${sled.id}/edit`} variant="secondary" className="mt-6">
-              <Pencil aria-hidden className="size-4" />
-              Edit details
-            </ButtonLink>
-          ) : null}
+          <div className="mt-6 flex flex-wrap gap-3">
+            {can.canLogService ? (
+              <QuickService sledId={sled.id} taskOptions={taskOptions} readings={rangeReadings} current={currentMeters} />
+            ) : null}
+            {can.canEdit ? (
+              <ButtonLink href={`/garage/${sled.id}/edit`} variant="secondary" size="lg">
+                <Pencil aria-hidden className="size-4" />
+                Edit details
+              </ButtonLink>
+            ) : null}
+          </div>
         </div>
       </section>
 
       <Details sled={sled} />
+
+      <section id="service-history" className="mt-10 scroll-mt-24" aria-labelledby="service-heading">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 id="service-heading" className="font-display text-2xl font-bold uppercase tracking-wide">
+            Service history
+          </h2>
+          {can.canLogService ? (
+            <ButtonLink href={`/garage/${sled.id}/service/new`} variant="secondary">
+              Full service record
+            </ButtonLink>
+          ) : null}
+        </div>
+        <ServiceHistory sledId={sled.id} records={services} role={sled.role} userId={user.id} />
+      </section>
 
       <section className="mt-10" aria-labelledby="mileage-heading">
         <h2 id="mileage-heading" className="font-display text-2xl font-bold uppercase tracking-wide">
@@ -107,7 +154,20 @@ async function SledDashboard({ params, searchParams }: Pick<PageProps<"/garage/[
           </div>
         ) : null}
 
-        {last && canFixReading(sled.role, last.createdBy, user.id) ? (
+        {last && lastService ? (
+          <p className="mt-4 rounded-2xl border border-white/10 bg-surface/40 px-5 py-4 text-sm text-muted" data-testid="last-reading-service">
+            The latest reading belongs to the service “{lastService.title}”.{" "}
+            {serviceCapabilities(sled.role, lastService.createdBy, user.id).canEdit ? (
+              <Link
+                href={`/garage/${sled.id}/service/${lastService.id}/edit`}
+                className="font-semibold text-foreground underline-offset-4 hover:underline"
+              >
+                Edit that service
+              </Link>
+            ) : null}{" "}
+            to correct it.
+          </p>
+        ) : last && canFixReading(sled.role, last.createdBy, user.id) ? (
           <div className="mt-4">
             <FixLastReadingForm sledId={sled.id} reading={last} canRemove={can.canRemoveReading} />
           </div>

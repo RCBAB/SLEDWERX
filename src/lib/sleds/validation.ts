@@ -4,17 +4,17 @@ import { SLED_STATUSES } from "./constants";
 import { isoDate as isoDateIn } from "./format";
 
 /** Empty form values become undefined, so optional fields stay optional. */
-const blankToUndefined = (value: unknown) =>
+export const blankToUndefined = (value: unknown) =>
   typeof value === "string" && value.trim() === "" ? undefined : value;
 
-function optionalText(max: number, label: string) {
+export function optionalText(max: number, label: string) {
   return z.preprocess(
     blankToUndefined,
     z.string().trim().max(max, { error: `${label} must be ${max} characters or fewer.` }).optional(),
   );
 }
 
-function requiredText(max: number, label: string) {
+export function requiredText(max: number, label: string) {
   return z
     .string({ error: `Enter the ${label.toLowerCase()}.` })
     .trim()
@@ -23,14 +23,14 @@ function requiredText(max: number, label: string) {
 }
 
 /** Parses "12,345.6" style input. Commas and spaces are ignored. */
-function toNumber(value: unknown) {
+export function toNumber(value: unknown) {
   const cleaned = blankToUndefined(value);
   if (typeof cleaned !== "string") return cleaned;
   const normalized = cleaned.replace(/[,\s]/g, "");
   return /^-?\d*\.?\d+$/.test(normalized) ? Number(normalized) : Number.NaN;
 }
 
-function meterValue(label: string, max: number) {
+export function meterValue(label: string, max: number) {
   return z
     .number({ error: `Enter a number for ${label}.` })
     .refine(Number.isFinite, { error: `Enter a number for ${label}.` })
@@ -39,8 +39,8 @@ function meterValue(label: string, max: number) {
     .transform((n) => Math.round(n * 10) / 10);
 }
 
-const odometer = meterValue("miles", 1_000_000);
-const engineHours = meterValue("engine hours", 100_000);
+export const odometer = meterValue("miles", 1_000_000);
+export const engineHours = meterValue("engine hours", 100_000);
 
 /** Latest allowed date: tomorrow in UTC, which covers every time zone's "today". */
 export function latestAllowedDate(now = new Date()): string {
@@ -73,11 +73,11 @@ export function futureDateError(value: string | undefined, timeZone: unknown, no
 
 const isoDate = z.iso.date({ error: "Enter a valid date." });
 
-const pastOrToday = isoDate.refine((value) => value <= latestAllowedDate(), {
+export const pastOrToday = isoDate.refine((value) => value <= latestAllowedDate(), {
   error: "The date can't be in the future.",
 });
 
-const checkbox = z.preprocess((value) => value === "on" || value === "true" || value === true, z.boolean());
+export const checkbox = z.preprocess((value) => value === "on" || value === "true" || value === true, z.boolean());
 
 function modelYear() {
   const max = new Date().getUTCFullYear() + 2;

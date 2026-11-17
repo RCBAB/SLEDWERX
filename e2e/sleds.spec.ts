@@ -54,12 +54,12 @@ test("add a snowmobile with every field and a private photo", async ({ page }) =
     { make: "Polaris", model: "RMK Khaos", year: "2024", odometer: "1,234.5", hours: "51.2", nickname: "Blue Thunder", vin: "4XASKR123" },
     true,
   );
-  await expect(page.getByText("Snowmobile added.")).toBeVisible();
+  await expect(page.getByText("Snowmobile added.").filter({ visible: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Blue Thunder", level: 1 })).toBeVisible();
-  await expect(page.getByText("2024 Polaris RMK Khaos")).toBeVisible();
+  await expect(page.getByText("2024 Polaris RMK Khaos").filter({ visible: true })).toBeVisible();
   await expect(page.getByTestId("current-odometer")).toHaveText("1,234.5 mi");
   await expect(page.getByTestId("current-hours")).toHaveText("51.2 hrs");
-  await expect(page.getByText("4XASKR123")).toBeVisible();
+  await expect(page.getByText("4XASKR123").filter({ visible: true })).toBeVisible();
 
   // The photo is served from the private bucket through a signed URL.
   const photo = page.getByRole("img", { name: "Blue Thunder" });
@@ -80,8 +80,8 @@ test("validation, and several snowmobiles shown as cards", async ({ page }) => {
   await page.getByLabel("Model", { exact: true }).filter({ visible: true }).fill("Summit");
   await page.getByLabel("Model year").filter({ visible: true }).fill("1890");
   await page.getByRole("button", { name: "Add snowmobile" }).click();
-  await expect(page.getByText("Model year must be 1950 or later.")).toBeVisible();
-  await expect(page.getByText(/Enter the current odometer reading/)).toBeVisible();
+  await expect(page.getByText("Model year must be 1950 or later.").filter({ visible: true })).toBeVisible();
+  await expect(page.getByText(/Enter the current odometer reading/).filter({ visible: true })).toBeVisible();
   await expect(page).toHaveURL(/\/garage\/new$/);
   // What was typed is kept.
   await expect(page.getByLabel("Model", { exact: true }).filter({ visible: true })).toHaveValue("Summit");
@@ -106,7 +106,7 @@ test("edit details, including More details", async ({ page }) => {
   await page.getByRole("link", { name: "Edit details" }).click();
   await expect(page).toHaveURL(new RegExp(`/garage/${id}/edit$`));
   await page.getByLabel("Nickname (optional)").filter({ visible: true }).fill("Yellow Jacket");
-  await page.getByText("More details").click();
+  await page.locator("summary", { hasText: "More details" }).filter({ visible: true }).click();
   await page.getByLabel("Status").filter({ visible: true }).selectOption("stored");
   await page.getByLabel("Engine", { exact: true }).filter({ visible: true }).fill("998 turbo triple");
   await page.getByLabel("Displacement (cc)").filter({ visible: true }).fill("998");
@@ -114,18 +114,18 @@ test("edit details, including More details", async ({ page }) => {
   await page.getByRole("button", { name: "Save changes" }).click();
 
   await expect(page).toHaveURL(new RegExp(`/garage/${id}\\?saved=1$`));
-  await expect(page.getByText("Changes saved.")).toBeVisible();
+  await expect(page.getByText("Changes saved.").filter({ visible: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Yellow Jacket", level: 1 })).toBeVisible();
-  await expect(page.getByText("Stored", { exact: true })).toBeVisible();
-  await expect(page.getByText("998 turbo triple")).toBeVisible();
-  await expect(page.getByText("998 cc")).toBeVisible();
-  await expect(page.getByText("Summer storage in the shed.")).toBeVisible();
+  await expect(page.getByText("Stored", { exact: true }).filter({ visible: true })).toBeVisible();
+  await expect(page.getByText("998 turbo triple").filter({ visible: true })).toBeVisible();
+  await expect(page.getByText("998 cc").filter({ visible: true })).toBeVisible();
+  await expect(page.getByText("Summer storage in the shed.").filter({ visible: true })).toBeVisible();
 
   // Invalid input is rejected and nothing is saved.
   await page.getByRole("link", { name: "Edit details" }).click();
   await page.getByLabel("Model", { exact: true }).filter({ visible: true }).fill("");
   await page.getByRole("button", { name: "Save changes" }).click();
-  await expect(page.getByText("Enter the model.")).toBeVisible();
+  await expect(page.getByText("Enter the model.").filter({ visible: true })).toBeVisible();
 });
 
 test("update mileage, refuse lower readings, replace a meter, fix and remove the last reading", async ({ page }) => {
@@ -152,7 +152,7 @@ test("update mileage, refuse lower readings, replace a meter, fix and remove the
   await form.getByRole("button", { name: "Save reading" }).click();
   await expect(form.getByText("Mileage updated.")).toBeVisible();
   await expect(page.getByTestId("current-odometer")).toHaveText("5 mi");
-  await expect(page.getByText("150 mi lifetime")).toBeVisible();
+  await expect(page.getByText("150 mi lifetime").filter({ visible: true })).toBeVisible();
 
   // Fix last reading: correct it, then remove it.
   const fix = page.getByTestId("fix-reading");
@@ -178,7 +178,7 @@ test("other people can't open your snowmobile", async ({ page, browser }) => {
   const other = await browser.newContext();
   const otherPage = await other.newPage();
   await signUp(otherPage, uniqueEmail("stranger"));
-  await expect(otherPage.getByText("No snowmobiles yet")).toBeVisible();
+  await expect(otherPage.getByText("No snowmobiles yet").filter({ visible: true })).toBeVisible();
   for (const path of [`/garage/${id}`, `/garage/${id}/edit`]) {
     await otherPage.goto(path);
     await expect(otherPage.getByRole("heading", { name: "Snowmobile not found" })).toBeVisible();
@@ -219,7 +219,7 @@ test("a viewer sees a shared snowmobile read-only, photo included", async ({ pag
   await expect(viewerPage.getByRole("heading", { name: "Shared with you" })).toBeVisible();
   await viewerPage.getByTestId("sled-card").click();
   await expect(viewerPage.getByRole("heading", { name: "Shared Cat", level: 1 })).toBeVisible();
-  await expect(viewerPage.getByText("Shared with you · Viewer")).toBeVisible();
+  await expect(viewerPage.getByText("Shared with you · Viewer").filter({ visible: true })).toBeVisible();
   await expect(viewerPage.getByTestId("current-odometer")).toHaveText("4,100 mi");
   const photo = viewerPage.getByRole("img", { name: "Shared Cat" });
   await expect.poll(() => photo.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0);

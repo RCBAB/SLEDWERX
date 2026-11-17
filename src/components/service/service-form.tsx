@@ -197,10 +197,10 @@ export function ServiceForm({ sledId, record, taskOptions, packages, readings, c
         {tasks.length ? (
           <ol className="mb-4 divide-y divide-white/10 rounded-xl border border-white/10" data-testid="service-tasks">
             {tasks.map((task, index) => (
-              <li key={task.key} className="flex items-center gap-2 px-3 py-2">
-                <span className="w-6 text-sm tabular-nums text-muted">{index + 1}.</span>
+              <li key={task.key} className="flex items-center gap-1 px-2 py-2 sm:gap-2 sm:px-3">
+                <span className="w-6 shrink-0 text-sm tabular-nums text-muted">{index + 1}.</span>
                 {task.taskId ? (
-                  <span className="flex-1 text-sm font-medium">{task.name}</span>
+                  <span className="min-w-0 flex-1 break-words text-sm font-medium">{task.name}</span>
                 ) : (
                   <input
                     aria-label={`Task ${index + 1}`}
@@ -209,7 +209,7 @@ export function ServiceForm({ sledId, record, taskOptions, packages, readings, c
                     onChange={(event) =>
                       setTasks((rows) => rows.map((r) => (r.key === task.key ? { ...r, name: event.target.value } : r)))
                     }
-                    className="h-10 flex-1 rounded-lg border border-white/15 bg-black/30 px-3 text-sm"
+                    className="h-10 w-full min-w-0 flex-1 rounded-lg border border-white/15 bg-black/30 px-3 text-sm"
                   />
                 )}
                 <button type="button" className="p-2 text-muted hover:text-foreground disabled:opacity-30" aria-label={`Move ${task.name} up`} disabled={index === 0} onClick={() => moveTask(index, -1)}>
@@ -278,12 +278,12 @@ export function ServiceForm({ sledId, record, taskOptions, packages, readings, c
                 setFreeTask("");
               }
             }}
-            className="flex-1"
+            className="min-w-0 flex-1"
           />
           <Button
             type="button"
             variant="secondary"
-            className="mt-7 h-12"
+            className="mt-7 h-12 shrink-0"
             onClick={() => {
               addTask({ name: freeTask.trim() });
               setFreeTask("");

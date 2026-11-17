@@ -45,9 +45,9 @@ export function AddNameForm({
         maxLength={120}
         placeholder={placeholder}
         error={state.fieldErrors?.name?.[0] ?? state.error}
-        className="flex-1"
+        className="min-w-0 flex-1"
       />
-      <Button type="submit" variant="secondary" className="mt-7 h-12" disabled={pending}>
+      <Button type="submit" variant="secondary" className="mt-7 h-12 shrink-0" disabled={pending}>
         <Plus aria-hidden className="size-4" />
         {button}
       </Button>
@@ -89,7 +89,7 @@ export function NamedRow({
           maxLength={120}
           aria-label={`New name for ${name}`}
           autoFocus
-          className="h-10 flex-1 rounded-lg border border-white/15 bg-black/30 px-3 text-sm"
+          className="h-10 w-full min-w-0 flex-1 rounded-lg border border-white/15 bg-black/30 px-3 text-sm"
         />
         <button type="submit" className={iconButton} aria-label="Save name" disabled={renaming}>
           <Check aria-hidden className="size-4" />
@@ -104,7 +104,7 @@ export function NamedRow({
 
   return (
     <div className="flex items-center gap-2">
-      <span className="flex-1 font-medium">{name}</span>
+      <span className="min-w-0 flex-1 break-words font-medium">{name}</span>
       {canChange ? (
         <>
           <button type="button" className={iconButton} aria-label={`Rename ${name}`} onClick={() => setEditing(true)}>
@@ -145,7 +145,7 @@ export function PackageCard({ pkg, libraryTasks }: { pkg: MaintenancePackage; li
           {pkg.items.map((item, index) => (
             <li key={item.id} className="flex items-center gap-1 px-3 py-1.5 text-sm">
               <span className="w-6 tabular-nums text-muted">{index + 1}.</span>
-              <span className="flex-1">{item.name}</span>
+              <span className="min-w-0 flex-1 break-words">{item.name}</span>
               {(["up", "down"] as const).map((direction) => (
                 <form key={direction} action={moveAction}>
                   <input type="hidden" name="id" value={item.id} />
@@ -177,7 +177,7 @@ export function PackageCard({ pkg, libraryTasks }: { pkg: MaintenancePackage; li
       {available.length ? (
         <form action={addAction} className="mt-3 flex items-end gap-2" key={addState.savedAt ?? "add"}>
           <input type="hidden" name="packageId" value={pkg.id} />
-          <SelectField label={`Add a task to ${pkg.name}`} name="taskId" defaultValue="" className="flex-1">
+          <SelectField label={`Add a task to ${pkg.name}`} name="taskId" defaultValue="" className="min-w-0 flex-1">
             <option value="">Choose a task…</option>
             {available.map((t) => (
               <option key={t.id} value={t.id}>

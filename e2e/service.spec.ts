@@ -117,6 +117,8 @@ test("a historical service with parts and costs keeps today's mileage", async ({
     other: "5",
   });
   await expect(visible(page.getByTestId("cost-total"))).toHaveText("$74.25");
+  // The filled-in form never makes the page scroll sideways on a phone.
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await visible(page.getByRole("button", { name: "Save service" })).click();
 
   await expect(page).toHaveURL(new RegExp(`/garage/${sledId}\\?service=saved`));

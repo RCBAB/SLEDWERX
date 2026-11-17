@@ -249,7 +249,7 @@ test("mechanics can mark tasks done; viewers only see the board", async ({ page,
   const viewerEmail = uniqueEmail("board-view");
   await signUp(page, ownerEmail);
   const sledId = await addSled(page, { make: "Yamaha", model: "Sidewinder", year: "2022", odometer: "1000" });
-  await addToBoard(page, { newTask: "Change oil", miles: "1000", before: { miles: "100" } });
+  await addToBoard(page, { newTask: "Change oil", miles: "500", before: { miles: "100" } });
 
   const mechanicContext = await browser.newContext();
   const mechanic = await mechanicContext.newPage();

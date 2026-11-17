@@ -11,7 +11,7 @@ export function uniqueEmail(label: string) {
 
 export async function signUp(page: Page, email: string, name?: string) {
   await page.goto("/signup");
-  if (name) await page.getByLabel("Name (optional)").fill(name);
+  if (name) await page.getByLabel("Name (optional)").filter({ visible: true }).fill(name);
   await page.getByLabel("Email").filter({ visible: true }).fill(email);
   await page.getByLabel("Password", { exact: true }).filter({ visible: true }).fill(PASSWORD);
   await page.getByLabel("Confirm password").filter({ visible: true }).fill(PASSWORD);

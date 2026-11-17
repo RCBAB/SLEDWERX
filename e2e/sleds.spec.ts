@@ -27,10 +27,10 @@ async function addSled(page: Page, sled: NewSled, photo = false): Promise<string
   await page.getByLabel("Manufacturer").filter({ visible: true }).fill(sled.make);
   await page.getByLabel("Model", { exact: true }).filter({ visible: true }).fill(sled.model);
   await page.getByLabel("Model year").filter({ visible: true }).fill(sled.year);
-  if (sled.nickname) await page.getByLabel("Nickname (optional)").fill(sled.nickname);
-  if (sled.vin) await page.getByLabel("VIN or serial number (optional)").fill(sled.vin);
-  await page.getByLabel("Odometer (miles)").fill(sled.odometer);
-  if (sled.hours) await page.getByLabel("Engine hours (optional)").fill(sled.hours);
+  if (sled.nickname) await page.getByLabel("Nickname (optional)").filter({ visible: true }).fill(sled.nickname);
+  if (sled.vin) await page.getByLabel("VIN or serial number (optional)").filter({ visible: true }).fill(sled.vin);
+  await page.getByLabel("Odometer (miles)").filter({ visible: true }).fill(sled.odometer);
+  if (sled.hours) await page.getByLabel("Engine hours (optional)").filter({ visible: true }).fill(sled.hours);
   if (photo) {
     await page.locator('input[name="photo"]').setInputFiles({ name: "sled.png", mimeType: "image/png", buffer: PNG });
     await expect(page.getByRole("img", { name: "Snowmobile photo" })).toBeVisible();
@@ -105,11 +105,11 @@ test("edit details, including More details", async ({ page }) => {
 
   await page.getByRole("link", { name: "Edit details" }).click();
   await expect(page).toHaveURL(new RegExp(`/garage/${id}/edit$`));
-  await page.getByLabel("Nickname (optional)").fill("Yellow Jacket");
+  await page.getByLabel("Nickname (optional)").filter({ visible: true }).fill("Yellow Jacket");
   await page.getByText("More details").click();
   await page.getByLabel("Status").filter({ visible: true }).selectOption("stored");
   await page.getByLabel("Engine", { exact: true }).filter({ visible: true }).fill("998 turbo triple");
-  await page.getByLabel("Displacement (cc)").fill("998");
+  await page.getByLabel("Displacement (cc)").filter({ visible: true }).fill("998");
   await page.getByLabel("Notes").filter({ visible: true }).fill("Summer storage in the shed.");
   await page.getByRole("button", { name: "Save changes" }).click();
 
@@ -133,14 +133,14 @@ test("update mileage, refuse lower readings, replace a meter, fix and remove the
   await addSled(page, { make: "Lynx", model: "Rave RE", year: "2020", odometer: "100", hours: "10" });
 
   const form = updateMileage(page);
-  await form.getByLabel("Odometer (miles)").fill("150");
+  await form.getByLabel("Odometer (miles)").filter({ visible: true }).fill("150");
   await form.getByLabel("Engine hours").filter({ visible: true }).fill("12.5");
   await form.getByRole("button", { name: "Save reading" }).click();
   await expect(form.getByText("Mileage updated.")).toBeVisible();
   await expect(page.getByTestId("current-odometer")).toHaveText("150 mi");
   await expect(page.getByTestId("current-hours")).toHaveText("12.5 hrs");
 
-  await form.getByLabel("Odometer (miles)").fill("120");
+  await form.getByLabel("Odometer (miles)").filter({ visible: true }).fill("120");
   await form.getByRole("button", { name: "Save reading" }).click();
   await expect(form.getByText(/Odometer readings cannot go down/)).toBeVisible();
   await expect(page.getByTestId("current-odometer")).toHaveText("150 mi");
@@ -148,7 +148,7 @@ test("update mileage, refuse lower readings, replace a meter, fix and remove the
   // A replaced odometer starts again; lifetime miles carry on.
   await form.getByText("Meter replaced or reset?").click();
   await form.getByLabel("The odometer was replaced or reset").filter({ visible: true }).check();
-  await form.getByLabel("Odometer (miles)").fill("5");
+  await form.getByLabel("Odometer (miles)").filter({ visible: true }).fill("5");
   await form.getByRole("button", { name: "Save reading" }).click();
   await expect(form.getByText("Mileage updated.")).toBeVisible();
   await expect(page.getByTestId("current-odometer")).toHaveText("5 mi");
@@ -157,7 +157,7 @@ test("update mileage, refuse lower readings, replace a meter, fix and remove the
   // Fix last reading: correct it, then remove it.
   const fix = page.getByTestId("fix-reading");
   await fix.getByText("Fix last reading").click();
-  await fix.getByLabel("Odometer (miles)").fill("8");
+  await fix.getByLabel("Odometer (miles)").filter({ visible: true }).fill("8");
   await fix.getByRole("button", { name: "Save correction" }).click();
   await expect(page.getByTestId("current-odometer")).toHaveText("8 mi");
 

@@ -1,7 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { expect, test, type Page } from "@playwright/test";
 
-import { NEEDS_SUPABASE, PASSWORD, hasSupabase, signIn, signUp, uniqueEmail } from "./helpers";
+import { NEEDS_SUPABASE, PASSWORD, addSled, hasSupabase, signIn, signUp, uniqueEmail } from "./helpers";
 
 // Needs the local Supabase stack (Auth, database and Storage).
 test.skip(!hasSupabase, NEEDS_SUPABASE);
@@ -11,34 +11,6 @@ test.afterEach(async ({ page }, testInfo) => {
   const text = await page.locator("body").innerText().catch(() => "(no body)");
   console.log(`[${testInfo.title}] url=${page.url()}\n${text.slice(0, 1500)}`);
 });
-
-const SLED_URL = /\/garage\/([0-9a-f-]{36})(\?.*)?$/;
-
-// A small valid PNG (8x6, solid color) for photo uploads.
-const PNG = Buffer.from(
-  "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAGCAIAAABxZ0isAAAAEUlEQVR4nGOQq7iDFTEMpAQAMUJFYTtzHLAAAAAASUVORK5CYII=",
-  "base64",
-);
-
-type NewSled = { make: string; model: string; year: string; odometer: string; hours?: string; nickname?: string; vin?: string };
-
-async function addSled(page: Page, sled: NewSled, photo = false): Promise<string> {
-  await page.goto("/garage/new");
-  await page.getByLabel("Manufacturer").filter({ visible: true }).fill(sled.make);
-  await page.getByLabel("Model", { exact: true }).filter({ visible: true }).fill(sled.model);
-  await page.getByLabel("Model year").filter({ visible: true }).fill(sled.year);
-  if (sled.nickname) await page.getByLabel("Nickname (optional)").filter({ visible: true }).fill(sled.nickname);
-  if (sled.vin) await page.getByLabel("VIN or serial number (optional)").filter({ visible: true }).fill(sled.vin);
-  await page.getByLabel("Odometer (miles)").filter({ visible: true }).fill(sled.odometer);
-  if (sled.hours) await page.getByLabel("Engine hours (optional)").filter({ visible: true }).fill(sled.hours);
-  if (photo) {
-    await page.locator('input[name="photo"]').setInputFiles({ name: "sled.png", mimeType: "image/png", buffer: PNG });
-    await expect(page.getByRole("img", { name: "Snowmobile photo" })).toBeVisible();
-  }
-  await page.getByRole("button", { name: "Add snowmobile" }).click();
-  await expect(page).toHaveURL(SLED_URL, { timeout: 15_000 });
-  return SLED_URL.exec(page.url())![1];
-}
 
 function updateMileage(page: Page) {
   return page.getByTestId("update-mileage");

@@ -46,14 +46,14 @@ isOneToOne: false
                   ]
                 },"maintenance_entries": {
                   Row: {
-                    "client_request_id": string | null,"completed": boolean,"created_at": string,"created_by": string | null,"deleted_at": string | null,"deleted_by": string | null,"done_by": string | null,"id": string,"labor_cost": number | null,"notes": string | null,"other_cost": number | null,"performed_on": string,"reading_id": string | null,"sled_id": string,"title": string,"updated_at": string,"updated_by": string | null,"version": number
+                    "category": string | null,"client_request_id": string | null,"completed": boolean,"created_at": string,"created_by": string | null,"deleted_at": string | null,"deleted_by": string | null,"done_by": string | null,"edited_at": string | null,"id": string,"labor_cost": number | null,"notes": string | null,"other_cost": number | null,"performed_on": string,"reading_id": string | null,"sled_id": string,"title": string,"updated_at": string,"updated_by": string | null,"version": number
                   }
                   ComputedFields: never
                   Insert: {
-                    "client_request_id"?: string | null,"completed"?: boolean,"created_at"?: string,"created_by"?: string | null,"deleted_at"?: string | null,"deleted_by"?: string | null,"done_by"?: string | null,"id"?: string,"labor_cost"?: number | null,"notes"?: string | null,"other_cost"?: number | null,"performed_on": string,"reading_id"?: string | null,"sled_id": string,"title": string,"updated_at"?: string,"updated_by"?: string | null,"version"?: number
+                    "category"?: string | null,"client_request_id"?: string | null,"completed"?: boolean,"created_at"?: string,"created_by"?: string | null,"deleted_at"?: string | null,"deleted_by"?: string | null,"done_by"?: string | null,"edited_at"?: string | null,"id"?: string,"labor_cost"?: number | null,"notes"?: string | null,"other_cost"?: number | null,"performed_on": string,"reading_id"?: string | null,"sled_id": string,"title": string,"updated_at"?: string,"updated_by"?: string | null,"version"?: number
                   }
                   Update: {
-                    "client_request_id"?: string | null,"completed"?: boolean,"created_at"?: string,"created_by"?: string | null,"deleted_at"?: string | null,"deleted_by"?: string | null,"done_by"?: string | null,"id"?: string,"labor_cost"?: number | null,"notes"?: string | null,"other_cost"?: number | null,"performed_on"?: string,"reading_id"?: string | null,"sled_id"?: string,"title"?: string,"updated_at"?: string,"updated_by"?: string | null,"version"?: number
+                    "category"?: string | null,"client_request_id"?: string | null,"completed"?: boolean,"created_at"?: string,"created_by"?: string | null,"deleted_at"?: string | null,"deleted_by"?: string | null,"done_by"?: string | null,"edited_at"?: string | null,"id"?: string,"labor_cost"?: number | null,"notes"?: string | null,"other_cost"?: number | null,"performed_on"?: string,"reading_id"?: string | null,"sled_id"?: string,"title"?: string,"updated_at"?: string,"updated_by"?: string | null,"version"?: number
                   }
                   Relationships: [
                     {
@@ -407,7 +407,10 @@ isOneToOne: false
 { Args: { "p_share_id": string }; Returns: undefined
                            },
 "save_maintenance_entry":
-{ Args: { "p_completed"?: boolean,"p_done_by"?: string,"p_idempotency_key": string,"p_labor_cost"?: number,"p_notes"?: string,"p_other_cost"?: number,"p_parts"?: Json,"p_performed_on": string,"p_reading"?: Json,"p_sled_id": string,"p_tasks"?: Json,"p_title": string }; Returns: Json
+{ Args: { "p_category"?: string,"p_completed"?: boolean,"p_done_by"?: string,"p_idempotency_key": string,"p_labor_cost"?: number,"p_notes"?: string,"p_other_cost"?: number,"p_parts"?: Json,"p_performed_on": string,"p_reading"?: Json,"p_sled_id": string,"p_tasks"?: Json,"p_title": string }; Returns: Json
+                           },
+"update_maintenance_entry":
+{ Args: { "p_category"?: string,"p_done_by"?: string,"p_entry_id": string,"p_labor_cost"?: number,"p_notes"?: string,"p_other_cost"?: number,"p_parts"?: Json,"p_performed_on": string,"p_reading"?: Json,"p_tasks"?: Json,"p_title": string,"p_version": number }; Returns: Json
                            },
 "update_sled_share_role":
 { Args: { "p_role": Database["public"]['Enums']["sled_share_role"],"p_share_id": string }; Returns: undefined

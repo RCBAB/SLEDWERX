@@ -14,13 +14,14 @@ the helpers created in stage 1.
 |---|---|---|
 | 1 | Foundation: profiles, preferences, garages, sleds, per-sled sharing, audit log, Recently Deleted, row versioning | Applied |
 | 2 | Personal maintenance logbook: mileage and engine-hour history (with meter resets and engine replacements), user-created tasks and packages, maintenance schedules (miles, engine hours, days), logbook entries with tasks, parts and USD costs, version restore | Applied |
-| 3 | Snowmobile photos (private Storage bucket, `sleds.photo_path`, storage policies that follow sled sharing), atomic `create_sled()`, and no future-dated readings | Ready for review, **not applied** |
-| 4 | Stored reminders (upcoming / due / overdue, user thresholds) for mileage, **engine-hour** and calendar intervals, recalculated on maintenance, reading and interval changes | Planned |
-| 5 | Issues and repairs; installed parts and modifications with install/removal history (can link to logbook parts); shopping list | Planned |
-| 6 | Suspension setups (standard + manufacturer-specific fields), revisions, tuning journal, test sessions; manual ride logs | Planned |
-| 7 | Attachments: private Storage bucket, file metadata, size/type validation, storage RLS, cleanup with Recently Deleted and account deletion | Planned |
-| 8 | Community library: opt-in rider profiles, published setup copies, reviews, moderation | Planned |
-| 9 | Offline sync: change feed, conflict records and resolution | Planned |
+| 3 | Snowmobile photos (private Storage bucket, `sleds.photo_path`, storage policies that follow sled sharing), atomic `create_sled()`, and no future-dated readings | Applied |
+| 4 | Service records: categories, `edited_at`, no future service dates, `save_maintenance_entry` with a category, atomic `update_maintenance_entry()`, items that follow their record (mechanics can fix their own records) | Ready for review, **not applied** |
+| 5 | Stored reminders (upcoming / due / overdue, user thresholds) for mileage, **engine-hour** and calendar intervals, recalculated on maintenance, reading and interval changes | Planned |
+| 6 | Issues and repairs; installed parts and modifications with install/removal history (can link to logbook parts); shopping list | Planned |
+| 7 | Suspension setups (standard + manufacturer-specific fields), revisions, tuning journal, test sessions; manual ride logs | Planned |
+| 8 | Attachments: private Storage bucket, file metadata, size/type validation, storage RLS, cleanup with Recently Deleted and account deletion | Planned |
+| 9 | Community library: opt-in rider profiles, published setup copies, reviews, moderation | Planned |
+| 10 | Offline sync: change feed, conflict records and resolution | Planned |
 
 ## Ownership model
 
@@ -308,7 +309,7 @@ totals.
 - Costs are USD. There is no currency setting.
 - Engine hours: Decision 1 of Migration 2 approves engine-hour intervals.
   This replaces the original 1.0 note "no hour-based service reminders".
-  Reminders (Migration 4) must support hours as well as miles and days.
+  Reminders (Migration 5) must support hours as well as miles and days.
 
 ## Snowmobile photos and `create_sled` (Migration 3)
 
@@ -363,6 +364,51 @@ only; Migrations 1 and 2 are unchanged.
   the bucket until the Phase 7 cleanup, which removes files through the
   Storage API. Such files are unreachable: no sled matches their path.
 
+## Service records (Migration 4)
+
+`supabase/migrations/20261118090000_service_records.sql`. No new tables:
+Phase 3 builds on Migration 2's logbook. Migrations 1-3 are unchanged.
+
+- **Category** (`maintenance_entries.category`, optional): engine, drivetrain,
+  track_suspension, fuel_oil, cooling, electrical, brakes, steering_skis,
+  body_accessories, inspection, other.
+- **No future service dates**: `performed_on` at most one day past the
+  database's UTC date (same rule as readings).
+- **`save_maintenance_entry(..., p_category)`**: Migration 2's function with a
+  category added at the end. The old signature is dropped (the app is its
+  only caller); everything else is identical.
+- **`update_maintenance_entry(p_entry_id, p_version, ...)`** edits a whole
+  record in one transaction, as the caller (RLS, guards, audit):
+  - the record is version-checked; every edit sets `edited_at`, so the
+    version changes even when only items or mileage changed;
+  - the linked reading is **corrected in place** and follows the service
+    date, so mileage history never gains stray readings;
+  - tasks and parts with an id are updated, without an id added, and missing
+    ones soft-deleted;
+  - `p_reading => null` unlinks and soft-deletes the reading (owners and
+    editors only).
+- **Historical services**: a service's mileage is an ordinary reading dated
+  with the service date. Readings are validated in date order (then entry
+  time), so a 1,200 mi service from last season fits before today's 2,000
+  mi reading, the current mileage stays 2,000, and a value that doesn't fit
+  its neighbours is refused. Readings on the same day are ordered by when
+  they were entered (accepted limitation).
+- **Items follow their record**: tasks and parts of a service record can be
+  edited, removed (soft delete), seen when removed and restored by anyone
+  who may modify the record: owners, editors, and the mechanic who created
+  it. The item guard is `private.tg_entry_items_guard()`; the view and edit
+  policies use `private.entry_created_by(entry_id)`. Deleting a record, and
+  deleting readings, keep Migration 1's rule (owners and editors only).
+
+| Action on a service record | Owner / editor | Mechanic (own record) | Mechanic (other's) | Viewer |
+|---|---|---|---|---|
+| View, including costs | ✅ | ✅ | ✅ | ✅ |
+| Log a new service | ✅ | ✅ | — | ❌ |
+| Edit details, tasks, parts, costs | ✅ | ✅ | ❌ | ❌ |
+| Correct mileage / hours | ✅ | ✅ | ❌ | ❌ |
+| Remove the mileage (reading) | ✅ | ❌ | ❌ | ❌ |
+| Delete the record | ✅ | ❌ | ❌ | ❌ |
+
 ## Units
 
 1.0 uses US units, stored in the unit named by the column: `*_mi` (miles),
@@ -379,7 +425,7 @@ those sleds' audit history. Actor columns (`created_by`, `updated_by`, etc.)
 are plain ids without foreign keys, so deletion never rewrites other owners'
 records. Once the account is gone, those ids no longer identify anyone.
 Storage files (sled photos, and later attachments) are removed by the
-Storage cleanup (Phase 7 / migration 7), which must run before the auth user
+Storage cleanup (Phase 7 / migration 8), which must run before the auth user
 is deleted.
 
 ## Testing
@@ -396,9 +442,8 @@ Supabase stack:
 - `scripts/db-api-smoke-test.mjs`, which signs up real users through Supabase
   Auth and exercises sharing, RLS, the maintenance logbook and conflict
   detection through the REST API with `supabase-js`
-- the rollback tests, newest first: Migration 3 is rolled back and the
-  Migration 1 and 2 tests run on the result; Migration 2 is rolled back and
-  the Migration 1 tests run; then Migration 1's rollback is tested
+- the rollback tests, newest first: 4, 3, 2, 1. After each rollback, the
+  tests of the remaining migrations run again on the result
 
 CI never connects to the live project.
 

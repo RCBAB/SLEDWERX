@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/client";
+import { randomUuid } from "@/lib/uuid";
 
 import { PHOTO_BUCKET, PHOTO_MAX_DIMENSION, PHOTO_MAX_INPUT_BYTES } from "./constants";
 
@@ -45,16 +46,6 @@ export async function resizePhoto(file: File): Promise<Blob> {
     if (blob && blob.size <= TARGET_BYTES) return blob;
   }
   throw new PhotoError("This photo couldn't be made small enough to upload.");
-}
-
-/** A random v4 UUID; randomUUID only exists in secure contexts (HTTPS, localhost). */
-function randomUuid(): string {
-  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
-  const bytes = crypto.getRandomValues(new Uint8Array(16));
-  bytes[6] = (bytes[6] & 0x0f) | 0x40;
-  bytes[8] = (bytes[8] & 0x3f) | 0x80;
-  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 /**

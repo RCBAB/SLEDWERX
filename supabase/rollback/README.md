@@ -18,9 +18,64 @@ below call for it, and preferably after talking it through.
 
 ## Order matters
 
-Roll back the newest migration first. Migration 1's rollback fails safely
-(changing nothing) while Migration 2 is applied, because Migration 2's tables
-depend on it.
+Roll back the newest migration first: Migration 3, then 2, then 1. Each
+older rollback fails safely (changing nothing) while a newer migration that
+depends on it is still applied.
+
+---
+
+## `20261117150000_rollback.sql` (Migration 3)
+
+Undoes `supabase/migrations/20261117150000_sled_photos_and_create_sled.sql`:
+`sleds.photo_path`, the `sled-photos` bucket and its four storage policies,
+`create_sled()`, `private.photo_sled_id()`, the reading-date trigger
+(`date_check` on `sled_readings`) and the migration-history entry.
+**Sleds and readings created with `create_sled()` are kept**: they are
+ordinary Migration 1 and 2 data.
+
+### When to use it
+
+Only when **all** of these are true:
+
+1. Migration 3 was applied (`npx supabase migration list --remote` shows
+   `20261117150000` under Remote).
+2. A post-deployment check failed.
+3. No sled has a photo **and** the `sled-photos` bucket is empty.
+4. The app version that uses photos and `create_sled` is not deployed (or
+   has been rolled back in Vercel first), since it needs these objects.
+
+Never use it once photos exist. Fix forward instead. The script refuses in
+that case anyway.
+
+### Step 1: Confirm there are no photos (read-only)
+
+```sql
+select count(*) from public.sleds where photo_path is not null;
+select count(*) from storage.objects where bucket_id = 'sled-photos';
+```
+
+Both counts must be `0`.
+
+### Step 2: Run the rollback
+
+In **SQL Editor**, first line:
+```sql
+set sledwerx.confirm_rollback = '20261117150000';
+```
+then paste the whole of `20261117150000_rollback.sql` and run it once. The
+expected result is the notice `Rollback complete: Migration 3 removed;
+Migrations 1 and 2 untouched.` Any error means nothing changed.
+
+### Step 3: Verify (read-only)
+
+`npx supabase migration list --remote` should show `20261117150000` under
+Local only. In SQL Editor, both of these should return no rows:
+
+```sql
+select column_name from information_schema.columns
+where table_schema = 'public' and table_name = 'sleds' and column_name = 'photo_path';
+select id from storage.buckets where id = 'sled-photos';
+```
 
 ---
 
@@ -206,8 +261,9 @@ touched.
 
 ### Testing
 
-CI tests both scripts on every pull request against a throwaway local
-Supabase database (Migration 2 first, then Migration 1). It checks that the script:
+CI tests every rollback script on every pull request against a throwaway
+local Supabase database (Migration 3 first, then 2, then 1). It checks that
+each script:
 
 - refuses to run without confirmation
 - refuses to run while data exists

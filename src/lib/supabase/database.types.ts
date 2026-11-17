@@ -308,14 +308,14 @@ isOneToOne: false
                   ]
                 },"sleds": {
                   Row: {
-                    "created_at": string,"created_by": string | null,"deleted_at": string | null,"deleted_by": string | null,"engine_description": string | null,"engine_displacement_cc": number | null,"garage_id": string,"id": string,"make": string,"model": string,"model_year": number,"nickname": string | null,"notes": string | null,"owner_id": string,"purchase_date": string | null,"status": Database["public"]['Enums']["sled_status"],"updated_at": string,"updated_by": string | null,"version": number,"vin": string | null
+                    "created_at": string,"created_by": string | null,"deleted_at": string | null,"deleted_by": string | null,"engine_description": string | null,"engine_displacement_cc": number | null,"garage_id": string,"id": string,"make": string,"model": string,"model_year": number,"nickname": string | null,"notes": string | null,"owner_id": string,"photo_path": string | null,"purchase_date": string | null,"status": Database["public"]['Enums']["sled_status"],"updated_at": string,"updated_by": string | null,"version": number,"vin": string | null
                   }
                   ComputedFields: never
                   Insert: {
-                    "created_at"?: string,"created_by"?: string | null,"deleted_at"?: string | null,"deleted_by"?: string | null,"engine_description"?: string | null,"engine_displacement_cc"?: number | null,"garage_id": string,"id"?: string,"make": string,"model": string,"model_year": number,"nickname"?: string | null,"notes"?: string | null,"owner_id"?: string,"purchase_date"?: string | null,"status"?: Database["public"]['Enums']["sled_status"],"updated_at"?: string,"updated_by"?: string | null,"version"?: number,"vin"?: string | null
+                    "created_at"?: string,"created_by"?: string | null,"deleted_at"?: string | null,"deleted_by"?: string | null,"engine_description"?: string | null,"engine_displacement_cc"?: number | null,"garage_id": string,"id"?: string,"make": string,"model": string,"model_year": number,"nickname"?: string | null,"notes"?: string | null,"owner_id"?: string,"photo_path"?: string | null,"purchase_date"?: string | null,"status"?: Database["public"]['Enums']["sled_status"],"updated_at"?: string,"updated_by"?: string | null,"version"?: number,"vin"?: string | null
                   }
                   Update: {
-                    "created_at"?: string,"created_by"?: string | null,"deleted_at"?: string | null,"deleted_by"?: string | null,"engine_description"?: string | null,"engine_displacement_cc"?: number | null,"garage_id"?: string,"id"?: string,"make"?: string,"model"?: string,"model_year"?: number,"nickname"?: string | null,"notes"?: string | null,"owner_id"?: string,"purchase_date"?: string | null,"status"?: Database["public"]['Enums']["sled_status"],"updated_at"?: string,"updated_by"?: string | null,"version"?: number,"vin"?: string | null
+                    "created_at"?: string,"created_by"?: string | null,"deleted_at"?: string | null,"deleted_by"?: string | null,"engine_description"?: string | null,"engine_displacement_cc"?: number | null,"garage_id"?: string,"id"?: string,"make"?: string,"model"?: string,"model_year"?: number,"nickname"?: string | null,"notes"?: string | null,"owner_id"?: string,"photo_path"?: string | null,"purchase_date"?: string | null,"status"?: Database["public"]['Enums']["sled_status"],"updated_at"?: string,"updated_by"?: string | null,"version"?: number,"vin"?: string | null
                   }
                   Relationships: [
                     {
@@ -382,6 +382,9 @@ isOneToOne: false
           Functions: {
             "accept_sled_invitation":
 { Args: { "p_token": string }; Returns: string
+                           },
+"create_sled":
+{ Args: { "p_engine_hours"?: number,"p_garage_id"?: string,"p_make": string,"p_model": string,"p_model_year": number,"p_nickname"?: string,"p_odometer_mi": number,"p_read_on"?: string,"p_vin"?: string }; Returns: string
                            },
 "create_sled_invitation":
 { Args: { "p_email": string,"p_expires_in_days"?: number,"p_role": Database["public"]['Enums']["sled_share_role"],"p_sled_id": string }; Returns: {

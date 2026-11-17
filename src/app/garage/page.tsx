@@ -2,24 +2,26 @@ import { Bike, Plus } from "lucide-react";
 import type { Metadata } from "next";
 import { Suspense } from "react";
 
+import { SledCard } from "@/components/sleds/sled-card";
+import { ButtonLink } from "@/components/ui/button";
 import { requireUser } from "@/lib/auth/session";
+import { listSleds, type SledListItem } from "@/lib/sleds/queries";
 import { createClient } from "@/lib/supabase/server";
 
 export const metadata: Metadata = { title: "My Snowmobiles" };
 
-const STATUS_LABELS: Record<string, string> = {
-  ready: "Ready",
-  needs_attention: "Needs attention",
-  out_of_service: "Out of service",
-  stored: "Stored",
-};
-
 export default function GaragePage() {
   return (
     <div className="mx-auto max-w-5xl">
-      <h1 className="font-display text-4xl font-extrabold uppercase italic tracking-tight sm:text-5xl">
-        My Snowmobiles
-      </h1>
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <h1 className="font-display text-4xl font-extrabold uppercase italic tracking-tight sm:text-5xl">
+          My Snowmobiles
+        </h1>
+        <ButtonLink href="/garage/new" className="hidden sm:inline-flex">
+          <Plus aria-hidden className="size-4" />
+          Add snowmobile
+        </ButtonLink>
+      </div>
       <Suspense fallback={<GarageSkeleton />}>
         <SledList />
       </Suspense>
@@ -31,21 +33,14 @@ async function SledList() {
   const user = await requireUser("/garage");
   const supabase = await createClient();
 
-  const [{ data: profile }, { data: sleds, error }] = await Promise.all([
+  const [{ data: profile }, sleds] = await Promise.all([
     supabase.from("profiles").select("display_name").eq("id", user.id).maybeSingle(),
-    supabase
-      .from("sleds")
-      .select("id, owner_id, model_year, make, model, nickname, status")
-      .is("deleted_at", null)
-      .order("created_at", { ascending: true }),
+    listSleds(),
   ]);
-  if (error) {
-    throw new Error("Could not load your snowmobiles.");
-  }
 
   const greeting = profile?.display_name ? `Welcome, ${profile.display_name}.` : "Welcome to your garage.";
-  const owned = (sleds ?? []).filter((sled) => sled.owner_id === user.id);
-  const shared = (sleds ?? []).filter((sled) => sled.owner_id !== user.id);
+  const owned = sleds.filter((sled) => sled.ownerId === user.id);
+  const shared = sleds.filter((sled) => sled.ownerId !== user.id);
 
   return (
     <>
@@ -63,19 +58,21 @@ async function SledList() {
             No snowmobiles yet
           </h2>
           <p className="mt-2 max-w-sm text-muted">
-            Your garage is ready. Adding snowmobiles is the next feature on its way.
+            Add your first sled to start tracking its mileage and engine hours.
           </p>
-          <button
-            type="button"
-            disabled
-            className="mt-6 inline-flex h-12 cursor-not-allowed items-center gap-2 rounded-lg border border-white/15 px-5 font-semibold text-muted"
-          >
+          <ButtonLink href="/garage/new" size="lg" className="mt-6">
             <Plus aria-hidden className="size-4" />
-            Add snowmobile (coming soon)
-          </button>
+            Add snowmobile
+          </ButtonLink>
         </section>
       ) : (
-        <SledGrid title="Your snowmobiles" sleds={owned} />
+        <>
+          <SledGrid title="Your snowmobiles" sleds={owned} />
+          <ButtonLink href="/garage/new" size="lg" className="mt-6 w-full sm:hidden">
+            <Plus aria-hidden className="size-4" />
+            Add snowmobile
+          </ButtonLink>
+        </>
       )}
 
       {shared.length > 0 ? <SledGrid title="Shared with you" sleds={shared} /> : null}
@@ -83,31 +80,17 @@ async function SledList() {
   );
 }
 
-type SledSummary = {
-  id: string;
-  model_year: number;
-  make: string;
-  model: string;
-  nickname: string | null;
-  status: string;
-};
-
-function SledGrid({ title, sleds }: { title: string; sleds: SledSummary[] }) {
+function SledGrid({ title, sleds }: { title: string; sleds: SledListItem[] }) {
+  const id = `grid-${title.toLowerCase().replace(/\s+/g, "-")}`;
   return (
-    <section className="mt-8">
-      <h2 className="text-sm font-semibold uppercase tracking-[0.2em] text-muted">{title}</h2>
+    <section className="mt-8" aria-labelledby={id}>
+      <h2 id={id} className="text-sm font-semibold uppercase tracking-[0.2em] text-muted">
+        {title}
+      </h2>
       <ul className="mt-3 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {sleds.map((sled) => (
-          <li key={sled.id} className="rounded-2xl border border-white/10 bg-surface/70 p-5">
-            <p className="font-display text-2xl font-bold uppercase italic leading-tight">
-              {sled.nickname || `${sled.make} ${sled.model}`}
-            </p>
-            <p className="mt-1 text-sm text-muted">
-              {sled.model_year} {sled.make} {sled.model}
-            </p>
-            <p className="mt-4 inline-flex rounded-full bg-white/5 px-3 py-1 text-xs font-semibold">
-              {STATUS_LABELS[sled.status] ?? sled.status}
-            </p>
+          <li key={sled.id}>
+            <SledCard sled={sled} />
           </li>
         ))}
       </ul>
@@ -119,7 +102,11 @@ function GarageSkeleton() {
   return (
     <div aria-hidden className="mt-8 space-y-4">
       <div className="h-5 w-48 animate-pulse rounded bg-white/5" />
-      <div className="h-56 animate-pulse rounded-2xl bg-white/5" />
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {[0, 1, 2].map((i) => (
+          <div key={i} className="h-72 animate-pulse rounded-2xl bg-white/5" />
+        ))}
+      </div>
     </div>
   );
 }

@@ -1,3 +1,5 @@
+import { ButtonLink } from "@/components/ui/button";
+
 export default function Home() {
   return (
     <main className="relative flex flex-1 flex-col overflow-hidden">
@@ -37,11 +39,24 @@ export default function Home() {
         <p className="mt-8 font-display text-2xl font-semibold uppercase tracking-[0.2em] text-foreground/80 sm:text-3xl">
           Your Snowmobile Garage.
         </p>
+
+        <p className="mt-6 max-w-xl text-base text-muted sm:text-lg">
+          Keep every sled&apos;s maintenance, mileage, parts and costs in one logbook.
+        </p>
+
+        <div className="mt-10 flex flex-col gap-3 sm:flex-row">
+          <ButtonLink href="/signup" size="lg">
+            Get started
+          </ButtonLink>
+          <ButtonLink href="/login" size="lg" variant="secondary">
+            Sign in
+          </ButtonLink>
+        </div>
       </section>
 
       <footer className="relative border-t border-white/5 py-6">
         <p className="mx-auto max-w-5xl px-6 font-mono text-xs uppercase tracking-[0.3em] text-muted sm:px-10">
-          Coming soon
+          Personal snowmobile maintenance logbook
         </p>
       </footer>
     </main>

@@ -1,24 +1,29 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
+import type { Database } from "./database.types";
 import { readSupabaseEnv } from "./env";
 
 /**
  * Refreshes the Supabase auth session on each request and passes the updated
  * cookies to both Server Components (request) and the browser (response).
  *
- * If Supabase is not configured, the request passes through unchanged so the
- * app keeps working.
+ * Returns whether the request has a valid session, for the proxy's
+ * optimistic redirects. Pages still check the session themselves.
+ *
+ * If Supabase is not configured, the request passes through unchanged.
  */
-export async function updateSession(request: NextRequest) {
+export async function updateSession(
+  request: NextRequest,
+): Promise<{ response: NextResponse; signedIn: boolean }> {
   let response = NextResponse.next({ request });
 
   const env = readSupabaseEnv();
   if (!env) {
-    return response;
+    return { response, signedIn: false };
   }
 
-  const supabase = createServerClient(env.url, env.publishableKey, {
+  const supabase = createServerClient<Database>(env.url, env.publishableKey, {
     cookies: {
       getAll() {
         return request.cookies.getAll();
@@ -41,9 +46,9 @@ export async function updateSession(request: NextRequest) {
 
   // Do not run code between createServerClient and getClaims(): it validates
   // the JWT and refreshes an expired session, which writes the new cookies.
-  await supabase.auth.getClaims();
+  const { data } = await supabase.auth.getClaims();
 
   // Return `response` as is. Creating a different response without copying
   // its cookies would end the user's session.
-  return response;
+  return { response, signedIn: Boolean(data?.claims?.sub) };
 }

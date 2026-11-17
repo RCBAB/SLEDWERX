@@ -2,18 +2,27 @@ import "server-only";
 
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
+import { connection } from "next/server";
 
+import type { Database } from "./database.types";
 import { getSupabaseEnv } from "./env";
 
 /**
  * Supabase client for Server Components, Server Functions, and Route Handlers.
- * Create a new client for every request; never share one between requests.
+ * It uses the signed-in user's session, so Row Level Security applies to
+ * every query. Create a new client for every request; never share one.
+ * There is no service-role client in this app.
  */
 export async function createClient() {
-  const { url, publishableKey } = getSupabaseEnv();
+  // Always per request: session checks compare token expiry with the current
+  // time, so they must never run while prerendering (including runtime
+  // prefetches). This also means a missing env var fails at request time
+  // rather than during the build.
+  await connection();
   const cookieStore = await cookies();
+  const { url, publishableKey } = getSupabaseEnv();
 
-  return createServerClient(url, publishableKey, {
+  return createServerClient<Database>(url, publishableKey, {
     cookies: {
       getAll() {
         return cookieStore.getAll();

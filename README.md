@@ -43,6 +43,9 @@ Then open [http://localhost:3000](http://localhost:3000).
 | `npm run start`     | Serve the production build (run `build` first) |
 | `npm run lint`      | Run ESLint                                     |
 | `npm run typecheck` | Run the TypeScript compiler without emitting   |
+| `npm test`          | Run unit tests (Vitest)                        |
+| `npm run test:e2e`  | Run browser tests (Playwright; build first)    |
+| `npm run db:types`  | Regenerate `src/lib/supabase/database.types.ts` from the local Supabase stack |
 
 To build and run in production mode locally:
 
@@ -56,7 +59,9 @@ npm run start
 
 ## Continuous integration
 
-GitHub Actions (`.github/workflows/ci.yml`) runs lint, typecheck, build, and database tests on Node.js 22 for every pull request and every push to `main`. The database tests run against a temporary local Supabase database, never the live project.
+GitHub Actions (`.github/workflows/ci.yml`) runs lint, typecheck, unit tests, build, database tests and browser tests on Node.js 22 for every pull request and every push to `main`. The database and browser tests run against a temporary local Supabase stack, never the live project. The browser job also fails if `database.types.ts` no longer matches the migrations.
+
+Browser tests that need sign-in run only when `E2E_SUPABASE=1` (and `MAILPIT_URL` for the password-reset email). Without them, only the public-page tests run.
 
 ## Deployment
 
@@ -138,3 +143,18 @@ npm run db:test
 - **Server:** `const supabase = await createClient()` from `@/lib/supabase/server` in Server Components, Server Functions, and Route Handlers. Create one per request.
 - **Session refresh:** `src/proxy.ts` (Next.js 16 renamed Middleware to Proxy) calls `supabase.auth.getClaims()` on each request, which validates the auth token and refreshes expired sessions in cookies.
 - To check who is signed in on the server, use `supabase.auth.getClaims()` or `getUser()`, not `getSession()`.
+- **Route protection:** the proxy redirects signed-out visitors away from `/garage` and signed-in users away from `/`, `/login` and `/signup`. Pages also check with `requireUser()` (`src/lib/auth/session.ts`), so the proxy is never the only guard. Row Level Security protects the data itself.
+- There is no service-role key in this app; every query runs as the signed-in user.
+
+### Auth settings (Supabase dashboard)
+
+Set these once per project under **Authentication**:
+
+1. **URL Configuration**
+   - Site URL: `https://sledwerx.vercel.app`
+   - Redirect URLs: `https://sledwerx.vercel.app/**`, `https://*-sledwerx.vercel.app/**` (preview deployments), `http://localhost:3000/**`
+2. **Email Templates** (so email links work across browsers and devices)
+   - Confirm signup: link to `{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=email&next=/garage`
+   - Reset password: link to `{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=recovery`
+
+`/auth/confirm` also accepts the default `?code=` links, which work when the link is opened in the same browser that requested it.

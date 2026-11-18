@@ -54,6 +54,8 @@ export function SuspensionView({
   const [session, setSession] = useState(0);
   const [chosen, setChosen] = useState<string | null>(initialSetupId ?? null);
   const [zone, setZone] = useState<SuspensionZone>(SUSPENSION_ZONES[0]);
+  // Open while the list is empty; afterwards it stays as the user left it.
+  const [editorOpen, setEditorOpen] = useState(data.settings.length === 0);
   /** The revision just saved from the adjust sheet (shown as a notice). */
   const [savedId, setSavedId] = useState<string | null>(null);
   // Close sheets when the page is hidden (Next.js keeps it mounted).
@@ -203,7 +205,11 @@ export function SuspensionView({
           <p className="text-sm text-muted">
             One list for this snowmobile, shared by all its setups. Each setup keeps its own values, and any setting can be left blank.
           </p>
-          <details className="group rounded-2xl border border-white/10 bg-surface/40" open={settings.length === 0 || undefined}>
+          <details
+            className="group rounded-2xl border border-white/10 bg-surface/40"
+            open={editorOpen}
+            onToggle={(event) => setEditorOpen(event.currentTarget.open)}
+          >
             <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 px-5 py-3 font-semibold">
               <span>
                 Customize settings <span className="text-muted">({settings.length})</span>

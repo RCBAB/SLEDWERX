@@ -1,3 +1,4 @@
+
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
 export type Database = {
@@ -260,6 +261,64 @@ isOneToOne: false
                   Relationships: [
                     {
       foreignKeyName: "sled_invitations_sled_id_fkey"
+      columns: ["sled_id"]
+isOneToOne: false
+      referencedRelation: "sleds"
+      referencedColumns: ["id"]
+    }
+                  ]
+                },"sled_issue_photos": {
+                  Row: {
+                    "created_at": string,"created_by": string | null,"deleted_at": string | null,"deleted_by": string | null,"id": string,"issue_id": string,"path": string,"position": number,"sled_id": string,"updated_at": string,"updated_by": string | null,"version": number
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "created_at"?: string,"created_by"?: string | null,"deleted_at"?: string | null,"deleted_by"?: string | null,"id"?: string,"issue_id": string,"path": string,"position"?: number,"sled_id": string,"updated_at"?: string,"updated_by"?: string | null,"version"?: number
+                  }
+                  Update: {
+                    "created_at"?: string,"created_by"?: string | null,"deleted_at"?: string | null,"deleted_by"?: string | null,"id"?: string,"issue_id"?: string,"path"?: string,"position"?: number,"sled_id"?: string,"updated_at"?: string,"updated_by"?: string | null,"version"?: number
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "sled_issue_photos_issue_id_fkey"
+      columns: ["issue_id"]
+isOneToOne: false
+      referencedRelation: "sled_issues"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "sled_issue_photos_sled_id_fkey"
+      columns: ["sled_id"]
+isOneToOne: false
+      referencedRelation: "sleds"
+      referencedColumns: ["id"]
+    }
+                  ]
+                },"sled_issues": {
+                  Row: {
+                    "created_at": string,"created_by": string | null,"deleted_at": string | null,"deleted_by": string | null,"description": string | null,"id": string,"odometer_mi": number | null,"priority": string,"reported_on": string,"resolution_notes": string | null,"resolved_by": string | null,"resolved_entry_id": string | null,"resolved_on": string | null,"sled_id": string,"status": string,"title": string,"updated_at": string,"updated_by": string | null,"version": number
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "created_at"?: string,"created_by"?: string | null,"deleted_at"?: string | null,"deleted_by"?: string | null,"description"?: string | null,"id"?: string,"odometer_mi"?: number | null,"priority"?: string,"reported_on"?: string,"resolution_notes"?: string | null,"resolved_by"?: string | null,"resolved_entry_id"?: string | null,"resolved_on"?: string | null,"sled_id": string,"status"?: string,"title": string,"updated_at"?: string,"updated_by"?: string | null,"version"?: number
+                  }
+                  Update: {
+                    "created_at"?: string,"created_by"?: string | null,"deleted_at"?: string | null,"deleted_by"?: string | null,"description"?: string | null,"id"?: string,"odometer_mi"?: number | null,"priority"?: string,"reported_on"?: string,"resolution_notes"?: string | null,"resolved_by"?: string | null,"resolved_entry_id"?: string | null,"resolved_on"?: string | null,"sled_id"?: string,"status"?: string,"title"?: string,"updated_at"?: string,"updated_by"?: string | null,"version"?: number
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "sled_issues_resolved_entry_id_fkey"
+      columns: ["resolved_entry_id"]
+isOneToOne: false
+      referencedRelation: "maintenance_entries"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "sled_issues_resolved_entry_id_fkey"
+      columns: ["resolved_entry_id"]
+isOneToOne: false
+      referencedRelation: "maintenance_entry_costs"
+      referencedColumns: ["entry_id"]
+    },{
+      foreignKeyName: "sled_issues_sled_id_fkey"
       columns: ["sled_id"]
 isOneToOne: false
       referencedRelation: "sleds"

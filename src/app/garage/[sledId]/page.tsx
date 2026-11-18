@@ -5,6 +5,7 @@ import { notFound } from "next/navigation";
 import { Suspense } from "react";
 
 import { MaintenanceBoard } from "@/components/board/maintenance-board";
+import { SledIssues } from "@/components/issues/issues";
 import { QuickService } from "@/components/service/quick-service";
 import { ServiceHistory } from "@/components/service/service-history";
 import { BackLink } from "@/components/sleds/back-link";
@@ -18,6 +19,7 @@ import { ButtonLink } from "@/components/ui/button";
 import { requireUser } from "@/lib/auth/session";
 import type { RangeReading } from "@/lib/service/meter-range";
 import { getBoard } from "@/lib/board/queries";
+import { issuesResolvedByEntry, listSledIssues } from "@/lib/issues/queries";
 import { listPackages, listServiceRecords, taskOptionsForSled } from "@/lib/service/queries";
 import { formatDate, formatHours, formatMiles, sledDescription, sledName } from "@/lib/sleds/format";
 import { canFixReading, ROLE_LABELS, serviceCapabilities, sledCapabilities } from "@/lib/sleds/permissions";
@@ -69,11 +71,13 @@ async function SledDashboard({ params, searchParams }: Pick<PageProps<"/garage/[
               ? NOTICES.serviceUpdated
               : null;
   const last = sled.readings[0];
-  const [services, taskOptions, board, packages] = await Promise.all([
+  const [services, taskOptions, board, packages, issues, resolvedIssues] = await Promise.all([
     listServiceRecords(sled.id),
     can.canLogService ? taskOptionsForSled(sled) : Promise.resolve([]),
     getBoard(sled.id),
     can.canLogService ? listPackages(user.id) : Promise.resolve([]),
+    listSledIssues(sled.id),
+    issuesResolvedByEntry(sled.id),
   ]);
   const lastService = last ? services.find((service) => service.readingId === last.id) : undefined;
   // Oldest first, so readings of the same day keep the order they were entered.
@@ -154,6 +158,18 @@ async function SledDashboard({ params, searchParams }: Pick<PageProps<"/garage/[
         current={currentMeters}
       />
 
+      <section className="mt-10 scroll-mt-24" id="issues" aria-labelledby="issues-heading">
+        <SledIssues
+          sledId={sled.id}
+          sledName={name}
+          issues={issues}
+          role={sled.role}
+          userId={user.id}
+          currentOdometer={sled.meters.odometer?.value ?? null}
+          variant="page"
+        />
+      </section>
+
       <section className="mt-10" aria-labelledby="readings-heading" data-testid="readings-section">
         <h2 id="readings-heading" className="font-display text-2xl font-bold uppercase tracking-wide">
           Reading history
@@ -192,7 +208,7 @@ async function SledDashboard({ params, searchParams }: Pick<PageProps<"/garage/[
             </ButtonLink>
           ) : null}
         </div>
-        <ServiceHistory sledId={sled.id} records={services} role={sled.role} userId={user.id} />
+        <ServiceHistory sledId={sled.id} records={services} role={sled.role} userId={user.id} resolvedIssues={resolvedIssues} />
       </section>
 
       <Details sled={sled} />

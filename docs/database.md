@@ -17,7 +17,7 @@ the helpers created in stage 1.
 | 3 | Snowmobile photos (private Storage bucket, `sleds.photo_path`, storage policies that follow sled sharing), atomic `create_sled()`, and no future-dated readings | Applied |
 | 4 | Service records: categories, `edited_at`, no future service dates, `save_maintenance_entry` with a category, atomic `update_maintenance_entry()`, items that follow their record (mechanics can fix their own records) | Applied |
 | 5 | Maintenance Board: a calculated `maintenance_board` view (last done, next due, status) for mileage, **engine-hour**, calendar and once-a-season schedules; plans without an interval; no future "done before" dates. Replaces the planned stored reminders | Applied |
-| 6 | Issue log (Phase 6.1): `sled_issues` (priority, open/resolved, mileage copy, link to the completed service record that fixed it), `sled_issue_photos`, private `issue-photos` bucket | Ready for review, **not applied** |
+| 6 | Issue log (Phase 6.1): `sled_issues` (priority, open/resolved, mileage copy, link to the completed service record that fixed it), `sled_issue_photos`, private `issue-photos` bucket | Applied (manually, SQL Editor, 2026-11-18) |
 | 6b | Repairs; installed parts and modifications with install/removal history (can link to logbook parts); shopping list | Planned |
 | 7 | Suspension setups (standard + manufacturer-specific fields), revisions, tuning journal, test sessions; manual ride logs | Planned |
 | 8 | Attachments: private Storage bucket, file metadata, size/type validation, storage RLS, cleanup with Recently Deleted and account deletion | Planned |
@@ -516,6 +516,14 @@ are never changed.
 Tests: `supabase/tests/database/008_meter_updates.test.sql`.
 
 ## Issue log (Migration 6)
+
+**Status: applied to production manually on 2026-11-18** through the SQL
+Editor, in one transaction, with the history row
+`20261120090000 sled_issues` added to `supabase_migrations.schema_migrations`
+so the Supabase CLI sees it as applied. Verified afterwards: both tables
+exist with RLS enabled, the `issue-photos` bucket is private, the migration
+is recorded, the API schema cache was reloaded, and Security Advisor showed
+0 errors (11 warnings).
 
 `supabase/migrations/20261120090000_sled_issues.sql`. Additive only:
 Migrations 1-5 are unchanged, except that `restore_record_version` also

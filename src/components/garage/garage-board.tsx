@@ -361,7 +361,7 @@ function SledHeading({ entry, big }: { entry: GarageBoardSled; big: boolean }) {
         >
           {name}
         </Link>
-        <StatusBadge status={sled.status} />
+        <StatusBadge status={sled.status} criticalIssue={hasCriticalIssue(entry.issues)} />
         {entry.role !== "owner" ? (
           <span className="inline-flex rounded-full bg-white/5 px-3 py-1 text-xs font-semibold text-muted">{ROLE_LABELS[entry.role]}</span>
         ) : null}

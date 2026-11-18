@@ -6,7 +6,7 @@ import type { SledListItem } from "@/lib/sleds/queries";
 import { SledPhoto } from "./sled-photo";
 import { StatusBadge } from "./status-badge";
 
-export function SledCard({ sled }: { sled: SledListItem }) {
+export function SledCard({ sled, criticalIssue = false }: { sled: SledListItem; criticalIssue?: boolean }) {
   const name = sledName(sled);
   return (
     <Link
@@ -20,7 +20,7 @@ export function SledCard({ sled }: { sled: SledListItem }) {
           <p className="font-display text-2xl font-bold uppercase italic leading-tight group-hover:text-accent-hot">
             {name}
           </p>
-          <StatusBadge status={sled.status} className="shrink-0" />
+          <StatusBadge status={sled.status} criticalIssue={criticalIssue} className="shrink-0" />
         </div>
         <p className="mt-1 text-sm text-muted">
           {sledDescription({ model_year: sled.modelYear, make: sled.make, model: sled.model })}

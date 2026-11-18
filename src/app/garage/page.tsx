@@ -5,6 +5,7 @@ import { Suspense } from "react";
 import { SledCard } from "@/components/sleds/sled-card";
 import { ButtonLink } from "@/components/ui/button";
 import { requireUser } from "@/lib/auth/session";
+import { sledsWithCriticalIssues } from "@/lib/issues/queries";
 import { listSleds, type SledListItem } from "@/lib/sleds/queries";
 import { createClient } from "@/lib/supabase/server";
 
@@ -38,6 +39,8 @@ async function SledList() {
     listSleds(),
   ]);
 
+  // Sleds with an open Critical issue show "Not ready" instead of "Ready".
+  const critical = await sledsWithCriticalIssues(sleds.map((sled) => sled.id));
   const greeting = profile?.display_name ? `Welcome, ${profile.display_name}.` : "Welcome to your garage.";
   const owned = sleds.filter((sled) => sled.ownerId === user.id);
   const shared = sleds.filter((sled) => sled.ownerId !== user.id);
@@ -67,7 +70,7 @@ async function SledList() {
         </section>
       ) : (
         <>
-          <SledGrid title="Your snowmobiles" sleds={owned} />
+          <SledGrid title="Your snowmobiles" sleds={owned} critical={critical} />
           <ButtonLink href="/garage/new" size="lg" className="mt-6 w-full sm:hidden">
             <Plus aria-hidden className="size-4" />
             Add snowmobile
@@ -75,12 +78,12 @@ async function SledList() {
         </>
       )}
 
-      {shared.length > 0 ? <SledGrid title="Shared with you" sleds={shared} /> : null}
+      {shared.length > 0 ? <SledGrid title="Shared with you" sleds={shared} critical={critical} /> : null}
     </>
   );
 }
 
-function SledGrid({ title, sleds }: { title: string; sleds: SledListItem[] }) {
+function SledGrid({ title, sleds, critical }: { title: string; sleds: SledListItem[]; critical: Set<string> }) {
   const id = `grid-${title.toLowerCase().replace(/\s+/g, "-")}`;
   return (
     <section className="mt-8" aria-labelledby={id}>
@@ -90,7 +93,7 @@ function SledGrid({ title, sleds }: { title: string; sleds: SledListItem[] }) {
       <ul className="mt-3 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {sleds.map((sled) => (
           <li key={sled.id}>
-            <SledCard sled={sled} />
+            <SledCard sled={sled} criticalIssue={critical.has(sled.id)} />
           </li>
         ))}
       </ul>

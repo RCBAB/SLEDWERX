@@ -20,6 +20,7 @@ import { requireUser } from "@/lib/auth/session";
 import type { RangeReading } from "@/lib/service/meter-range";
 import { getBoard } from "@/lib/board/queries";
 import { issuesResolvedByEntry, listSledIssues } from "@/lib/issues/queries";
+import { hasCriticalIssue } from "@/lib/issues/types";
 import { listPackages, listServiceRecords, taskOptionsForSled } from "@/lib/service/queries";
 import { formatDate, formatHours, formatMiles, sledDescription, sledName } from "@/lib/sleds/format";
 import { canFixReading, ROLE_LABELS, serviceCapabilities, sledCapabilities } from "@/lib/sleds/permissions";
@@ -99,7 +100,7 @@ async function SledDashboard({ params, searchParams }: Pick<PageProps<"/garage/[
         <SledPhoto url={sled.photoUrl} alt={name} className="aspect-[16/10] w-full rounded-2xl border border-white/10" />
         <div>
           <div className="flex flex-wrap items-center gap-2">
-            <StatusBadge status={sled.status} />
+            <StatusBadge status={sled.status} criticalIssue={hasCriticalIssue(issues)} />
             {sled.role !== "owner" ? (
               <span className="inline-flex rounded-full bg-white/5 px-3 py-1 text-xs font-semibold text-muted">
                 Shared with you · {ROLE_LABELS[sled.role]}

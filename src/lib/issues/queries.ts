@@ -122,3 +122,18 @@ export async function resolvableServices(sledId: string): Promise<ServiceOption[
   if (error) throw new Error("Could not load service records.");
   return (data ?? []).map((e) => ({ id: e.id, title: e.title, performedOn: e.performed_on }));
 }
+
+/** Which of these sleds have an open Critical issue (My Snowmobiles badges). */
+export async function sledsWithCriticalIssues(sledIds: string[]): Promise<Set<string>> {
+  if (!sledIds.length) return new Set();
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("sled_issues")
+    .select("sled_id")
+    .in("sled_id", sledIds)
+    .eq("status", "open")
+    .eq("priority", "critical")
+    .is("deleted_at", null);
+  if (error) throw new Error("Could not load issues.");
+  return new Set((data ?? []).map((r) => r.sled_id));
+}

@@ -13,6 +13,13 @@ const DATABASE_MESSAGES = [
   "This task cannot be used on this snowmobile.",
   "Restore this record before editing it.",
   "Only tasks from your own library can be added to a package.",
+  "The issue date cannot be in the future.",
+  "The resolved date cannot be in the future.",
+  "That service record is not on this snowmobile.",
+  "Only a completed service record can resolve an issue.",
+  "An issue can have at most 6 photos.",
+  "You do not have permission to add photos to this issue.",
+  "Restore this issue before adding photos.",
 ];
 
 /** Turns database errors into short, friendly messages. Never echoes raw SQL errors. */

@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Keyboard, LayoutGrid, Maximize, Minimize, Monitor, Package, Plus, Rows3, Settings2, X } from "lucide-react";
+import { Check, Keyboard, LayoutGrid, OctagonAlert, Maximize, Minimize, Monitor, Package, Plus, Rows3, Settings2, X } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useLayoutEffect, useState, useTransition } from "react";
 
@@ -9,6 +9,7 @@ import { CompleteForm, PackageForm, TONE_BAR, TONE_TEXT, type TaskRef } from "@/
 import { Sheet } from "@/components/board/sheet";
 import { useRefreshOnReturn } from "@/components/board/use-refresh-on-return";
 import { SledPhoto } from "@/components/sleds/sled-photo";
+import { SledIssues } from "@/components/issues/issues";
 import { StatusBadge } from "@/components/sleds/status-badge";
 import { UpdateMetersButton } from "@/components/sleds/update-meters";
 import { Button, ButtonLink } from "@/components/ui/button";
@@ -16,6 +17,7 @@ import { cn } from "@/components/ui/cn";
 import { STATUS_LABEL, STATUS_TONE, lastDoneLine, lastDoneShort, nextDueLine, nextDueShort, statusLine } from "@/lib/board/describe";
 import type { BoardRow } from "@/lib/board/types";
 import type { GarageLayout } from "@/lib/garage/layout";
+import { hasCriticalIssue, issueSummary } from "@/lib/issues/types";
 import type { GarageBoardData, GarageBoardSled } from "@/lib/garage/queries";
 import { sledSummary, type SledTone } from "@/lib/garage/summary";
 import type { MaintenancePackage } from "@/lib/service/queries";
@@ -180,9 +182,9 @@ export function GarageBoard({ data, initialWall }: { data: GarageBoardData; init
               {section.sleds.map((entry) => (
                 <li key={entry.sled.id} className="min-w-0">
                   {layout === "cards" ? (
-                    <SledCard entry={entry} packages={data.packages} big={big} onOpen={open} />
+                    <SledCard entry={entry} userId={data.userId} packages={data.packages} big={big} onOpen={open} />
                   ) : (
-                    <SledTable entry={entry} packages={data.packages} big={big} onOpen={open} />
+                    <SledTable entry={entry} userId={data.userId} packages={data.packages} big={big} onOpen={open} />
                   )}
                 </li>
               ))}
@@ -269,6 +271,7 @@ function LayoutButton({
 
 type SledProps = {
   entry: GarageBoardSled;
+  userId: string;
   packages: MaintenancePackage[];
   big: boolean;
   onOpen: (sheet: OpenSheet) => void;
@@ -401,6 +404,55 @@ function DoneButton({ entry, row, big, onOpen }: { entry: GarageBoardSled; row: 
   );
 }
 
+/**
+ * An unresolved Critical issue: the sled isn't ready to ride. Shown in red on
+ * the Garage Board, separate from the maintenance status (which is unchanged).
+ */
+function RideWarning({ entry, big, className }: { entry: GarageBoardSled; big: boolean; className?: string }) {
+  const critical = entry.issues.filter((i) => i.priority === "critical");
+  if (!hasCriticalIssue(entry.issues)) return null;
+  return (
+    <p
+      role="status"
+      data-testid="ride-warning"
+      className={cn(
+        "flex items-start gap-2 rounded-lg border border-red-500/60 bg-red-500/15 px-3 py-2 font-semibold text-red-200",
+        big ? "text-lg" : "text-sm",
+        className,
+      )}
+    >
+      <OctagonAlert aria-hidden className="mt-0.5 size-5 shrink-0 text-red-400" />
+      <span>
+        Not ready to ride: {critical.length === 1 ? `critical issue “${critical[0].title}”` : `${critical.length} critical issues`}
+      </span>
+    </p>
+  );
+}
+
+/** Open issues on the board: up to 3, then a count; report, view, resolve. */
+function BoardIssues({ entry, userId, big }: SledProps) {
+  const summary = issueSummary(entry.issues);
+  return (
+    <div className="space-y-2" data-testid="garage-issues">
+      {summary ? (
+        <p className={cn("font-semibold text-foreground/90", big ? "text-base" : "text-sm")} data-testid="issue-summary">
+          {summary}
+        </p>
+      ) : null}
+      <SledIssues
+        sledId={entry.sled.id}
+        sledName={sledName(entry.sled)}
+        issues={entry.issues}
+        role={entry.role}
+        userId={userId}
+        currentOdometer={entry.sled.meters.odometer?.value ?? null}
+        variant="board"
+        big={big}
+      />
+    </div>
+  );
+}
+
 /** Full Cards: photo, name, mileage, overall status, and every task with Done. */
 function SledCard(props: SledProps) {
   const { entry, big, onOpen } = props;
@@ -419,6 +471,7 @@ function SledCard(props: SledProps) {
           <SledHeading entry={entry} big={big} />
           <Meters entry={entry} big={big} />
         </div>
+        <RideWarning entry={entry} big={big} />
         <OverallStatus rows={rows} big={big} />
         {rows.length ? (
           <ul className="space-y-2" data-testid="garage-tasks">
@@ -457,6 +510,7 @@ function SledCard(props: SledProps) {
         ) : (
           <EmptyRows entry={entry} />
         )}
+        <BoardIssues {...props} />
         <div className="mt-auto">
           <SledActions {...props} />
         </div>
@@ -484,6 +538,7 @@ function SledTable(props: SledProps) {
           <Meters entry={entry} big={big} />
         </div>
         <OverallStatus rows={rows} big={big} />
+        <RideWarning entry={entry} big={big} className="basis-full" />
       </div>
       {rows.length ? (
         <table className={cn("block w-full sm:table", cell)} data-testid="garage-tasks">
@@ -548,6 +603,11 @@ function SledTable(props: SledProps) {
           <EmptyRows entry={entry} />
         </div>
       )}
+      {entry.issues.length || entry.role !== "viewer" ? (
+        <div className="border-t border-white/10 p-3">
+          <BoardIssues {...props} />
+        </div>
+      ) : null}
       {entry.canComplete || entry.canManage || entry.canAddReading ? (
         <div className="border-t border-white/10 p-3">
           <SledActions {...props} />

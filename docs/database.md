@@ -17,7 +17,8 @@ the helpers created in stage 1.
 | 3 | Snowmobile photos (private Storage bucket, `sleds.photo_path`, storage policies that follow sled sharing), atomic `create_sled()`, and no future-dated readings | Applied |
 | 4 | Service records: categories, `edited_at`, no future service dates, `save_maintenance_entry` with a category, atomic `update_maintenance_entry()`, items that follow their record (mechanics can fix their own records) | Applied |
 | 5 | Maintenance Board: a calculated `maintenance_board` view (last done, next due, status) for mileage, **engine-hour**, calendar and once-a-season schedules; plans without an interval; no future "done before" dates. Replaces the planned stored reminders | Applied |
-| 6 | Issues and repairs; installed parts and modifications with install/removal history (can link to logbook parts); shopping list | Planned |
+| 6 | Issue log (Phase 6.1): `sled_issues` (priority, open/resolved, mileage copy, link to the completed service record that fixed it), `sled_issue_photos`, private `issue-photos` bucket | Ready for review, **not applied** |
+| 6b | Repairs; installed parts and modifications with install/removal history (can link to logbook parts); shopping list | Planned |
 | 7 | Suspension setups (standard + manufacturer-specific fields), revisions, tuning journal, test sessions; manual ride logs | Planned |
 | 8 | Attachments: private Storage bucket, file metadata, size/type validation, storage RLS, cleanup with Recently Deleted and account deletion | Planned |
 | 9 | Community library: opt-in rider profiles, published setup copies, reviews, moderation | Planned |
@@ -514,6 +515,50 @@ are never changed.
 
 Tests: `supabase/tests/database/008_meter_updates.test.sql`.
 
+## Issue log (Migration 6)
+
+`supabase/migrations/20261120090000_sled_issues.sql`. Additive only:
+Migrations 1-5 are unchanged, except that `restore_record_version` also
+accepts the two new tables.
+
+- **`sled_issues`**: title (1-200), description (10,000), `priority` (`low`,
+  `medium`, `high`, `critical`), `status` (`open`, `resolved`), `reported_on`
+  (no future dates), `odometer_mi` (a **copy** of the reading when noticed,
+  editable; it never creates a reading), and the resolution: `resolved_on`
+  (not before `reported_on`, no future dates), `resolution_notes`,
+  `resolved_by` (set by the database) and `resolved_entry_id`.
+- **Resolving by a service record** stores only a link
+  (`resolved_entry_id`). When the link is set, the record must be on the
+  same sled, completed and not deleted. Nothing about the service is copied;
+  the service history shows "Resolved issue: …" by looking the issues up. If
+  the linked record is deleted later, the issue stays resolved (and the link
+  works again if the record is restored).
+- **`sled_issue_photos`**: up to 6 active photos per issue, files in the
+  private **`issue-photos`** bucket at `<sled id>/<issue id>/<uuid>.jpg`
+  (5 MB, JPEG/WebP, resized in the browser like sled photos, GPS removed).
+  Photos follow their issue into Recently Deleted and back.
+- Both are record tables (see "Building a record table"): sharing RLS,
+  Migration 1's record guard, version checks, audit (`maintenance`
+  category), Recently Deleted. Nobody can hard-delete them.
+
+| Action on an issue | Owner / editor | Mechanic | Viewer |
+|---|---|---|---|
+| See issues, photos and history | ✅ | ✅ | ✅ |
+| Report an issue | ✅ | ✅ | ❌ |
+| Edit, resolve, reopen, add photos | ✅ any | own issues | ❌ |
+| Delete / restore issues, remove photos | ✅ | ❌ | ❌ |
+
+Storage policies (`issue-photos`): view = anyone who can view the sled;
+upload = whoever may edit that issue (`private.can_add_issue_photo`); remove
+= owners and editors. Like sled photos, files of permanently deleted records
+stay until the planned storage cleanup (unreachable by anyone).
+
+On the Garage Board an unresolved **Critical** issue shows a red "Not ready
+to ride" warning. It does not change the maintenance status or calculations.
+
+Tests: `supabase/tests/database/009_issues.test.sql`; rollback test
+`scripts/test-migration-6-rollback.sh`.
+
 ## Units
 
 1.0 uses US units, stored in the unit named by the column: `*_mi` (miles),
@@ -549,7 +594,7 @@ Supabase stack:
 - `scripts/db-api-smoke-test.mjs`, which signs up real users through Supabase
   Auth and exercises sharing, RLS, the maintenance logbook and conflict
   detection through the REST API with `supabase-js`
-- the rollback tests, newest first: 5, 4, 3, 2, 1. After each rollback, the
+- the rollback tests, newest first: 6, 5, 4, 3, 2, 1. After each rollback, the
   tests of the remaining migrations run again on the result
 
 CI never connects to the live project.

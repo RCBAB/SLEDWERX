@@ -1,6 +1,8 @@
 import "server-only";
 
 import { getBoards } from "@/lib/board/queries";
+import { listIssues } from "@/lib/issues/queries";
+import type { Issue } from "@/lib/issues/types";
 import type { BoardRow } from "@/lib/board/types";
 import { listPackages, sledRoles, taskOptionsForSleds, type MaintenancePackage, type TaskOption } from "@/lib/service/queries";
 import type { SledRole } from "@/lib/sleds/constants";
@@ -20,11 +22,14 @@ export type GarageBoardSled = {
   /** Owners and editors change schedules (on the sled's own page). */
   canManage: boolean;
   rows: BoardRow[];
+  /** Open issues, most urgent first. */
+  issues: Issue[];
   taskOptions: TaskOption[];
   readings: RangeReading[];
 };
 
 export type GarageBoardData = {
+  userId: string;
   layout: GarageLayout;
   /** Wall Display on-screen keyboard on (default) or off. */
   keyboard: boolean;
@@ -56,10 +61,14 @@ export async function getGarageBoard(userId: string): Promise<GarageBoardData> {
   });
   const completable = withRoles.filter((s) => s.can.canLogService).map((s) => s.sled);
 
-  const [boards, options, packages] = await Promise.all([
+  const [boards, options, packages, issues] = await Promise.all([
     getBoards(sleds.map((s) => s.id)),
     taskOptionsForSleds(completable),
     completable.length ? listPackages(userId) : Promise.resolve([]),
+    listIssues(
+      sleds.map((s) => s.id),
+      "open",
+    ),
   ]);
 
   const entries = withRoles.map(({ sled: { readings, ...sled }, role, can }) => ({
@@ -69,11 +78,13 @@ export async function getGarageBoard(userId: string): Promise<GarageBoardData> {
     canAddReading: can.canAddReading,
     canManage: can.canManageSledTasks,
     rows: boards.get(sled.id) ?? [],
+    issues: issues.get(sled.id) ?? [],
     taskOptions: options.get(sled.id) ?? [],
     readings,
   }));
 
   return {
+    userId,
     layout,
     keyboard,
     owned: entries.filter((e) => e.role === "owner"),

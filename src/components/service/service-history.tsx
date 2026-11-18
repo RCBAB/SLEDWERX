@@ -1,4 +1,4 @@
-import { ChevronDown, Gauge, Pencil } from "lucide-react";
+import { CheckCircle2, ChevronDown, Gauge, Pencil } from "lucide-react";
 import Link from "next/link";
 
 import { CATEGORY_SHORT_LABELS } from "@/lib/service/constants";
@@ -16,11 +16,14 @@ export function ServiceHistory({
   records,
   role,
   userId,
+  resolvedIssues,
 }: {
   sledId: string;
   records: ServiceRecord[];
   role: SledRole;
   userId: string;
+  /** Issues each record resolved (Phase 6.1): shown on the record, not copied into it. */
+  resolvedIssues?: Map<string, { id: string; title: string }[]>;
 }) {
   if (!records.length) {
     return <p className="mt-4 text-muted">No services logged yet.</p>;
@@ -45,7 +48,12 @@ export function ServiceHistory({
           <ul className="space-y-3" data-testid="service-list">
             {group.records.map((record) => (
               <li key={record.id}>
-                <ServiceItem sledId={sledId} record={record} can={serviceCapabilities(role, record.createdBy, userId)} />
+                <ServiceItem
+                  sledId={sledId}
+                  record={record}
+                  can={serviceCapabilities(role, record.createdBy, userId)}
+                  issues={resolvedIssues?.get(record.id) ?? []}
+                />
               </li>
             ))}
           </ul>
@@ -59,10 +67,12 @@ function ServiceItem({
   sledId,
   record,
   can,
+  issues,
 }: {
   sledId: string;
   record: ServiceRecord;
   can: ReturnType<typeof serviceCapabilities>;
+  issues: { id: string; title: string }[];
 }) {
   return (
     <details className="group rounded-2xl border border-white/10 bg-surface/70 open:bg-surface" data-testid="service-record">
@@ -146,6 +156,16 @@ function ServiceItem({
         </dl>
 
         {record.notes ? <p className="whitespace-pre-line text-sm text-foreground/90">{record.notes}</p> : null}
+        {issues.length ? (
+          <ul className="space-y-1 text-sm" data-testid="service-resolved-issues">
+            {issues.map((issue) => (
+              <li key={issue.id} className="flex items-center gap-2 text-emerald-200">
+                <CheckCircle2 aria-hidden className="size-4 shrink-0" />
+                Resolved issue: {issue.title}
+              </li>
+            ))}
+          </ul>
+        ) : null}
 
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-xs text-muted">

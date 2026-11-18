@@ -79,7 +79,10 @@ export function UpdateMetersForm({ sledId, current, onDone }: { sledId: string; 
   const [odometerReset, setOdometerReset] = useState(v ? v.odometerReset === "on" : false);
   const [hourMeterReset, setHourMeterReset] = useState(v ? v.hourMeterReset === "on" : false);
   const resetting = odometerReset || hourMeterReset;
-  const moreOpen = resetting || Boolean(errors.readOn || errors.confirmReset || (v?.readOn && v.readOn !== today));
+  // Stays open once opened (the form redraws after a validation error), and
+  // opens by itself when something in it needs attention.
+  const [moreOpened, setMoreOpened] = useState(false);
+  const moreOpen = moreOpened || resetting || Boolean(errors.readOn || errors.confirmReset || (v?.readOn && v.readOn !== today));
 
   return (
     <form action={action} className="space-y-5" noValidate key={v ? JSON.stringify(v) : "form"}>
@@ -107,7 +110,11 @@ export function UpdateMetersForm({ sledId, current, onDone }: { sledId: string; 
         />
       </div>
       <p className="text-sm text-muted">Change either one, or both. Earlier readings are kept in the history.</p>
-      <details className="rounded-xl border border-white/10 p-3 text-sm" open={moreOpen}>
+      <details
+        className="rounded-xl border border-white/10 p-3 text-sm"
+        open={moreOpen}
+        onToggle={(event) => setMoreOpened(event.currentTarget.open)}
+      >
         <summary className="cursor-pointer font-medium">More options</summary>
         <div className="mt-3 space-y-4">
           <Field

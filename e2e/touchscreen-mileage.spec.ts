@@ -170,7 +170,7 @@ test("a confirmed meter reset is the only way to enter a lower reading", async (
   await label(dialog, "Engine hours").fill("2");
   await dialog.getByRole("button", { name: "Save" }).click();
   await expect(dialog.getByText("Engine hours can't be lower", { exact: false })).toBeVisible();
-  await dialog.getByText("More options").click();
+  await dialog.locator("details summary").click();
   await label(dialog, "The hour meter was replaced or reset").check();
   await dialog.getByRole("button", { name: "Save" }).click();
   await expect(dialog.getByText("Confirm that the meter was replaced or reset.")).toBeVisible();

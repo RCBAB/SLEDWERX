@@ -2,7 +2,7 @@
 
 import { useActionState } from "react";
 
-import { addReading, fixLastReading, type SledActionState } from "@/app/garage/actions";
+import { fixLastReading, type SledActionState } from "@/app/garage/actions";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { CheckboxField, Field } from "@/components/ui/field";
@@ -85,22 +85,6 @@ function MeterFields({
         </div>
       </details>
     </>
-  );
-}
-
-/** "Update mileage": records a new reading. */
-export function AddReadingForm({ sledId }: { sledId: string }) {
-  const [state, formAction] = useActionState(addReading, {});
-  return (
-    <form action={formAction} className="space-y-4" noValidate key={state.savedAt ?? "form"}>
-      <input type="hidden" name="sledId" value={sledId} />
-      {state.error && !state.fieldErrors ? <Alert tone="error">{state.error}</Alert> : null}
-      {state.ok && state.message ? <Alert tone="success">{state.message}</Alert> : null}
-      <MeterFields state={state.ok ? {} : state} />
-      <div className="sm:w-56">
-        <SubmitButton pendingText="Saving…">Save reading</SubmitButton>
-      </div>
-    </form>
   );
 }
 

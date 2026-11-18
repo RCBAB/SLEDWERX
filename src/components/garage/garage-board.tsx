@@ -1,15 +1,16 @@
 "use client";
 
-import { Check, LayoutGrid, Maximize, Minimize, Monitor, Package, Plus, Rows3, Settings2, X } from "lucide-react";
+import { Check, Keyboard, LayoutGrid, Maximize, Minimize, Monitor, Package, Plus, Rows3, Settings2, X } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useLayoutEffect, useState, useTransition } from "react";
 
-import { saveGarageLayout } from "@/app/garage/board/actions";
+import { saveGarageLayout, saveWallKeyboard } from "@/app/garage/board/actions";
 import { CompleteForm, PackageForm, TONE_BAR, TONE_TEXT, type TaskRef } from "@/components/board/complete-form";
 import { Sheet } from "@/components/board/sheet";
 import { useRefreshOnReturn } from "@/components/board/use-refresh-on-return";
 import { SledPhoto } from "@/components/sleds/sled-photo";
 import { StatusBadge } from "@/components/sleds/status-badge";
+import { UpdateMetersButton } from "@/components/sleds/update-meters";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { cn } from "@/components/ui/cn";
 import { STATUS_LABEL, STATUS_TONE, lastDoneLine, lastDoneShort, nextDueLine, nextDueShort, statusLine } from "@/lib/board/describe";
@@ -22,6 +23,7 @@ import { formatHours, formatMiles, sledDescription, sledName } from "@/lib/sleds
 import { ROLE_LABELS } from "@/lib/sleds/permissions";
 
 import { useWallDisplay, WallClock } from "./wall";
+import { WallKeyboard } from "./wall-keyboard";
 
 type OpenSheet = { kind: "done"; sledId: string; tasks: TaskRef[] } | { kind: "package"; sledId: string } | null;
 
@@ -47,11 +49,12 @@ const TONE_BORDER: Record<SledTone, string> = {
  */
 export function GarageBoard({ data, initialWall }: { data: GarageBoardData; initialWall: boolean }) {
   const [layout, setLayout] = useState<GarageLayout>(data.layout);
+  const [keyboard, setKeyboard] = useState(data.keyboard);
   const [, startSaving] = useTransition();
   const [sheet, setSheet] = useState<OpenSheet>(null);
   const [session, setSession] = useState(0);
   const close = useCallback(() => setSheet(null), []);
-  const wall = useWallDisplay(initialWall, sheet !== null, close, data.loadedAt);
+  const wall = useWallDisplay(initialWall, data.loadedAt);
 
   // Next.js keeps a page hidden (not unmounted) after navigating away; close
   // any open sheet then, so it isn't still open on return.
@@ -69,6 +72,14 @@ export function GarageBoard({ data, initialWall }: { data: GarageBoardData; init
     setLayout(next);
     startSaving(async () => {
       await saveGarageLayout(next);
+    });
+  };
+
+  const toggleKeyboard = () => {
+    const next = !keyboard;
+    setKeyboard(next);
+    startSaving(async () => {
+      await saveWallKeyboard(next);
     });
   };
 
@@ -107,6 +118,17 @@ export function GarageBoard({ data, initialWall }: { data: GarageBoardData; init
           </div>
           {wall.active ? (
             <>
+              <Button
+                type="button"
+                variant="secondary"
+                size="lg"
+                className="h-14"
+                aria-pressed={keyboard}
+                onClick={toggleKeyboard}
+              >
+                <Keyboard aria-hidden className="size-5" />
+                Keyboard: {keyboard ? "On" : "Off"}
+              </Button>
               {wall.canFullscreen ? (
                 <Button type="button" variant="secondary" size="lg" className="h-14" onClick={wall.toggleFullscreen}>
                   {wall.fullscreen ? <Minimize aria-hidden className="size-5" /> : <Maximize aria-hidden className="size-5" />}
@@ -168,6 +190,9 @@ export function GarageBoard({ data, initialWall }: { data: GarageBoardData; init
           </section>
         ))
       )}
+
+      {/* The on-screen keyboard exists only in Wall Display, when switched on. */}
+      {wall.active && keyboard ? <WallKeyboard /> : null}
 
       <Sheet
         open={sheet?.kind === "done"}
@@ -274,8 +299,21 @@ function Meters({ entry, big }: { entry: GarageBoardSled; big: boolean }) {
 
 function SledActions({ entry, packages, big, onOpen }: SledProps) {
   const name = sledName(entry.sled);
+  const { meters } = entry.sled;
   return (
     <div className="flex flex-wrap gap-2">
+      {entry.canAddReading ? (
+        <UpdateMetersButton
+          sledId={entry.sled.id}
+          sledName={name}
+          size={big ? "lg" : "md"}
+          className={cn(big && "h-14")}
+          current={{
+            odometer: meters.odometer ? { value: meters.odometer.value, readOn: meters.odometer.readOn } : null,
+            engineHours: meters.engineHours ? { value: meters.engineHours.value, readOn: meters.engineHours.readOn } : null,
+          }}
+        />
+      ) : null}
       {entry.canComplete && packages.length ? (
         <Button
           type="button"
@@ -510,7 +548,7 @@ function SledTable(props: SledProps) {
           <EmptyRows entry={entry} />
         </div>
       )}
-      {entry.canComplete || entry.canManage ? (
+      {entry.canComplete || entry.canManage || entry.canAddReading ? (
         <div className="border-t border-white/10 p-3">
           <SledActions {...props} />
         </div>

@@ -171,6 +171,7 @@ export async function removeFromBoard(_prev: BoardActionState, formData: FormDat
 const completeSchema = z
   .object({
     title: optionalText(200, "Title"),
+    notes: optionalText(10_000, "Notes"),
     performedOn: pastOrToday,
     mileageUnknown: checkbox,
     odometer: z.preprocess(toNumber, odometer.optional()),
@@ -203,7 +204,7 @@ export async function completeTasks(_prev: BoardActionState, formData: FormData)
   const user = await signedInUser(sledId ? `/garage/${sledId}` : "/garage");
   if (!sledId) return { error: "Snowmobile not found." };
 
-  const raw = formValues(formData, ["title", "performedOn", "mileageUnknown", "odometer", "engineHours", "idempotencyKey", "tasks"] as const);
+  const raw = formValues(formData, ["title", "notes", "performedOn", "mileageUnknown", "odometer", "engineHours", "idempotencyKey", "tasks"] as const);
   const parsed = completeSchema.safeParse(raw);
   if (!parsed.success) return { fieldErrors: fieldErrorsOf(parsed.error), values: raw };
   const input = parsed.data;
@@ -227,6 +228,8 @@ export async function completeTasks(_prev: BoardActionState, formData: FormData)
     p_title: title.slice(0, 200),
     p_reading: serviceReading(input) ?? undefined,
     p_tasks: tasks,
+    // The record's own notes field, shown in the service history.
+    p_notes: input.notes ?? undefined,
   });
   if (error) {
     const message = sledErrorMessage(error, "service record");

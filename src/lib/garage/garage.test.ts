@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { lastDoneShort, nextDueLine, nextDueShort } from "@/lib/board/describe";
 import type { BoardRow, BoardStatus } from "@/lib/board/types";
 
-import { DEFAULT_LAYOUT, isGarageLayout, layoutFromGarageMode, withLayout } from "./layout";
+import { DEFAULT_LAYOUT, isGarageLayout, keyboardFromGarageMode, layoutFromGarageMode, withKeyboard, withLayout } from "./layout";
 import { sledSummary } from "./summary";
 
 const base: BoardRow = {
@@ -124,5 +124,15 @@ describe("compact wording", () => {
     expect(nextDueShort(row({ status: "no_record", remainingMi: null }), { odometer: 2000, engineHours: null })).toBe(
       "Starts once it's first done",
     );
+  });
+});
+
+describe("wall keyboard preference", () => {
+  it("is on for new users and keeps other settings when saved", () => {
+    expect(keyboardFromGarageMode({})).toBe(true);
+    expect(keyboardFromGarageMode(null)).toBe(true);
+    expect(keyboardFromGarageMode({ keyboard: "no" })).toBe(true);
+    expect(keyboardFromGarageMode({ keyboard: false })).toBe(false);
+    expect(withKeyboard({ layout: "compact" }, false)).toEqual({ layout: "compact", keyboard: false });
   });
 });

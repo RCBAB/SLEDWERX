@@ -9,12 +9,14 @@ import { listGarageSleds, type SledListItem } from "@/lib/sleds/queries";
 import type { RangeReading } from "@/lib/service/meter-range";
 import { createClient } from "@/lib/supabase/server";
 
-import { layoutFromGarageMode, type GarageLayout } from "./layout";
+import { keyboardFromGarageMode, layoutFromGarageMode, type GarageLayout } from "./layout";
 
 export type GarageBoardSled = {
   sled: SledListItem;
   role: SledRole;
   canComplete: boolean;
+  /** Owners, editors and mechanics add mileage / hours readings. */
+  canAddReading: boolean;
   /** Owners and editors change schedules (on the sled's own page). */
   canManage: boolean;
   rows: BoardRow[];
@@ -24,6 +26,8 @@ export type GarageBoardSled = {
 
 export type GarageBoardData = {
   layout: GarageLayout;
+  /** Wall Display on-screen keyboard on (default) or off. */
+  keyboard: boolean;
   owned: GarageBoardSled[];
   shared: GarageBoardSled[];
   packages: MaintenancePackage[];
@@ -45,6 +49,7 @@ export async function getGarageBoard(userId: string): Promise<GarageBoardData> {
     supabase.from("user_preferences").select("garage_mode").eq("id", userId).maybeSingle(),
   ]);
   const layout = layoutFromGarageMode(prefs.data?.garage_mode);
+  const keyboard = keyboardFromGarageMode(prefs.data?.garage_mode);
   const withRoles = sleds.map((sled) => {
     const role: SledRole = sled.ownerId === userId ? "owner" : (roles.get(sled.id) ?? "viewer");
     return { sled, role, can: sledCapabilities(role) };
@@ -61,6 +66,7 @@ export async function getGarageBoard(userId: string): Promise<GarageBoardData> {
     sled,
     role,
     canComplete: can.canLogService,
+    canAddReading: can.canAddReading,
     canManage: can.canManageSledTasks,
     rows: boards.get(sled.id) ?? [],
     taskOptions: options.get(sled.id) ?? [],
@@ -69,6 +75,7 @@ export async function getGarageBoard(userId: string): Promise<GarageBoardData> {
 
   return {
     layout,
+    keyboard,
     owned: entries.filter((e) => e.role === "owner"),
     shared: entries.filter((e) => e.role !== "owner"),
     packages,

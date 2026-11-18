@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 import { NEEDS_SUPABASE, PASSWORD, addSled, hasSupabase, signIn, signUp, uniqueEmail } from "./helpers";
 
@@ -12,8 +12,17 @@ test.afterEach(async ({ page }, testInfo) => {
   console.log(`[${testInfo.title}] url=${page.url()}\n${text.slice(0, 1500)}`);
 });
 
-function updateMileage(page: Page) {
-  return page.getByTestId("update-mileage");
+/** Opens the "Update mileage / hours" dialog (beside Log service) and returns it. */
+async function updateMileage(page: Page) {
+  await page.getByRole("button", { name: /^Update mileage \/ hours/ }).filter({ visible: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Update mileage / hours" });
+  await expect(dialog).toBeVisible();
+  return dialog;
+}
+
+async function moreOptions(dialog: Locator) {
+  const details = dialog.locator("details");
+  if (!(await details.evaluate((d: HTMLDetailsElement) => d.open))) await details.locator("summary").click();
 }
 
 test("add a snowmobile with every field and a private photo", async ({ page }) => {
@@ -104,11 +113,14 @@ test("update mileage, refuse lower readings, replace a meter, fix and remove the
   await signUp(page, uniqueEmail("mileage"));
   await addSled(page, { make: "Lynx", model: "Rave RE", year: "2020", odometer: "100", hours: "10" });
 
-  const form = updateMileage(page);
-  await form.getByLabel("Odometer (miles)").filter({ visible: true }).fill("150");
-  await form.getByLabel("Engine hours").filter({ visible: true }).fill("12.5");
-  await form.getByRole("button", { name: "Save reading" }).click();
-  await expect(form.getByText("Mileage updated.")).toBeVisible();
+  // Prefilled with the current readings; change both.
+  let form = await updateMileage(page);
+  await expect(form.getByLabel("Odometer (miles)")).toHaveValue("100");
+  await expect(form.getByLabel("Engine hours")).toHaveValue("10");
+  await form.getByLabel("Odometer (miles)").fill("150");
+  await form.getByLabel("Engine hours").fill("12.5");
+  await form.getByRole("button", { name: "Save" }).click();
+  await expect(form).toBeHidden();
   await expect(page.getByTestId("current-odometer")).toHaveText("150 mi");
   await expect(page.getByTestId("current-hours")).toHaveText("12.5 hrs");
 
@@ -119,26 +131,40 @@ test("update mileage, refuse lower readings, replace a meter, fix and remove the
       date.setDate(date.getDate() + days);
       return date.toLocaleDateString("en-CA");
     }, offsetDays);
-  await form.getByLabel("Odometer (miles)").filter({ visible: true }).fill("160");
-  await form.getByLabel("Date").filter({ visible: true }).fill(await localDate(1));
-  await form.getByRole("button", { name: "Save reading" }).click();
+  form = await updateMileage(page);
+  await form.getByLabel("Odometer (miles)").fill("160");
+  await moreOptions(form);
+  await form.getByLabel("Date", { exact: true }).fill(await localDate(1));
+  await form.getByRole("button", { name: "Save" }).click();
   await expect(form.getByText("The date can't be in the future.")).toBeVisible();
   await expect(page.getByTestId("current-odometer")).toHaveText("150 mi");
-  await form.getByLabel("Date").filter({ visible: true }).fill(await localDate(0));
+  await form.getByLabel("Date", { exact: true }).fill(await localDate(0));
 
-  await form.getByLabel("Odometer (miles)").filter({ visible: true }).fill("120");
-  await form.getByRole("button", { name: "Save reading" }).click();
+  // A normal update can't go below the current reading...
+  await form.getByLabel("Odometer (miles)").fill("120");
+  await form.getByRole("button", { name: "Save" }).click();
+  await expect(form.getByText("Mileage can't be lower than the current 150 mi.", { exact: false })).toBeVisible();
+  await expect(page.getByTestId("current-odometer")).toHaveText("150 mi");
+  // ...and an older reading must fit the history (checked by the database).
+  await form.getByLabel("Odometer (miles)").fill("200");
+  await form.getByLabel("Date", { exact: true }).fill(await localDate(-1));
+  await form.getByRole("button", { name: "Save" }).click();
   await expect(form.getByText(/Odometer readings cannot go down/)).toBeVisible();
   await expect(page.getByTestId("current-odometer")).toHaveText("150 mi");
+  await form.getByLabel("Date", { exact: true }).fill(await localDate(0));
 
-  // A replaced odometer starts again; lifetime miles carry on.
-  await form.getByText("Meter replaced or reset?").click();
-  await form.getByLabel("The odometer was replaced or reset").filter({ visible: true }).check();
-  await form.getByLabel("Odometer (miles)").filter({ visible: true }).fill("5");
-  await form.getByRole("button", { name: "Save reading" }).click();
-  await expect(form.getByText("Mileage updated.")).toBeVisible();
+  // A replaced odometer starts again, only once confirmed; lifetime miles carry on.
+  await form.getByLabel("The odometer was replaced or reset").check();
+  await form.getByLabel("Odometer (miles)").fill("5");
+  await form.getByRole("button", { name: "Save" }).click();
+  await expect(form.getByText("Confirm that the meter was replaced or reset.")).toBeVisible();
+  await expect(page.getByTestId("current-odometer")).toHaveText("150 mi");
+  await form.getByLabel("Yes, the meter was replaced or reset").check();
+  await form.getByRole("button", { name: "Save" }).click();
+  await expect(form).toBeHidden();
   await expect(page.getByTestId("current-odometer")).toHaveText("5 mi");
   await expect(page.getByText("150 mi lifetime").filter({ visible: true })).toBeVisible();
+  await expect(page.getByTestId("current-hours")).toHaveText("12.5 hrs");
 
   // Fix last reading: correct it, then remove it.
   const fix = page.getByTestId("fix-reading");
@@ -211,7 +237,7 @@ test("a viewer sees a shared snowmobile read-only, photo included", async ({ pag
   await expect.poll(() => photo.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0);
 
   await expect(viewerPage.getByRole("link", { name: "Edit details" })).toHaveCount(0);
-  await expect(viewerPage.getByTestId("update-mileage")).toHaveCount(0);
+  await expect(viewerPage.getByRole("button", { name: /^Update mileage \/ hours/ })).toHaveCount(0);
   await expect(viewerPage.getByTestId("fix-reading")).toHaveCount(0);
   await viewerPage.goto(`/garage/${id}/edit`);
   await expect(viewerPage).toHaveURL(new RegExp(`/garage/${id}$`));

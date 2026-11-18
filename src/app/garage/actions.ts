@@ -6,7 +6,8 @@ import { redirect } from "next/navigation";
 import { getSessionUser } from "@/lib/auth/session";
 import { PHOTO_BUCKET } from "@/lib/sleds/constants";
 import { sledErrorMessage } from "@/lib/sleds/errors";
-import { canFixReading } from "@/lib/sleds/permissions";
+import { planMeterUpdate } from "@/lib/sleds/meters";
+import { canFixReading, sledCapabilities } from "@/lib/sleds/permissions";
 import { getSled, latestReading } from "@/lib/sleds/queries";
 import {
   addReadingSchema,
@@ -190,30 +191,46 @@ export async function updateSled(_prev: SledActionState, formData: FormData): Pr
 }
 
 // ---------------------------------------------------------------------------
-// Update mileage
+// Update Mileage / Hours (a new reading)
 // ---------------------------------------------------------------------------
 const READING_FIELDS = ["odometer", "engineHours", "readOn", "odometerReset", "hourMeterReset"] as const;
 
-export async function addReading(_prev: SledActionState, formData: FormData): Promise<SledActionState> {
+export async function updateMeters(_prev: SledActionState, formData: FormData): Promise<SledActionState> {
   const sledId = sledIdFrom(formData);
-  await signedInUser(sledId ? `/garage/${sledId}` : "/garage");
+  const user = await signedInUser(sledId ? `/garage/${sledId}` : "/garage");
   if (!sledId) return { error: "Snowmobile not found." };
 
-  const raw = formValues(formData, READING_FIELDS);
+  const raw = formValues(formData, [...READING_FIELDS, "confirmReset"] as const);
   const parsed = addReadingSchema.safeParse(raw);
   if (!parsed.success) return { fieldErrors: fieldErrorsOf(parsed.error), values: raw };
   const reading = parsed.data;
   const dateErrors = futureDateErrors(formData, "readOn", reading.readOn);
   if (dateErrors) return { fieldErrors: dateErrors, values: raw };
 
+  const sled = await getSled(sledId, user.id);
+  if (!sled) return { error: "Snowmobile not found." };
+  if (!sledCapabilities(sled.role).canAddReading) return { error: "You don't have permission to do that." };
+
+  const plan = planMeterUpdate(
+    { ...reading, confirmReset: raw.confirmReset === "on" },
+    {
+      odometer: sled.meters.odometer ? { value: sled.meters.odometer.value, readOn: sled.meters.odometer.readOn } : null,
+      engineHours: sled.meters.engineHours ? { value: sled.meters.engineHours.value, readOn: sled.meters.engineHours.readOn } : null,
+    },
+  );
+  if (!plan.ok) return { fieldErrors: plan.fieldErrors, values: raw };
+
+  // An ordinary new reading, exactly as before: the database checks it against
+  // the history (no meter goes down unless the reading is a reset), the date,
+  // and the user's permission, and keeps every earlier reading.
   const supabase = await createClient();
   const { error } = await supabase.from("sled_readings").insert({
     sled_id: sledId,
     read_on: reading.readOn,
-    odometer_mi: reading.odometer ?? null,
-    engine_hours: reading.engineHours ?? null,
-    odometer_reset: reading.odometerReset,
-    hour_meter_reset: reading.hourMeterReset,
+    odometer_mi: plan.odometer,
+    engine_hours: plan.engineHours,
+    odometer_reset: plan.odometerReset,
+    hour_meter_reset: plan.hourMeterReset,
   });
   if (error) {
     const message = sledErrorMessage(error);
@@ -221,7 +238,7 @@ export async function addReading(_prev: SledActionState, formData: FormData): Pr
   }
 
   refresh();
-  return { ok: true, message: "Mileage updated.", savedAt: Date.now() };
+  return { ok: true, message: "Mileage and hours updated.", savedAt: Date.now() };
 }
 
 // ---------------------------------------------------------------------------

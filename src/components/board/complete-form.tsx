@@ -5,7 +5,8 @@ import { useActionState, useRef, useState } from "react";
 import { completeTasks, type BoardActionState } from "@/app/garage/board-actions";
 import { ServiceMeterFields, useServiceMeters } from "@/components/service/mileage";
 import { Alert } from "@/components/ui/alert";
-import { CheckboxField, SelectField } from "@/components/ui/field";
+import { CheckboxField, SelectField, TextareaField } from "@/components/ui/field";
+import { FormActions } from "@/components/ui/form-actions";
 import { SubmitButton } from "@/components/ui/submit-button";
 import type { RangeReading } from "@/lib/service/meter-range";
 import type { MaintenancePackage, TaskOption } from "@/lib/service/queries";
@@ -81,7 +82,18 @@ export function CompleteForm({
         </ul>
       ) : null}
       <ServiceMeterFields meters={meters} readings={readings} errors={errors} today={today} />
-      <SubmitButton pendingText="Saving…">Save</SubmitButton>
+      <TextareaField
+        label="Notes (optional)"
+        name="notes"
+        rows={3}
+        maxLength={10_000}
+        defaultValue={state.values?.notes ?? ""}
+        error={errors.notes?.[0]}
+        hint="Saved with this service record."
+      />
+      <FormActions>
+        <SubmitButton pendingText="Saving…">Save</SubmitButton>
+      </FormActions>
     </form>
   );
 }

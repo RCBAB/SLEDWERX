@@ -23,7 +23,10 @@ export async function uploadSuspensionPhoto(sledId: string, parentId: string, fi
 
 /** Best effort: removes a file whose photo record couldn't be saved (owners and editors only, by policy). */
 export async function discardSuspensionPhoto(path: string): Promise<void> {
-  await createClient().storage.from(SUSPENSION_PHOTO_BUCKET).remove([path]).catch(() => undefined);
+  await createClient()
+    .storage.from(SUSPENSION_PHOTO_BUCKET)
+    .remove([path])
+    .catch(() => undefined);
 }
 
 export { PhotoError };

@@ -42,8 +42,8 @@ export function SettingsEditor({
       {error ? <Alert tone="error">{error}</Alert> : null}
       {settings.length === 0 ? (
         <p className="text-muted" data-testid="no-settings">
-          No settings yet. Add the adjusters you want to track on this snowmobile, for example the compression clicks on a
-          shock. Nothing is filled in for you.
+          No settings yet. Add the adjusters you want to track on this snowmobile, for example the compression clicks on a shock. Nothing is
+          filled in for you.
         </p>
       ) : null}
       {ZONE_GROUPS.map((group) => (
@@ -71,7 +71,9 @@ export function SettingsEditor({
                           <p className="text-xs text-muted">
                             {VALUE_TYPE_LABEL[setting.valueType]}
                             {setting.valueType === "number" && setting.unit ? ` · ${setting.unit}` : ""}
-                            {setting.photos.length ? ` · ${setting.photos.length} reference photo${setting.photos.length === 1 ? "" : "s"}` : ""}
+                            {setting.photos.length
+                              ? ` · ${setting.photos.length} reference photo${setting.photos.length === 1 ? "" : "s"}`
+                              : ""}
                           </p>
                         </div>
                         <div className="flex gap-1">
@@ -180,12 +182,7 @@ export function SettingForm({
         defaultValue={v?.name ?? setting?.name ?? ""}
         error={errors.name?.[0]}
       />
-      <SelectField
-        label="Where on the sled"
-        name="zone"
-        defaultValue={v?.zone ?? setting?.zone ?? zone ?? ""}
-        error={errors.zone?.[0]}
-      >
+      <SelectField label="Where on the sled" name="zone" defaultValue={v?.zone ?? setting?.zone ?? zone ?? ""} error={errors.zone?.[0]}>
         <option value="" disabled>
           Choose…
         </option>
@@ -215,7 +212,14 @@ export function SettingForm({
                 valueType === value ? "bg-accent/10 ring-2 ring-accent" : "bg-white/5 ring-white/10",
               )}
             >
-              <input type="radio" name="valueType" value={value} checked={valueType === value} onChange={() => setValueType(value)} className="sr-only" />
+              <input
+                type="radio"
+                name="valueType"
+                value={value}
+                checked={valueType === value}
+                onChange={() => setValueType(value)}
+                className="sr-only"
+              />
               <span className="text-sm font-bold">{title}</span>
               <span className="text-xs text-muted">{hint}</span>
             </label>

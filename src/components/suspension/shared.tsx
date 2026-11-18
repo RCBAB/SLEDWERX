@@ -74,7 +74,11 @@ export function RatingBadge({ rating, className }: { rating: FeedbackRating; cla
     <span
       data-testid="feedback-rating"
       data-rating={rating}
-      className={cn("inline-flex shrink-0 items-center rounded-full px-2.5 py-0.5 text-xs font-bold uppercase tracking-wide ring-1", RATING_STYLE[rating], className)}
+      className={cn(
+        "inline-flex shrink-0 items-center rounded-full px-2.5 py-0.5 text-xs font-bold uppercase tracking-wide ring-1",
+        RATING_STYLE[rating],
+        className,
+      )}
     >
       {FEEDBACK_LABEL[rating]}
     </span>

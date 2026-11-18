@@ -151,7 +151,7 @@ export function SetupForm({
       ) : (
         <input type="hidden" name="sledId" value={sledId} />
       )}
-      {state.error ? <Alert tone="error">{state.error}</Alert> : null}
+      {state.error && !state.fieldErrors ? <Alert tone="error">{state.error}</Alert> : null}
       <Field
         label="Setup name"
         name="name"
@@ -161,7 +161,13 @@ export function SetupForm({
         defaultValue={v?.name ?? setup?.name ?? ""}
         error={errors.name?.[0]}
       />
-      <TextareaField label="Notes (optional)" name="notes" maxLength={2000} defaultValue={v?.notes ?? setup?.notes ?? ""} error={errors.notes?.[0]} />
+      <TextareaField
+        label="Notes (optional)"
+        name="notes"
+        maxLength={2000}
+        defaultValue={v?.notes ?? setup?.notes ?? ""}
+        error={errors.notes?.[0]}
+      />
       {!setup ? (
         <>
           <fieldset className="space-y-2">
@@ -239,4 +245,3 @@ export function SetupSummary({ setup, revisions }: { setup: SuspensionSetup; rev
     </p>
   );
 }
-

@@ -23,7 +23,10 @@ const SPRING = "33333333-3333-4333-8333-333333333333";
 
 const snap = (entries: Record<string, [string, string, string | null, "number" | "text", (typeof SUSPENSION_ZONES)[number]?]>): Snapshot =>
   Object.fromEntries(
-    Object.entries(entries).map(([id, [value, name, unit, type, zone]]) => [id, { value, name, unit, type, zone: zone ?? "front_left_shock" }]),
+    Object.entries(entries).map(([id, [value, name, unit, type, zone]]) => [
+      id,
+      { value, name, unit, type, zone: zone ?? "front_left_shock" },
+    ]),
   );
 
 describe("zones", () => {
@@ -87,7 +90,13 @@ describe("forms", () => {
     expect(settingSchema.safeParse({ name: "", zone: "front_left_shock", valueType: "number" }).success).toBe(false);
     expect(settingSchema.safeParse({ name: "Rebound", zone: "middle", valueType: "number" }).success).toBe(false);
     const ok = settingSchema.safeParse({ name: " Rebound ", zone: "front_left_shock", valueType: "number", unit: "clicks out", notes: "" });
-    expect(ok.success && ok.data).toEqual({ name: "Rebound", zone: "front_left_shock", valueType: "number", unit: "clicks out", notes: undefined });
+    expect(ok.success && ok.data).toEqual({
+      name: "Rebound",
+      zone: "front_left_shock",
+      valueType: "number",
+      unit: "clicks out",
+      notes: undefined,
+    });
     expect(settingSchema.safeParse({ name: "X", zone: "rear_general", valueType: "number", unit: "x".repeat(21) }).success).toBe(false);
   });
 
@@ -220,11 +229,15 @@ describe("error messages", () => {
     expect(suspensionErrorMessage({ code: "23514", message: "Make another setup active before deleting this one." }, "setup")).toBe(
       "Make another setup active before deleting this one.",
     );
-    expect(suspensionErrorMessage({ code: "PT409", message: "This setup was changed by someone else. Reload it and try again." }, "setup")).toBe(
-      "This setup was changed by someone else. Reload it and try again.",
+    expect(
+      suspensionErrorMessage({ code: "PT409", message: "This setup was changed by someone else. Reload it and try again." }, "setup"),
+    ).toBe("This setup was changed by someone else. Reload it and try again.");
+    expect(suspensionErrorMessage({ code: "23505", message: "duplicate key value violates unique constraint" }, "setting")).toMatch(
+      /already a setting/,
     );
-    expect(suspensionErrorMessage({ code: "23505", message: "duplicate key value violates unique constraint" }, "setting")).toMatch(/already a setting/);
     expect(suspensionErrorMessage({ code: "PT409", message: "Row was updated" }, "setting")).toMatch(/changed somewhere else/);
-    expect(suspensionErrorMessage({ code: "XX000", message: "internal SQL detail" }, "setup")).toBe("Something went wrong. Please try again.");
+    expect(suspensionErrorMessage({ code: "XX000", message: "internal SQL detail" }, "setup")).toBe(
+      "Something went wrong. Please try again.",
+    );
   });
 });

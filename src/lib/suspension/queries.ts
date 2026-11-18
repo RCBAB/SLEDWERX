@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/server";
 import { latestFeedback } from "./diff";
 import {
   RECOVERY_DAYS,
+  daysLeftToRestore,
   SUSPENSION_PHOTO_BUCKET,
   ZONE_LABEL,
   isZone,
@@ -257,6 +258,7 @@ export async function getSuspensionData(sledId: string, userId: string, includeD
       name: s.name,
       detail: "Setup, with its history",
       deletedAt: s.deleted_at!,
+      daysLeft: daysLeftToRestore(s.deleted_at!),
       version: s.version,
     })),
     ...(deletedSettings.data ?? []).map((s) => ({
@@ -265,6 +267,7 @@ export async function getSuspensionData(sledId: string, userId: string, includeD
       name: s.name,
       detail: isZone(s.zone) ? `Setting · ${ZONE_LABEL[s.zone]}` : "Setting",
       deletedAt: s.deleted_at!,
+      daysLeft: daysLeftToRestore(s.deleted_at!),
       version: s.version,
     })),
   ].sort((a, b) => b.deletedAt.localeCompare(a.deletedAt));

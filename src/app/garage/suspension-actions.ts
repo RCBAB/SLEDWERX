@@ -137,7 +137,12 @@ export async function saveSetup(_prev: SuspensionActionState, formData: FormData
     const { error: activateError } = await supabase.rpc("activate_suspension_setup", { p_setup_id: newId });
     if (activateError) {
       refresh();
-      return { ok: true, id: newId, savedAt: Date.now(), error: "The setup was saved, but it couldn't be made active. Use Set active to try again." };
+      return {
+        ok: true,
+        id: newId,
+        savedAt: Date.now(),
+        error: "The setup was saved, but it couldn't be made active. Use Set active to try again.",
+      };
     }
   }
   return done(newId);
@@ -382,7 +387,12 @@ export async function saveFeedback(_prev: SuspensionActionState, formData: FormD
   if (feedbackId) {
     const version = versionFrom(formData);
     if (!version) return { error: "Reload the page and try again.", values: raw };
-    const { data, error } = await supabase.from("suspension_feedback").update({ ...fields, version }).eq("id", feedbackId).select("id").maybeSingle();
+    const { data, error } = await supabase
+      .from("suspension_feedback")
+      .update({ ...fields, version })
+      .eq("id", feedbackId)
+      .select("id")
+      .maybeSingle();
     if (error || !data) return failed(error, "feedback", { values: raw });
     return done(feedbackId);
   }

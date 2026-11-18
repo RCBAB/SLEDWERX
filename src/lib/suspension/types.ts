@@ -112,6 +112,8 @@ export type DeletedSuspensionItem = {
   name: string;
   detail: string | null;
   deletedAt: string;
+  /** Whole days left to restore it (worked out when the page was loaded). */
+  daysLeft: number;
   version: number;
 };
 

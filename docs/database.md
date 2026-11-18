@@ -19,7 +19,7 @@ the helpers created in stage 1.
 | 5 | Maintenance Board: a calculated `maintenance_board` view (last done, next due, status) for mileage, **engine-hour**, calendar and once-a-season schedules; plans without an interval; no future "done before" dates. Replaces the planned stored reminders | Applied |
 | 6 | Issue log (Phase 6.1): `sled_issues` (priority, open/resolved, mileage copy, link to the completed service record that fixed it), `sled_issue_photos`, private `issue-photos` bucket | Applied (manually, SQL Editor, 2026-11-18) |
 | 6b | Repairs; installed parts and modifications with install/removal history (can link to logbook parts); shopping list | Planned |
-| 7 | Suspension setup & tuning (Phase 6.2): a custom settings list per sled (no defaults), named setups with one active setup, append-only revisions with restore, ride feedback, reference and adjustment photos in a private `suspension-photos` bucket | **Ready for review, not applied** |
+| 7 | Suspension setup & tuning (Phase 6.2): a custom settings list per sled (no defaults), named setups with one active setup, append-only revisions with restore, ride feedback, reference and adjustment photos in a private `suspension-photos` bucket | Applied (manually, SQL Editor, 2026-11-18) |
 | 8 | Attachments: private Storage bucket, file metadata, size/type validation, storage RLS, cleanup with Recently Deleted and account deletion | Planned |
 | 9 | Community library: opt-in rider profiles, published setup copies, reviews, moderation | Planned |
 | 10 | Offline sync: change feed, conflict records and resolution | Planned |
@@ -576,7 +576,15 @@ Tests: `supabase/tests/database/009_issues.test.sql`; rollback test
 
 ## Suspension setup & tuning (Migration 7)
 
-**Status: ready for review. Not applied to production.**
+**Status: applied to production manually on 2026-11-18** through the SQL
+Editor, in one transaction, with the history row
+`20261121090000 suspension_tuning` added to
+`supabase_migrations.schema_migrations` so the Supabase CLI sees it as
+applied. Verified afterwards: all five tables exist with RLS enabled, the
+`suspension-photos` bucket is private (5 MB, JPEG/WebP) with its three
+storage policies, the migration is recorded, the API schema cache was
+reloaded, anonymous users cannot execute `save_suspension_revision`, and
+Security Advisor showed 0 errors (11 warnings).
 
 `supabase/migrations/20261121090000_suspension_tuning.sql`. Additive only:
 no existing table, column, policy, trigger or function is changed.

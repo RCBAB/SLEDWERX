@@ -18,9 +18,64 @@ below call for it, and preferably after talking it through.
 
 ## Order matters
 
-Roll back the newest migration first: Migration 6, then 5, then 4, then 3, then 2, then 1. Each
+Roll back the newest migration first: Migration 7, then 6, then 5, then 4, then 3, then 2, then 1. Each
 older rollback fails safely (changing nothing) while a newer migration that
 depends on it is still applied.
+
+---
+
+## `20261121090000_rollback.sql` (Migration 7)
+
+Undoes `supabase/migrations/20261121090000_suspension_tuning.sql`: the five
+`suspension_*` tables (with their triggers and policies), their functions,
+the `suspension-photos` bucket and its three storage policies. Migration 7
+changed nothing that existed before, so nothing has to be put back. Issues,
+service records and everything else are untouched.
+
+### When to use it
+
+Only when **all** of these are true:
+
+1. Migration 7 was applied (`20261121090000` is listed under Remote).
+2. A post-deployment check failed.
+3. No suspension setting, setup, revision, feedback, photo or
+   suspension-photo file exists (Step 1), including Recently Deleted.
+   Otherwise the script refuses and changes nothing: once people use
+   suspension tuning, fix forward instead.
+4. The app version that uses Migration 7 is not deployed (roll back in
+   Vercel first).
+
+### Step 1: Confirm nothing uses suspension tuning (read-only)
+
+```sql
+select (select count(*) from public.suspension_settings) as settings,
+       (select count(*) from public.suspension_setups) as setups,
+       (select count(*) from public.suspension_revisions) as revisions,
+       (select count(*) from public.suspension_feedback) as feedback,
+       (select count(*) from public.suspension_photos) as photos,
+       (select count(*) from storage.objects where bucket_id = 'suspension-photos') as files;
+```
+
+All six must be `0`.
+
+### Step 2: Run the rollback
+
+In **SQL Editor**, first line:
+```sql
+set sledwerx.confirm_rollback = '20261121090000';
+```
+then paste the whole of `20261121090000_rollback.sql` and run it once. The
+expected result is the notice `Rollback complete: Migration 7 removed;
+Migrations 1-6 untouched.` Any error means nothing changed.
+
+### Step 3: Verify (read-only)
+
+`npx supabase migration list --remote` should show `20261121090000` under
+Local only, and this should return no rows:
+
+```sql
+select tablename from pg_tables where schemaname = 'public' and tablename like 'suspension%';
+```
 
 ---
 

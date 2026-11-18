@@ -19,10 +19,11 @@ the helpers created in stage 1.
 | 5 | Maintenance Board: a calculated `maintenance_board` view (last done, next due, status) for mileage, **engine-hour**, calendar and once-a-season schedules; plans without an interval; no future "done before" dates. Replaces the planned stored reminders | Applied |
 | 6 | Issue log (Phase 6.1): `sled_issues` (priority, open/resolved, mileage copy, link to the completed service record that fixed it), `sled_issue_photos`, private `issue-photos` bucket | Applied (manually, SQL Editor, 2026-11-18) |
 | 6b | Repairs; installed parts and modifications with install/removal history (can link to logbook parts); shopping list | Planned |
-| 7 | Suspension setups (standard + manufacturer-specific fields), revisions, tuning journal, test sessions; manual ride logs | Planned |
+| 7 | Suspension setup & tuning (Phase 6.2): a custom settings list per sled (no defaults), named setups with one active setup, append-only revisions with restore, ride feedback, reference and adjustment photos in a private `suspension-photos` bucket | Applied (manually, SQL Editor, 2026-11-18) |
 | 8 | Attachments: private Storage bucket, file metadata, size/type validation, storage RLS, cleanup with Recently Deleted and account deletion | Planned |
 | 9 | Community library: opt-in rider profiles, published setup copies, reviews, moderation | Planned |
 | 10 | Offline sync: change feed, conflict records and resolution | Planned |
+| Future | Suspension test sessions and manual ride logs (moved out of Phase 6.2) | Planned |
 
 ## Ownership model
 
@@ -121,6 +122,12 @@ is stored. The provider is chosen when the sharing interface is built.
   resolved invitations (which contain email addresses), and revoked shares
   older than 30 days. It is **not scheduled**. Run it manually from the SQL
   editor, or schedule it later (for example with `pg_cron`) once approved.
+- **Known gap:** `purge_expired_records()` predates Migrations 6 and 7 and
+  does not include `sled_issues`, `sled_issue_photos` or the five suspension
+  tables. Their Recently Deleted rows are hidden from users and can no longer
+  be restored after 30 days, but they are not permanently removed yet. Their
+  Storage files also stay until the planned storage cleanup. Extending the
+  purge (and scheduling it) is a separate, future change that needs approval.
 
 ## Audit history
 
@@ -567,6 +574,84 @@ to ride" warning. It does not change the maintenance status or calculations.
 Tests: `supabase/tests/database/009_issues.test.sql`; rollback test
 `scripts/test-migration-6-rollback.sh`.
 
+## Suspension setup & tuning (Migration 7)
+
+**Status: applied to production manually on 2026-11-18** through the SQL
+Editor, in one transaction, with the history row
+`20261121090000 suspension_tuning` added to
+`supabase_migrations.schema_migrations` so the Supabase CLI sees it as
+applied. Verified afterwards: all five tables exist with RLS enabled, the
+`suspension-photos` bucket is private (5 MB, JPEG/WebP) with its three
+storage policies, the migration is recorded, the API schema cache was
+reloaded, anonymous users cannot execute `save_suspension_revision`, and
+Security Advisor showed 0 errors (11 warnings).
+
+`supabase/migrations/20261121090000_suspension_tuning.sql`. Additive only:
+no existing table, column, policy, trigger or function is changed.
+
+- **`suspension_settings`**: the sled's one master list of settings. Every
+  sled starts **empty**: there are no templates and no factory values. Each
+  setting has a `name` (1-80, unique per zone), a diagram `zone`
+  (`front_left_shock`, `front_right_shock`, `front_general`,
+  `rear_front_shock`, `rear_rear_shock`, `rear_springs_limiter`,
+  `rear_general`), a `value_type` (`number` or `text`), an optional free-text
+  `unit` (clicks, turns, mm, in, PSI or anything else), `position` and notes.
+- **`suspension_setups`**: named setups (unique per sled). At most one
+  active setup per sled (`suspension_setups_one_active`). A new setup is not
+  activated automatically. The active setup cannot be deleted; another
+  setup must be activated first, and nothing is activated for you.
+- **`suspension_revisions`**: append-only snapshots of a setup's values.
+  `setting_values` is `{setting id: {value, name, zone, unit, type}}`, so
+  history still reads correctly after a setting is renamed or deleted. The
+  database numbers revisions, checks every value against its setting (numbers
+  only for number settings, 200 characters at most, settings of the same
+  sled only), and refuses any change to a saved revision. Mileage and engine
+  hours are **copies** (prefilled by the app, editable) and never create or
+  change a reading. Revisions are deleted and restored only together with
+  their setup.
+- **`suspension_feedback`**: any number of entries per revision: ride date
+  (not in the future), `improved` / `worse` / `no_change`, optional note.
+- **`suspension_photos`**: reference photos on a setting or adjustment photos
+  on a revision (exactly one), at most 6 active per parent. Files are in the
+  private **`suspension-photos`** bucket at
+  `<sled id>/<setting or revision id>/<uuid>.jpg` (5 MB, JPEG/WebP). It is
+  separate from `issue-photos` and `sled-photos`.
+- All five are record tables (see "Building a record table"): sharing RLS,
+  the record guard, version checks, audit (`maintenance` category), Recently
+  Deleted. Nobody can hard-delete them. Deleting a setup takes its revisions,
+  feedback and adjustment photos along (and restoring brings them back);
+  deleting a setting takes its reference photos along.
+
+Functions (signed-in users only; each re-checks permission):
+
+| Function | What it does |
+|---|---|
+| `create_suspension_setup(sled, name, notes?, copy_from_revision?)` | New setup with revision 1 (blank, or a copy of a revision of the same sled) |
+| `activate_suspension_setup(setup)` | Makes this setup the only active one on its sled |
+| `save_suspension_revision(setup, base_revision, changes, note?, odometer?, hours?, idempotency_key)` | Records an adjustment: unchanged values carry forward, `null`/blank clears. Refuses with `PT409` if someone saved since `base_revision`, and with "Nothing changed." if nothing did. Repeating a key returns the saved revision |
+| `restore_suspension_revision(revision, note?, odometer?, hours?, idempotency_key)` | Saves a **new** revision with an earlier revision's values (settings that were deleted since are left out). Nothing is erased |
+
+| Action | Owner / editor | Mechanic | Viewer |
+|---|---|---|---|
+| See settings, setups, history, feedback, photos | ✅ | ✅ | ✅ |
+| Add, rename, reorder, delete settings; reference photos | ✅ | ❌ | ❌ |
+| Create, rename, activate, delete, restore setups | ✅ | ❌ | ❌ |
+| Record adjustments, restore a revision | ✅ | ✅ | ❌ |
+| Add feedback and adjustment photos | ✅ | ✅ | ❌ |
+| Edit feedback and photo details | ✅ any | own | ❌ |
+| Remove feedback and photos | ✅ | ❌ | ❌ |
+
+People the sled is not shared with, and signed-out visitors, see nothing.
+Storage policies (`suspension-photos`): view = anyone who can view the sled;
+upload = whoever may add that kind of photo (`private.can_add_suspension_photo`);
+remove = owners and editors.
+
+Not included (future phase): test sessions and manual ride logs. See also
+the purge gap under "Recently Deleted".
+
+Tests: `supabase/tests/database/010_suspension.test.sql`; rollback test
+`scripts/test-migration-7-rollback.sh`.
+
 ## Units
 
 1.0 uses US units, stored in the unit named by the column: `*_mi` (miles),
@@ -602,7 +687,7 @@ Supabase stack:
 - `scripts/db-api-smoke-test.mjs`, which signs up real users through Supabase
   Auth and exercises sharing, RLS, the maintenance logbook and conflict
   detection through the REST API with `supabase-js`
-- the rollback tests, newest first: 6, 5, 4, 3, 2, 1. After each rollback, the
+- the rollback tests, newest first: 7, 6, 5, 4, 3, 2, 1. After each rollback, the
   tests of the remaining migrations run again on the result
 
 CI never connects to the live project.

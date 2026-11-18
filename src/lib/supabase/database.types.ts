@@ -385,6 +385,136 @@ isOneToOne: false
       referencedColumns: ["id"]
     }
                   ]
+                },"suspension_feedback": {
+                  Row: {
+                    "created_at": string,"created_by": string | null,"deleted_at": string | null,"deleted_by": string | null,"id": string,"note": string | null,"rating": string,"revision_id": string,"ridden_on": string,"sled_id": string,"updated_at": string,"updated_by": string | null,"version": number
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "created_at"?: string,"created_by"?: string | null,"deleted_at"?: string | null,"deleted_by"?: string | null,"id"?: string,"note"?: string | null,"rating": string,"revision_id": string,"ridden_on"?: string,"sled_id": string,"updated_at"?: string,"updated_by"?: string | null,"version"?: number
+                  }
+                  Update: {
+                    "created_at"?: string,"created_by"?: string | null,"deleted_at"?: string | null,"deleted_by"?: string | null,"id"?: string,"note"?: string | null,"rating"?: string,"revision_id"?: string,"ridden_on"?: string,"sled_id"?: string,"updated_at"?: string,"updated_by"?: string | null,"version"?: number
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "suspension_feedback_revision_id_fkey"
+      columns: ["revision_id"]
+isOneToOne: false
+      referencedRelation: "suspension_revisions"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "suspension_feedback_sled_id_fkey"
+      columns: ["sled_id"]
+isOneToOne: false
+      referencedRelation: "sleds"
+      referencedColumns: ["id"]
+    }
+                  ]
+                },"suspension_photos": {
+                  Row: {
+                    "created_at": string,"created_by": string | null,"deleted_at": string | null,"deleted_by": string | null,"id": string,"path": string,"position": number,"revision_id": string | null,"setting_id": string | null,"sled_id": string,"updated_at": string,"updated_by": string | null,"version": number
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "created_at"?: string,"created_by"?: string | null,"deleted_at"?: string | null,"deleted_by"?: string | null,"id"?: string,"path": string,"position"?: number,"revision_id"?: string | null,"setting_id"?: string | null,"sled_id": string,"updated_at"?: string,"updated_by"?: string | null,"version"?: number
+                  }
+                  Update: {
+                    "created_at"?: string,"created_by"?: string | null,"deleted_at"?: string | null,"deleted_by"?: string | null,"id"?: string,"path"?: string,"position"?: number,"revision_id"?: string | null,"setting_id"?: string | null,"sled_id"?: string,"updated_at"?: string,"updated_by"?: string | null,"version"?: number
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "suspension_photos_revision_id_fkey"
+      columns: ["revision_id"]
+isOneToOne: false
+      referencedRelation: "suspension_revisions"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "suspension_photos_setting_id_fkey"
+      columns: ["setting_id"]
+isOneToOne: false
+      referencedRelation: "suspension_settings"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "suspension_photos_sled_id_fkey"
+      columns: ["sled_id"]
+isOneToOne: false
+      referencedRelation: "sleds"
+      referencedColumns: ["id"]
+    }
+                  ]
+                },"suspension_revisions": {
+                  Row: {
+                    "client_request_id": string | null,"created_at": string,"created_by": string | null,"deleted_at": string | null,"deleted_by": string | null,"engine_hours": number | null,"id": string,"note": string | null,"odometer_mi": number | null,"restored_from_revision_id": string | null,"revision_number": number,"setting_values": NonNullable<Json>,"setup_id": string,"sled_id": string,"updated_at": string,"updated_by": string | null,"version": number
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "client_request_id"?: string | null,"created_at"?: string,"created_by"?: string | null,"deleted_at"?: string | null,"deleted_by"?: string | null,"engine_hours"?: number | null,"id"?: string,"note"?: string | null,"odometer_mi"?: number | null,"restored_from_revision_id"?: string | null,"revision_number": number,"setting_values"?: NonNullable<Json>,"setup_id": string,"sled_id": string,"updated_at"?: string,"updated_by"?: string | null,"version"?: number
+                  }
+                  Update: {
+                    "client_request_id"?: string | null,"created_at"?: string,"created_by"?: string | null,"deleted_at"?: string | null,"deleted_by"?: string | null,"engine_hours"?: number | null,"id"?: string,"note"?: string | null,"odometer_mi"?: number | null,"restored_from_revision_id"?: string | null,"revision_number"?: number,"setting_values"?: NonNullable<Json>,"setup_id"?: string,"sled_id"?: string,"updated_at"?: string,"updated_by"?: string | null,"version"?: number
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "suspension_revisions_restored_from_revision_id_fkey"
+      columns: ["restored_from_revision_id"]
+isOneToOne: false
+      referencedRelation: "suspension_revisions"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "suspension_revisions_setup_id_fkey"
+      columns: ["setup_id"]
+isOneToOne: false
+      referencedRelation: "suspension_setups"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "suspension_revisions_sled_id_fkey"
+      columns: ["sled_id"]
+isOneToOne: false
+      referencedRelation: "sleds"
+      referencedColumns: ["id"]
+    }
+                  ]
+                },"suspension_settings": {
+                  Row: {
+                    "created_at": string,"created_by": string | null,"deleted_at": string | null,"deleted_by": string | null,"id": string,"name": string,"notes": string | null,"position": number,"sled_id": string,"unit": string | null,"updated_at": string,"updated_by": string | null,"value_type": string,"version": number,"zone": string
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "created_at"?: string,"created_by"?: string | null,"deleted_at"?: string | null,"deleted_by"?: string | null,"id"?: string,"name": string,"notes"?: string | null,"position"?: number,"sled_id": string,"unit"?: string | null,"updated_at"?: string,"updated_by"?: string | null,"value_type"?: string,"version"?: number,"zone": string
+                  }
+                  Update: {
+                    "created_at"?: string,"created_by"?: string | null,"deleted_at"?: string | null,"deleted_by"?: string | null,"id"?: string,"name"?: string,"notes"?: string | null,"position"?: number,"sled_id"?: string,"unit"?: string | null,"updated_at"?: string,"updated_by"?: string | null,"value_type"?: string,"version"?: number,"zone"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "suspension_settings_sled_id_fkey"
+      columns: ["sled_id"]
+isOneToOne: false
+      referencedRelation: "sleds"
+      referencedColumns: ["id"]
+    }
+                  ]
+                },"suspension_setups": {
+                  Row: {
+                    "created_at": string,"created_by": string | null,"deleted_at": string | null,"deleted_by": string | null,"id": string,"is_active": boolean,"name": string,"notes": string | null,"sled_id": string,"updated_at": string,"updated_by": string | null,"version": number
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "created_at"?: string,"created_by"?: string | null,"deleted_at"?: string | null,"deleted_by"?: string | null,"id"?: string,"is_active"?: boolean,"name": string,"notes"?: string | null,"sled_id": string,"updated_at"?: string,"updated_by"?: string | null,"version"?: number
+                  }
+                  Update: {
+                    "created_at"?: string,"created_by"?: string | null,"deleted_at"?: string | null,"deleted_by"?: string | null,"id"?: string,"is_active"?: boolean,"name"?: string,"notes"?: string | null,"sled_id"?: string,"updated_at"?: string,"updated_by"?: string | null,"version"?: number
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "suspension_setups_sled_id_fkey"
+      columns: ["sled_id"]
+isOneToOne: false
+      referencedRelation: "sleds"
+      referencedColumns: ["id"]
+    }
+                  ]
                 },"user_preferences": {
                   Row: {
                     "created_at": string,"created_by": string | null,"dashboard": NonNullable<Json>,"garage_mode": NonNullable<Json>,"id": string,"theme": Database["public"]['Enums']["theme_preference"],"updated_at": string,"updated_by": string | null,"version": number
@@ -462,6 +592,9 @@ isOneToOne: false
             "accept_sled_invitation":
 { Args: { "p_token": string }; Returns: string
                            },
+"activate_suspension_setup":
+{ Args: { "p_setup_id": string }; Returns: undefined
+                           },
 "create_sled":
 { Args: { "p_engine_hours"?: number,"p_garage_id"?: string,"p_make": string,"p_model": string,"p_model_year": number,"p_nickname"?: string,"p_odometer_mi": number,"p_read_on"?: string,"p_vin"?: string }; Returns: string
                            },
@@ -469,6 +602,9 @@ isOneToOne: false
 { Args: { "p_email": string,"p_expires_in_days"?: number,"p_role": Database["public"]['Enums']["sled_share_role"],"p_sled_id": string }; Returns: {
               "expires_at": string,"invitation_id": string,"token": string
             }[]
+                           },
+"create_suspension_setup":
+{ Args: { "p_copy_from_revision_id"?: string,"p_name": string,"p_notes"?: string,"p_sled_id": string }; Returns: Json
                            },
 "permanently_delete_sled":
 { Args: { "p_sled_id": string }; Returns: undefined
@@ -479,6 +615,9 @@ isOneToOne: false
 "restore_record_version":
 { Args: { "p_audit_id": number }; Returns: undefined
                            },
+"restore_suspension_revision":
+{ Args: { "p_engine_hours"?: number,"p_idempotency_key"?: string,"p_note"?: string,"p_odometer_mi"?: number,"p_revision_id": string }; Returns: Json
+                           },
 "revoke_sled_invitation":
 { Args: { "p_invitation_id": string }; Returns: undefined
                            },
@@ -487,6 +626,9 @@ isOneToOne: false
                            },
 "save_maintenance_entry":
 { Args: { "p_category"?: string,"p_completed"?: boolean,"p_done_by"?: string,"p_idempotency_key": string,"p_labor_cost"?: number,"p_notes"?: string,"p_other_cost"?: number,"p_parts"?: Json,"p_performed_on": string,"p_reading"?: Json,"p_sled_id": string,"p_tasks"?: Json,"p_title": string }; Returns: Json
+                           },
+"save_suspension_revision":
+{ Args: { "p_base_revision_id": string,"p_changes": Json,"p_engine_hours"?: number,"p_idempotency_key"?: string,"p_note"?: string,"p_odometer_mi"?: number,"p_setup_id": string }; Returns: Json
                            },
 "update_maintenance_entry":
 { Args: { "p_category"?: string,"p_done_by"?: string,"p_entry_id": string,"p_labor_cost"?: number,"p_notes"?: string,"p_other_cost"?: number,"p_parts"?: Json,"p_performed_on": string,"p_reading"?: Json,"p_tasks"?: Json,"p_title": string,"p_version": number }; Returns: Json

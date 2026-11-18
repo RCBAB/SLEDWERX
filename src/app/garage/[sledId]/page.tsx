@@ -1,4 +1,4 @@
-import { Pencil } from "lucide-react";
+import { Pencil, SlidersHorizontal } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -138,6 +138,10 @@ async function SledDashboard({ params, searchParams }: Pick<PageProps<"/garage/[
                 }}
               />
             ) : null}
+            <ButtonLink href={`/garage/${sled.id}/suspension`} variant="secondary" size="lg">
+              <SlidersHorizontal aria-hidden className="size-4" />
+              Suspension
+            </ButtonLink>
             {can.canEdit ? (
               <ButtonLink href={`/garage/${sled.id}/edit`} variant="secondary" size="lg">
                 <Pencil aria-hidden className="size-4" />

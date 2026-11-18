@@ -133,7 +133,7 @@ test("report, view, edit and resolve issues on the sled page", async ({ page }) 
   await resolve.getByText("Fixed by a service record").click();
   const option = resolve.locator("option", { hasText: "Replaced brake fluid" });
   await expect(option).toHaveCount(1);
-  await label(resolve, "Service record").selectOption((await option.getAttribute("value"))!);
+  await label(resolve, "Service record", true).selectOption((await option.getAttribute("value"))!);
   await resolve.getByRole("button", { name: "Mark resolved" }).click();
   dialog = page.getByRole("dialog", { name: "Brake lever spongy" });
   await expect(dialog.getByTestId("issue-resolution")).toContainText("By service: Replaced brake fluid");
@@ -194,7 +194,9 @@ test("Garage Board: open issues, up to three per sled, and the ready-to-ride war
   await dialog.getByRole("button", { name: "Resolve" }).click();
   const resolve = page.getByRole("dialog", { name: "Resolve issue" });
   await resolve.getByRole("button", { name: "Mark resolved" }).click();
-  await page.getByRole("dialog", { name: "Brake failure" }).getByRole("button", { name: "Close" }).click();
+  // The board lists open issues only, so the resolved one simply leaves it.
+  await expect(resolve).toBeHidden();
+  await expect(issueRow(sled, "Brake failure")).toHaveCount(0);
   await expect(sled.getByTestId("ride-warning")).toHaveCount(0);
   await expect(sled.getByTestId("issue-summary")).toHaveText("4 open issues · 1 high");
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);

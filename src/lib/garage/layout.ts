@@ -26,3 +26,16 @@ export function layoutFromGarageMode(garageMode: unknown): GarageLayout {
 export function withLayout(garageMode: unknown, layout: GarageLayout): Record<string, unknown> {
   return { ...asObject(garageMode), layout };
 }
+
+/** The Wall Display on-screen keyboard: on for new users until switched off. */
+export const DEFAULT_KEYBOARD = true;
+
+export function keyboardFromGarageMode(garageMode: unknown): boolean {
+  const keyboard = asObject(garageMode).keyboard;
+  return typeof keyboard === "boolean" ? keyboard : DEFAULT_KEYBOARD;
+}
+
+/** The stored object with the keyboard setting, keeping any other settings. */
+export function withKeyboard(garageMode: unknown, keyboard: boolean): Record<string, unknown> {
+  return { ...asObject(garageMode), keyboard };
+}

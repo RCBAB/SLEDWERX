@@ -8,10 +8,11 @@ import { MaintenanceBoard } from "@/components/board/maintenance-board";
 import { QuickService } from "@/components/service/quick-service";
 import { ServiceHistory } from "@/components/service/service-history";
 import { BackLink } from "@/components/sleds/back-link";
-import { AddReadingForm, FixLastReadingForm } from "@/components/sleds/reading-forms";
+import { FixLastReadingForm } from "@/components/sleds/reading-forms";
 import { SledSkeleton } from "@/components/sleds/skeletons";
 import { SledPhoto } from "@/components/sleds/sled-photo";
 import { StatusBadge } from "@/components/sleds/status-badge";
+import { UpdateMetersButton } from "@/components/sleds/update-meters";
 import { Alert } from "@/components/ui/alert";
 import { ButtonLink } from "@/components/ui/button";
 import { requireUser } from "@/lib/auth/session";
@@ -120,6 +121,18 @@ async function SledDashboard({ params, searchParams }: Pick<PageProps<"/garage/[
             {can.canLogService ? (
               <QuickService sledId={sled.id} taskOptions={taskOptions} readings={rangeReadings} current={currentMeters} />
             ) : null}
+            {can.canAddReading ? (
+              <UpdateMetersButton
+                sledId={sled.id}
+                sledName={name}
+                current={{
+                  odometer: sled.meters.odometer ? { value: sled.meters.odometer.value, readOn: sled.meters.odometer.readOn } : null,
+                  engineHours: sled.meters.engineHours
+                    ? { value: sled.meters.engineHours.value, readOn: sled.meters.engineHours.readOn }
+                    : null,
+                }}
+              />
+            ) : null}
             {can.canEdit ? (
               <ButtonLink href={`/garage/${sled.id}/edit`} variant="secondary" size="lg">
                 <Pencil aria-hidden className="size-4" />
@@ -141,17 +154,10 @@ async function SledDashboard({ params, searchParams }: Pick<PageProps<"/garage/[
         current={currentMeters}
       />
 
-      <section className="mt-10" aria-labelledby="mileage-heading">
-        <h2 id="mileage-heading" className="font-display text-2xl font-bold uppercase tracking-wide">
-          Mileage &amp; engine hours
+      <section className="mt-10" aria-labelledby="readings-heading" data-testid="readings-section">
+        <h2 id="readings-heading" className="font-display text-2xl font-bold uppercase tracking-wide">
+          Reading history
         </h2>
-
-        {can.canAddReading ? (
-          <div className="mt-4 rounded-2xl border border-white/10 bg-surface/70 p-5 sm:p-6" data-testid="update-mileage">
-            <h3 className="mb-4 font-semibold">Update mileage</h3>
-            <AddReadingForm sledId={sled.id} />
-          </div>
-        ) : null}
 
         {last && lastService ? (
           <p className="mt-4 rounded-2xl border border-white/10 bg-surface/40 px-5 py-4 text-sm text-muted" data-testid="last-reading-service">

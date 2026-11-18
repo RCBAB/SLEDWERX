@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 
 /** How often the wall display reloads its data (and renews photo links). */
 export const WALL_REFRESH_MS = 5 * 60 * 1000;
@@ -22,7 +22,12 @@ function subscribeFullscreen(callback: () => void) {
  * browser allows it, and goes full screen when asked (browsers only allow
  * that after a tap).
  */
-export function useWallDisplay(initial: boolean, sheetOpen: boolean, closeSheet: () => void, loadedAt: string) {
+/** Any dialog open on the page (Done, package, Update mileage / hours, ...). */
+function openDialogs() {
+  return Array.from(document.querySelectorAll<HTMLDialogElement>("dialog[open]"));
+}
+
+export function useWallDisplay(initial: boolean, loadedAt: string) {
   const router = useRouter();
   const [active, setActive] = useState(initial);
   const fullscreen = useSyncExternalStore(
@@ -35,11 +40,6 @@ export function useWallDisplay(initial: boolean, sheetOpen: boolean, closeSheet:
     () => Boolean(document.fullscreenEnabled),
     () => true,
   );
-  const sheetOpenRef = useRef(sheetOpen);
-  useEffect(() => {
-    sheetOpenRef.current = sheetOpen;
-  }, [sheetOpen]);
-
   const enter = useCallback(() => {
     setActive(true);
     window.history.replaceState(null, "", WALL_URL);
@@ -65,7 +65,7 @@ export function useWallDisplay(initial: boolean, sheetOpen: boolean, closeSheet:
   useEffect(() => {
     if (!active) return;
     const refresh = () => {
-      if (!sheetOpenRef.current && document.visibilityState === "visible") router.refresh();
+      if (!openDialogs().length && document.visibilityState === "visible") router.refresh();
     };
     const timer = window.setInterval(refresh, WALL_REFRESH_MS);
     document.addEventListener("visibilitychange", refresh);
@@ -99,27 +99,29 @@ export function useWallDisplay(initial: boolean, sheetOpen: boolean, closeSheet:
     };
   }, [active]);
 
-  // An unfinished sheet left on the wall closes itself after a minute idle.
+  // An unfinished form left open on the wall closes itself after a minute
+  // without input (any dialog: Done, package, Update mileage / hours).
   useEffect(() => {
-    if (!active || !sheetOpen) return;
-    let timer = window.setTimeout(closeSheet, WALL_IDLE_CLOSE_MS);
-    const reset = () => {
+    if (!active) return;
+    let timer = 0;
+    const arm = () => {
       window.clearTimeout(timer);
-      timer = window.setTimeout(closeSheet, WALL_IDLE_CLOSE_MS);
+      timer = window.setTimeout(() => openDialogs().forEach((dialog) => dialog.close()), WALL_IDLE_CLOSE_MS);
     };
+    arm();
     const events = ["pointerdown", "keydown", "input"] as const;
-    events.forEach((e) => document.addEventListener(e, reset, true));
+    events.forEach((e) => document.addEventListener(e, arm, true));
     return () => {
       window.clearTimeout(timer);
-      events.forEach((e) => document.removeEventListener(e, reset, true));
+      events.forEach((e) => document.removeEventListener(e, arm, true));
     };
-  }, [active, sheetOpen, closeSheet]);
+  }, [active]);
 
   // Esc leaves the wall display (a sheet's own Esc closes just the sheet).
   useEffect(() => {
     if (!active) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !sheetOpenRef.current && !document.fullscreenElement) exit();
+      if (event.key === "Escape" && !event.defaultPrevented && !openDialogs().length && !document.fullscreenElement) exit();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);

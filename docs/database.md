@@ -480,14 +480,39 @@ views, functions or policies**:
 - Done and Complete package call the same `completeTasks` action as the
   sled's own Maintenance Board, which saves an ordinary service record with
   `save_maintenance_entry`. There is no second maintenance system.
-- The layout choice (Full Cards or Compact) is kept in
-  `user_preferences.garage_mode` (Migration 1), as `{"layout": "cards" |
-  "compact"}`. The app merges it into the existing object, so other Garage
-  Mode settings can live beside it. The row is private to its user (RLS).
+- Garage Board settings are kept in `user_preferences.garage_mode`
+  (Migration 1), private to the user (RLS). The app merges each change into
+  the existing object:
+  - `layout`: `"cards"` (default) or `"compact"`;
+  - `keyboard`: the Wall Display on-screen keyboard, `true` (default) or
+    `false` (Phase 5.1).
 
 Tests: `supabase/tests/database/007_garage_board.test.sql` (multi-sled reads
 follow sharing, a mechanic's completion updates the shared sled's board, the
 preference is private).
+
+## Mileage and engine-hour updates (Phase 5.1, no migration)
+
+"Update mileage / hours" (sled page and Garage Board) inserts an ordinary
+`sled_readings` row through the `updateMeters` server action, as the user, so
+RLS, the audit log and Migration 2's reading rules all apply. Earlier readings
+are never changed.
+
+- A value equal to the current reading is treated as unchanged and not saved
+  again, so an hours-only update stores only hours (`odometer_mi` null). If
+  nothing changed, nothing is saved.
+- A normal update can't be lower than the current reading. The action says so
+  next to the field; the rule itself is the database's reading-order trigger
+  (`private.tg_sled_readings_order`), which checks each meter on its own,
+  across the whole history (backdated readings must fit between their
+  neighbours) and for every caller.
+- A lower value is only possible as a meter reset or replacement
+  (`odometer_reset` / `hour_meter_reset`, Migration 2), which the dialog
+  requires the user to confirm explicitly. Lifetime totals carry on.
+- Done and Complete package can save optional notes, in the service record's
+  existing `notes` field (`save_maintenance_entry`'s `p_notes`).
+
+Tests: `supabase/tests/database/008_meter_updates.test.sql`.
 
 ## Units
 
@@ -519,7 +544,8 @@ npm run db:stop
 CI runs the same tests on every pull request against a throwaway local
 Supabase stack:
 - the pgTAP tests in `supabase/tests/database/`, one file per migration
-  (plus `007_garage_board`, which tests Phase 5 against existing objects)
+  (plus `007_garage_board` and `008_meter_updates`, which test Phases 5 and
+  5.1 against existing objects)
 - `scripts/db-api-smoke-test.mjs`, which signs up real users through Supabase
   Auth and exercises sharing, RLS, the maintenance logbook and conflict
   detection through the REST API with `supabase-js`

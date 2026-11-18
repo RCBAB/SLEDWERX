@@ -29,3 +29,17 @@ body {
   background: var(--background);
   color: var(--foreground);
 }
+
+/*
+ * Wall Display keyboard: while it shows, open dialogs shrink to the space
+ * above it (and scroll), and the page gets room below its last row, so the
+ * keyboard never covers a field, a message or the Save row.
+ */
+html[data-wall-keyboard] dialog[open] {
+  max-height: calc(100dvh - var(--wall-keyboard-height, 0px) - 1rem) !important;
+  margin-top: 0.5rem !important;
+  margin-bottom: auto !important;
+}
+html[data-wall-keyboard] [data-testid="garage-board"] {
+  padding-bottom: calc(var(--wall-keyboard-height, 0px) + 1rem);
+}

@@ -163,7 +163,7 @@ describe.skipIf(!enabled)("cleanup job on the local Supabase stack", () => {
     const report = await runCleanup({ ...deps(), requestedMode: "delete", deadline: later() });
     expect(report).toMatchObject({ status: "completed", mode: "report" });
     expect(report.warnings).toContain("Deletion is not authorized in the database; running report-only.");
-    for (const name of Object.values(files)) expect(exists(name)).toBe(true);
+    for (const [key, name] of Object.entries(files)) expect(exists(name, key.startsWith("sled") ? SLED_BUCKET : BUCKET)).toBe(true);
   });
 
   it("a report run lists the mechanic's orphaned upload and protects active, recoverable and new files", async () => {
@@ -177,7 +177,7 @@ describe.skipIf(!enabled)("cleanup job on the local Supabase stack", () => {
     expect(outcome(files.fresh)).toBe("not listed");
     expect((report.files as { buckets: Record<string, { threshold_applies: boolean; blocked: boolean }> }).buckets[BUCKET])
       .toMatchObject({ threshold_applies: false, blocked: false });
-    for (const name of Object.values(files)) expect(exists(name)).toBe(true);
+    for (const [key, name] of Object.entries(files)) expect(exists(name, key.startsWith("sled") ? SLED_BUCKET : BUCKET)).toBe(true);
   });
 
   it("a duplicate invocation while a run is in progress is refused", async () => {

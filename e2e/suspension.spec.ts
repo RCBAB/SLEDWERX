@@ -699,6 +699,7 @@ test("a photo for something removed meanwhile is refused before any file is uplo
   // Meanwhile the setting is removed in another tab.
   const other = await context.newPage();
   await openSuspension(other, sledId);
+  await suspensionPage(other).locator("summary", { hasText: "Customize settings" }).click();
   other.once("dialog", (d) => d.accept());
   await suspensionPage(other).getByRole("button", { name: "Remove Preload" }).click();
   await expect(zoneSettings(other, "front_left_shock")).toHaveCount(0);
@@ -721,7 +722,7 @@ test("removed ride feedback is restored from Recently Deleted exactly as it was"
   await createSetup(page, "Trail", { activate: true });
   await adjustValues(page, { "Left ski shock: Compression": "12" });
   await addFeedback(page, 2, "Worse", "Harsh in the whoops");
-  const before = await revisionCard(page, 2).getByTestId("feedback").innerText();
+  const before = (await revisionCard(page, 2).getByTestId("feedback").textContent()) ?? "";
 
   page.once("dialog", (d) => d.accept());
   await revisionCard(page, 2)

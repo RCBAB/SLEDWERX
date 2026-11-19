@@ -251,7 +251,7 @@ function LayoutButton({
       className={cn(
         "inline-flex items-center gap-2 rounded-md px-3 text-sm font-semibold transition-colors",
         big ? "h-12 px-5 text-base" : "h-9",
-        active ? "bg-accent text-white" : "text-muted hover:text-foreground",
+        active ? "bg-primary text-white" : "text-muted hover:text-foreground",
       )}
     >
       {children}

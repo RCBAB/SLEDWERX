@@ -57,7 +57,7 @@ export function ZoneList({
                       aria-hidden
                       className={cn(
                         "grid size-7 shrink-0 place-items-center rounded-full font-display text-sm font-bold",
-                        active ? "bg-accent text-white" : "bg-white/10 text-foreground",
+                        active ? "bg-primary text-white" : "bg-white/10 text-foreground",
                       )}
                     >
                       {ZONE_NUMBER[zone]}

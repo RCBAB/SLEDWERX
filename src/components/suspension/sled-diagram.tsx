@@ -315,7 +315,7 @@ export function SledDiagram({
                   aria-hidden
                   className={cn(
                     "absolute -right-1 -top-1 grid min-w-5 place-items-center rounded-full px-1 font-sans text-[0.65rem] font-bold leading-5",
-                    active ? "bg-white text-accent" : "bg-white/85 text-background",
+                    active ? "bg-white text-primary" : "bg-white/85 text-background",
                   )}
                 >
                   {count}

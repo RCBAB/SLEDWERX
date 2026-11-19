@@ -1,3 +1,4 @@
+import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 
 // These pages work without a session, so they run against any build.
@@ -44,4 +45,25 @@ test("an expired or invalid email link shows an error on sign in", async ({ page
   await page.goto("/auth/confirm?token_hash=bogus&type=bogus");
   await expect(page).toHaveURL(/\/login\?error=link$/);
   await expect(page.getByText("That link is invalid or has expired.", { exact: false })).toBeVisible();
+});
+
+test("public pages pass automated accessibility checks, color contrast included; primary buttons keep contrast on hover", async ({
+  page,
+}) => {
+  for (const path of ["/", "/login", "/signup", "/forgot-password"]) {
+    await page.goto(path);
+    const { violations } = await new AxeBuilder({ page }).analyze();
+    expect(violations.map((v) => `${path} ${v.id}: ${v.nodes.map((n) => n.target.join(" ")).join(", ")}`)).toEqual([]);
+  }
+  // Hover darkens the primary button (#b8240f) instead of lightening it, so white text stays readable.
+  await page.goto("/login");
+  const signIn = page.getByRole("button", { name: "Sign in" });
+  const background = () => signIn.evaluate((el) => getComputedStyle(el).backgroundColor);
+  expect(await background()).toBe("rgb(217, 43, 18)");
+  // Touch screens have no hover (Tailwind applies hover styles only where a pointer can hover).
+  if (!(await page.evaluate(() => matchMedia("(hover: hover)").matches))) return;
+  await signIn.hover();
+  await expect.poll(background).toBe("rgb(184, 36, 15)");
+  const { violations } = await new AxeBuilder({ page }).withRules(["color-contrast"]).analyze();
+  expect(violations).toEqual([]);
 });

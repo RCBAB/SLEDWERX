@@ -411,7 +411,7 @@ function Key({
         "flex h-16 min-w-0 items-center justify-center rounded-lg text-2xl font-semibold transition-colors active:scale-[0.97] disabled:opacity-30",
         tone === "plain" && "bg-white/10 text-foreground active:bg-white/20",
         tone === "muted" && "bg-white/5 text-base text-foreground/90 active:bg-white/15",
-        tone === "accent" && "bg-accent text-lg text-white active:bg-accent-hot",
+        tone === "accent" && "bg-primary text-lg text-white active:bg-primary-hover",
         pressed && "ring-2 ring-accent",
         className,
       )}

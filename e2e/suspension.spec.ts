@@ -1226,9 +1226,8 @@ test("Wall Display keyboard: only valid numbers can be typed; invalid text is re
   await expect(summaryIn(garageSled(page, "Rave")).getByTestId("suspension-active")).toHaveText("Trail · Rev 2");
 });
 
-// Pre-existing, app-wide: white text on the brand accent (#ff3b1f) is 3.56:1. Reported
-// separately (a design-token change for every screen); all other rules are checked.
-const axeFor = (page: Page, include: string) => new AxeBuilder({ page }).include(include).disableRules(["color-contrast"]);
+// Every axe rule is checked, color contrast included (primary buttons use #d92b12, 4.88:1).
+const axeFor = (page: Page, include: string) => new AxeBuilder({ page }).include(include);
 const violations = async (builder: AxeBuilder) =>
   (await builder.analyze()).violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(" ")).join(", ")}`);
 

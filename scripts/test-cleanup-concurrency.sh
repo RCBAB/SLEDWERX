@@ -70,9 +70,9 @@ I_PURGE="$(query "insert into public.sled_issues (sled_id, title) values ('$SLED
 query "update public.sled_issues set deleted_at = now() - interval '31 days' where id in ('$I_RESTORE', '$I_PURGE');" > /dev/null
 P1="$SLED/$ISSUE/$(uuid).jpg"
 P2="$SLED/$ISSUE/$(uuid).jpg"
-query "insert into storage.objects (bucket_id, name, created_at, updated_at) values
-         ('issue-photos', '$P1', now() - interval '2 days', now() - interval '2 days'),
-         ('issue-photos', '$P2', now() - interval '2 days', now() - interval '2 days');
+query "insert into storage.objects (bucket_id, name, created_at, updated_at, metadata) values
+         ('issue-photos', '$P1', now() - interval '2 days', now() - interval '2 days', '{\"eTag\": \"p1\", \"size\": 10}'),
+         ('issue-photos', '$P2', now() - interval '2 days', now() - interval '2 days', '{\"eTag\": \"p2\", \"size\": 10}');
        insert into private.cleanup_runs (mode, source, status, started_at, finished_at, records_step_at, files_step_at)
        select 'report', 'scheduled', 'completed', now() - d * interval '1 day', now() - d * interval '1 day', now(), now()
        from generate_series(1, 7) d;

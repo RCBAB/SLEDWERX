@@ -28,7 +28,7 @@ depends on it is still applied.
 
 Undoes `supabase/migrations/20261122090000_recently_deleted_cleanup.sql`: the
 cleanup tables (settings, runs, candidates, registries, file claims), the
-cleanup functions including the six `public.cleanup_*` API functions, the
+cleanup functions including the eight `public.cleanup_*` API functions, the `cleanup_review` view, the
 `cleanup_count_deletes` and `storage_claim_guard` triggers, and
 `sleds_photo_path_idx`. It puts `private.purge_expired_records()` back exactly
 as Migration 2 left it. Storage policies and every other object are untouched.

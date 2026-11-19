@@ -601,6 +601,11 @@ isOneToOne: false
 "cleanup_claim_file":
 { Args: { "p_bucket_id": string,"p_object_path": string,"p_run_id": number }; Returns: Json
                            },
+"cleanup_eligible_files":
+{ Args: { "p_run_id": number }; Returns: {
+              "bucket_id": string,"object_path": string
+            }[]
+                           },
 "cleanup_finish_run":
 { Args: { "p_error"?: string,"p_run_id": number }; Returns: Json
                            },
@@ -608,10 +613,13 @@ isOneToOne: false
 { Args: { "p_run_id": number }; Returns: Json
                            },
 "cleanup_record_file_result":
-{ Args: { "p_bucket_id": string,"p_error"?: string,"p_object_path": string,"p_removed": boolean,"p_run_id": number }; Returns: Json
+{ Args: { "p_bucket_id": string,"p_deleted_object"?: Json,"p_error"?: string,"p_object_path": string,"p_removed": boolean,"p_run_id": number }; Returns: Json
                            },
 "cleanup_report_files":
 { Args: { "p_run_id": number }; Returns: Json
+                           },
+"cleanup_verify_claim":
+{ Args: { "p_bucket_id": string,"p_object_path": string,"p_run_id": number }; Returns: Json
                            },
 "create_sled":
 { Args: { "p_engine_hours"?: number,"p_garage_id"?: string,"p_make": string,"p_model": string,"p_model_year": number,"p_nickname"?: string,"p_odometer_mi": number,"p_read_on"?: string,"p_vin"?: string }; Returns: string

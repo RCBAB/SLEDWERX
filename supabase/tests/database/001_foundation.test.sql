@@ -599,6 +599,9 @@ select throws_ok($$ delete from public.garages where id = (select v::uuid from t
 do $$
 begin
   if to_regclass('private.cleanup_settings') is not null then
+    -- This test's own record table is not in the cleanup registry (the
+    -- registry check would rightly stop the purge); it is no longer needed.
+    drop table public.test_service_records;
     insert into private.cleanup_runs (mode, source, status, started_at, finished_at, records_step_at, files_step_at)
     select 'report', 'scheduled', 'completed', now() - d * interval '1 day', now() - d * interval '1 day',
            now() - d * interval '1 day', now() - d * interval '1 day'

@@ -5,8 +5,8 @@
 -- MANUAL USE ONLY. Read supabase/rollback/README.md first.
 --
 -- * Removes everything Migration 8 created: the cleanup settings, runs,
---   candidates, registries and file claims; the cleanup functions (private
---   and the six public API functions); the delete-counting triggers on the
+--   candidates, registries, file claims and review view; the cleanup
+--   functions (private and the eight public API functions); the delete-counting triggers on the
 --   purged tables; the claim guard on the three photo-path columns; and the
 --   index on sleds.photo_path. Also removes Migration 8's migration-history
 --   entry. All in ONE transaction.
@@ -59,12 +59,15 @@ begin
   end loop;
 end $$;
 
--- 3. Public API functions.
+-- 3. Review view and public API functions.
+drop view if exists private.cleanup_review;
 drop function if exists public.cleanup_begin_run(text);
 drop function if exists public.cleanup_process_records(bigint);
 drop function if exists public.cleanup_report_files(bigint);
+drop function if exists public.cleanup_eligible_files(bigint);
 drop function if exists public.cleanup_claim_file(bigint, text, text);
-drop function if exists public.cleanup_record_file_result(bigint, text, text, boolean, text);
+drop function if exists public.cleanup_verify_claim(bigint, text, text);
+drop function if exists public.cleanup_record_file_result(bigint, text, text, boolean, text, jsonb);
 drop function if exists public.cleanup_finish_run(bigint, text);
 
 -- 4. The purge as Migration 2 left it.
@@ -127,11 +130,15 @@ revoke all on function private.purge_expired_records() from public;
 drop function if exists private.cleanup_finish_run(bigint, text);
 drop function if exists private.cleanup_begin_run(text, text);
 drop function if exists private.tg_storage_claim_guard();
-drop function if exists private.cleanup_record_file_result(bigint, text, text, boolean, text);
+drop function if exists private.cleanup_record_file_result(bigint, text, text, boolean, text, jsonb);
+drop function if exists private.cleanup_verify_claim(bigint, text, text);
 drop function if exists private.cleanup_claim_file(bigint, text, text);
+drop function if exists private.cleanup_eligible_files(bigint);
 drop function if exists private.cleanup_report_files(bigint);
 drop function if exists private.storage_file_candidates(timestamptz);
-drop function if exists private.storage_file_status(text, text, timestamptz, timestamptz, timestamptz);
+drop function if exists private.storage_file_status(text, text, timestamptz, timestamptz, jsonb, timestamptz);
+drop function if exists private.cleanup_registry_problems();
+drop function if exists private.storage_reference_count(text);
 drop function if exists private.storage_path_referenced(text, text);
 drop function if exists private.storage_path_recognized(text, text);
 drop function if exists private.storage_lock_key(text, text);

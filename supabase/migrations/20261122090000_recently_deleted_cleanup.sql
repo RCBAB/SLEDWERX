@@ -102,7 +102,7 @@ create table private.cleanup_candidates (
     -- records
     'would_delete', 'would_defer', 'deleted', 'deferred', 'in_group', 'too_large', 'not_eligible', 'failed',
     -- files (also would_delete, would_defer, deleted, deferred, failed)
-    'eligible', 'blocked_threshold', 'unrecognized', 'claimed', 'not_claimed'
+    'eligible', 'blocked', 'unrecognized', 'metadata_missing', 'claimed', 'not_claimed', 'replaced', 'missing'
   )),
   detail text check (char_length(detail) <= 1000),
   logged_at timestamptz not null default now(),
@@ -200,14 +200,21 @@ create index sleds_photo_path_idx on public.sleds (photo_path) where photo_path 
 create table private.storage_cleanup_claims (
   bucket_id text not null,
   object_path text not null,
-  -- claimed: being removed (attaching it is refused). deleted: removed.
-  -- released: not removed, may be tried again. failed: 3 attempts, left alone.
-  status text not null check (status in ('claimed', 'deleted', 'released', 'failed')),
+  -- claimed: being removed (attaching it is refused). deleted: removed (the
+  -- path stays blocked). replaced: Storage removed a different file at this
+  -- path than the one claimed (review; the path stays blocked). missing: it
+  -- was gone (path blocked too). released: not removed, may be tried again.
+  -- failed: 3 attempts, left alone for review.
+  status text not null check (status in ('claimed', 'deleted', 'replaced', 'missing', 'released', 'failed')),
   run_id bigint references private.cleanup_runs (id) on delete set null,
   claimed_at timestamptz not null default now(),
   finished_at timestamptz,
   attempts integer not null default 1 check (attempts >= 1),
   last_error text check (char_length(last_error) <= 1000),
+  -- Exactly which object was claimed (Storage row id, eTag and size).
+  object_id uuid,
+  object_etag text,
+  object_size bigint,
   primary key (bucket_id, object_path)
 );
 
@@ -608,6 +615,8 @@ declare
   v_key text;
   v_total integer := 0;
   v_backlog integer := 0;
+  v_too_large jsonb := '[]'::jsonb;
+  v_problems text[];
   v_summary jsonb;
 begin
   if not pg_try_advisory_xact_lock(hashtextextended('sledwerx.cleanup.records', 0)) then
@@ -631,6 +640,12 @@ begin
     raise exception 'Cleanup deletion is not authorized.' using errcode = '42501';
   end if;
   v_budget := v_settings.max_records_per_run;
+  -- Anything missing from the registries stops deletion (a report still runs
+  -- and records the problem).
+  v_problems := private.cleanup_registry_problems();
+  if v_apply and cardinality(v_problems) > 0 then
+    raise exception 'The cleanup registry is incomplete: %', array_to_string(v_problems, '; ') using errcode = 'SWC02';
+  end if;
 
   for v_c in
     select * from private.expired_records_report(v_now) r order by r.sort_order, r.eligible_since, r.record_id
@@ -647,8 +662,12 @@ begin
       v_outcome := 'in_group';
       v_detail := 'Deleted together with ' || v_c.group_parent;
     elsif v_c.group_rows > v_budget then
+      -- Decision 11: never partly deleted, never an automatic higher limit.
       v_outcome := 'too_large';
-      v_detail := format('Deleting it removes %s rows; the limit is %s per run.', v_c.group_rows, v_budget);
+      v_detail := format('Needs administrator review: deleting it removes %s rows; the limit is %s per run. '
+                         'Skipped whole; a higher limit needs separate approval.', v_c.group_rows, v_budget);
+      v_too_large := v_too_large || jsonb_build_array(jsonb_build_object(
+        'table', v_c.table_name, 'id', v_c.record_id, 'sled_id', v_c.sled_id, 'rows', v_c.group_rows));
     elsif v_stop or v_used + v_c.group_rows > v_budget then
       v_stop := true;
       v_outcome := case when v_apply then 'deferred' else 'would_defer' end;
@@ -715,7 +734,12 @@ begin
     'limit', v_budget,
     'rows', v_used,
     'outcomes', v_outcomes,
-    'deleted_groups', v_deleted
+    'deleted_groups', v_deleted,
+    'too_large', v_too_large,
+    'registry_problems', to_jsonb(v_problems),
+    'large_backlog', v_total > 1000,
+    'needs_review', jsonb_array_length(v_too_large) > 0 or cardinality(v_problems) > 0
+                    or coalesce((v_outcomes ->> 'failed')::integer, 0) > 0
   );
 
   update private.cleanup_runs
@@ -729,7 +753,7 @@ end;
 $$;
 
 -- -----------------------------------------------------------------------------
--- 10. Files: recognised paths, references, age, report, claims.
+-- 10. Files: recognised paths, references, metadata, age, report, claims.
 -- -----------------------------------------------------------------------------
 create function private.storage_lock_key(p_bucket text, p_path text)
 returns bigint
@@ -752,6 +776,7 @@ $$;
 
 -- True if any row, active or in Recently Deleted, holds exactly this path.
 -- A bucket without registered columns counts as referenced (never swept).
+-- A failing lookup raises an error; it is never read as "not referenced".
 create function private.storage_path_referenced(p_bucket text, p_path text)
 returns boolean
 language plpgsql
@@ -769,7 +794,7 @@ begin
   loop
     v_any := true;
     execute format('select exists (select 1 from public.%I where %I = $1)', v_col.table_name, v_col.column_name)
-      using p_path into v_found;
+      using p_path into strict v_found;
     if v_found then
       return true;
     end if;
@@ -778,9 +803,92 @@ begin
 end;
 $$;
 
--- unrecognized | referenced | too_new | orphan (only orphan may be removed).
+-- How many rows (any state) hold a path in this bucket. Used as a sanity
+-- check of the reference lookup.
+create function private.storage_reference_count(p_bucket text)
+returns bigint
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_col record;
+  v_n bigint;
+  v_total bigint := 0;
+begin
+  for v_col in
+    select r.table_name, r.column_name from private.storage_reference_columns r where r.bucket_id = p_bucket
+  loop
+    execute format('select count(%I) from public.%I', v_col.column_name, v_col.table_name) into strict v_n;
+    v_total := v_total + v_n;
+  end loop;
+  return v_total;
+end;
+$$;
+
+-- Anything missing from the registries (empty array = complete). Checked at
+-- the start of every step: a gap blocks all deletion.
+create function private.cleanup_registry_problems()
+returns text[]
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select coalesce(array_agg(p order by p), '{}') from (
+    -- Every table with Recently Deleted is purged.
+    select 'Recently Deleted table not registered: ' || c.relname as p
+    from pg_class c join pg_attribute a on a.attrelid = c.oid and a.attname = 'deleted_at' and not a.attisdropped
+    where c.relnamespace = 'public'::regnamespace and c.relkind = 'r'
+      and c.relname not in (select t.table_name from private.cleanup_record_tables t)
+    union all
+    select 'Registered table missing: ' || t.table_name
+    from private.cleanup_record_tables t where to_regclass('public.' || t.table_name) is null
+    union all
+    -- Every table a purge can reach counts its deleted rows.
+    select 'Delete counter missing on: ' || x.rel::regclass::text
+    from (
+      with recursive reach(rel) as (
+        select to_regclass('public.' || t.table_name)::oid from private.cleanup_record_tables t
+        where to_regclass('public.' || t.table_name) is not null
+        union
+        select k.conrelid from pg_constraint k join reach r on k.confrelid = r.rel where k.contype = 'f' and k.confdeltype = 'c'
+      ) select rel from reach
+    ) x
+    where not exists (select 1 from pg_trigger g where g.tgrelid = x.rel and g.tgname = 'cleanup_count_deletes')
+    union all
+    -- Every photo-path column is registered.
+    select 'Photo column not registered: ' || c.relname || '.' || a.attname
+    from pg_class c join pg_attribute a on a.attrelid = c.oid and a.attnum > 0 and not a.attisdropped
+    where c.relnamespace = 'public'::regnamespace and c.relkind = 'r' and a.atttypid = 'text'::regtype
+      and (a.attname = 'path' or a.attname like '%\_path'
+           or exists (select 1 from pg_constraint k where k.conrelid = c.oid and k.contype = 'c' and a.attnum = any(k.conkey)
+                      and pg_get_constraintdef(k.oid) like '%(jpg|webp)%'))
+      and not exists (select 1 from private.storage_reference_columns r where r.table_name = c.relname and r.column_name = a.attname)
+    union all
+    select 'Registered photo column missing or unguarded: ' || r.table_name || '.' || r.column_name
+    from private.storage_reference_columns r
+    where not exists (select 1 from pg_attribute a where a.attrelid = to_regclass('public.' || r.table_name) and a.attname = r.column_name
+                      and not a.attisdropped)
+       or not exists (select 1 from pg_trigger g where g.tgrelid = to_regclass('public.' || r.table_name) and g.tgname = 'storage_claim_guard')
+    union all
+    -- Every SledWerx photo bucket is registered, and every registered one exists.
+    select 'Photo bucket not registered: ' || b.id from storage.buckets b
+    where b.id like '%-photos' and b.id not in (select x.bucket_id from private.storage_cleanup_buckets x)
+    union all
+    select 'Registered bucket missing: ' || x.bucket_id from private.storage_cleanup_buckets x
+    where not exists (select 1 from storage.buckets b where b.id = x.bucket_id)
+    union all
+    select 'Registered bucket without reference column: ' || x.bucket_id from private.storage_cleanup_buckets x
+    where not exists (select 1 from private.storage_reference_columns r where r.bucket_id = x.bucket_id)
+  ) problems
+$$;
+
+-- unrecognized | referenced | metadata_missing | too_new | orphan
+-- (only orphan may ever be removed).
 create function private.storage_file_status(
-  p_bucket text, p_path text, p_created_at timestamptz, p_updated_at timestamptz, p_now timestamptz
+  p_bucket text, p_path text, p_created_at timestamptz, p_updated_at timestamptz, p_metadata jsonb, p_now timestamptz
 )
 returns text
 language sql
@@ -791,30 +899,36 @@ as $$
   select case
     when not private.storage_path_recognized(p_bucket, p_path) then 'unrecognized'
     when private.storage_path_referenced(p_bucket, p_path) then 'referenced'
-    when p_created_at is null
-      or greatest(p_created_at, coalesce(p_updated_at, p_created_at))
-         > p_now - (select s.min_file_age from private.cleanup_settings s) then 'too_new'
+    when p_created_at is null or p_updated_at is null
+      or p_metadata ->> 'eTag' is null or p_metadata ->> 'size' is null then 'metadata_missing'
+    when greatest(p_created_at, p_updated_at) > p_now - (select s.min_file_age from private.cleanup_settings s) then 'too_new'
     else 'orphan'
   end
 $$;
 
 -- Every object in the swept buckets with its status. Read-only.
 create function private.storage_file_candidates(p_now timestamptz default now())
-returns table (bucket_id text, object_path text, created_at timestamptz, updated_at timestamptz, status text)
+returns table (
+  bucket_id text, object_path text, object_id uuid, created_at timestamptz, updated_at timestamptz, metadata jsonb, status text
+)
 language sql
 stable
 security definer
 set search_path = ''
 as $$
-  select o.bucket_id, o.name, o.created_at, o.updated_at,
-         private.storage_file_status(o.bucket_id, o.name, o.created_at, o.updated_at, p_now)
+  select o.bucket_id, o.name, o.id, o.created_at, o.updated_at, o.metadata,
+         private.storage_file_status(o.bucket_id, o.name, o.created_at, o.updated_at, o.metadata, p_now)
   from storage.objects o
   join private.storage_cleanup_buckets b on b.bucket_id = o.bucket_id
 $$;
 
--- The file step of a run: counts per bucket, the 10% safety threshold, and a
--- candidate row for every orphan (oldest first) and unrecognised file. In a
--- delete run, orphans within the limits become 'eligible' (claimable).
+-- The file step of a run. For each bucket: counts, safety checks, and a
+-- candidate row for every orphan (oldest first), unrecognised file and file
+-- with incomplete metadata. A bucket is blocked (nothing in it removable) if
+-- the registry is incomplete, Storage looks unreadable, any file's metadata
+-- is incomplete, no file matches the records that point at the bucket, or -
+-- for buckets of 100 files or more - more than 10% would be removed. In a
+-- delete run, orphans within the limit become 'eligible' (claimable).
 create function private.cleanup_report_files(p_run_id bigint)
 returns jsonb
 language plpgsql
@@ -827,6 +941,7 @@ declare
   v_settings private.cleanup_settings;
   v_apply boolean;
   v_now timestamptz := now();
+  v_problems text[];
   v_bucket record;
   v_buckets jsonb := '{}'::jsonb;
   v_total integer;
@@ -834,10 +949,12 @@ declare
   v_orphans integer;
   v_too_new integer;
   v_unrecognized integer;
-  v_exceeded boolean;
+  v_metadata_missing integer;
+  v_refs bigint;
+  v_blocked text;
   v_all_objects integer := 0;
   v_unreadable boolean := false;
-  v_has_refs boolean;
+  v_review boolean := false;
   v_listed integer := 0;
   v_f record;
   v_summary jsonb;
@@ -862,6 +979,8 @@ begin
     raise exception 'Cleanup deletion is not authorized.' using errcode = '42501';
   end if;
 
+  v_problems := private.cleanup_registry_problems();
+
   create temporary table cleanup_files_tmp on commit drop as
     select * from private.storage_file_candidates(v_now);
 
@@ -869,11 +988,8 @@ begin
   -- Storage looks empty while records point at files: something is wrong
   -- (permissions, wrong project). Remove nothing.
   if v_all_objects = 0 then
-    select exists (select 1 from public.sleds where photo_path is not null)
-        or exists (select 1 from public.sled_issue_photos)
-        or exists (select 1 from public.suspension_photos)
-      into v_has_refs;
-    v_unreadable := v_has_refs;
+    select coalesce(sum(private.storage_reference_count(b.bucket_id)), 0) > 0 into v_unreadable
+    from private.storage_cleanup_buckets b;
   end if;
 
   for v_bucket in select b.bucket_id from private.storage_cleanup_buckets b order by b.bucket_id loop
@@ -881,20 +997,34 @@ begin
            count(*) filter (where f.status = 'referenced'),
            count(*) filter (where f.status = 'orphan'),
            count(*) filter (where f.status = 'too_new'),
-           count(*) filter (where f.status = 'unrecognized')
-      into v_total, v_referenced, v_orphans, v_too_new, v_unrecognized
+           count(*) filter (where f.status = 'unrecognized'),
+           count(*) filter (where f.status = 'metadata_missing')
+      into v_total, v_referenced, v_orphans, v_too_new, v_unrecognized, v_metadata_missing
       from cleanup_files_tmp f where f.bucket_id = v_bucket.bucket_id;
+    v_refs := private.storage_reference_count(v_bucket.bucket_id);
 
-    v_exceeded := v_unreadable or v_orphans * 100 > v_total * v_settings.bucket_threshold_percent;
+    v_blocked := case
+      when cardinality(v_problems) > 0 then 'The cleanup registry is incomplete.'
+      when v_unreadable then 'Storage looks empty while records point at files.'
+      when v_metadata_missing > 0 then format('%s file(s) have incomplete Storage metadata.', v_metadata_missing)
+      when v_total > 0 and v_referenced = 0 and v_refs > 0 then
+        format('No file matches any of the %s record(s) that point at this bucket; the reference lookup is not trusted.', v_refs)
+      when v_total >= 100 and v_orphans * 100 > v_total * v_settings.bucket_threshold_percent then
+        format('More than %s%% of this bucket''s %s files would be removed.', v_settings.bucket_threshold_percent, v_total)
+    end;
+    if v_blocked is not null or v_unrecognized > 0 or v_metadata_missing > 0 then
+      v_review := true;
+    end if;
 
     v_buckets := v_buckets || jsonb_build_object(v_bucket.bucket_id, jsonb_build_object(
       'objects', v_total, 'referenced', v_referenced, 'orphans', v_orphans, 'too_new', v_too_new,
-      'unrecognized', v_unrecognized, 'threshold_exceeded', v_exceeded));
+      'unrecognized', v_unrecognized, 'metadata_missing', v_metadata_missing, 'reference_rows', v_refs,
+      'threshold_applies', v_total >= 100, 'blocked', v_blocked is not null, 'blocked_reason', v_blocked));
 
     for v_f in
       select f.* from cleanup_files_tmp f
-      where f.bucket_id = v_bucket.bucket_id and f.status in ('orphan', 'unrecognized')
-      order by greatest(f.created_at, coalesce(f.updated_at, f.created_at)) nulls last, f.object_path
+      where f.bucket_id = v_bucket.bucket_id and f.status in ('orphan', 'unrecognized', 'metadata_missing')
+      order by greatest(f.created_at, f.updated_at) nulls last, f.object_path
     loop
       insert into private.cleanup_candidates (
         run_id, kind, bucket_id, object_path, object_created_at, object_updated_at, outcome, detail
@@ -902,18 +1032,19 @@ begin
         p_run_id, 'file', v_f.bucket_id, v_f.object_path, v_f.created_at, v_f.updated_at,
         case
           when v_f.status = 'unrecognized' then 'unrecognized'
-          when v_exceeded then 'blocked_threshold'
+          when v_f.status = 'metadata_missing' then 'metadata_missing'
+          when v_blocked is not null then 'blocked'
           when v_listed >= v_settings.max_files_per_run then case when v_apply then 'deferred' else 'would_defer' end
           when v_apply then 'eligible'
           else 'would_delete'
         end,
         case
           when v_f.status = 'unrecognized' then 'Not a SledWerx photo path; never removed automatically.'
-          when v_unreadable then 'Storage looks empty while records point at files; nothing is removed.'
-          when v_exceeded then format('More than %s%% of this bucket would be removed; nothing is removed.', v_settings.bucket_threshold_percent)
+          when v_f.status = 'metadata_missing' then 'Storage metadata is incomplete; never removed automatically.'
+          when v_blocked is not null then v_blocked
         end
       );
-      if v_f.status = 'orphan' and not v_exceeded then
+      if v_f.status = 'orphan' and v_blocked is null then
         v_listed := v_listed + 1;
       end if;
     end loop;
@@ -924,7 +1055,10 @@ begin
     'min_age', v_settings.min_file_age,
     'limit', v_settings.max_files_per_run,
     'threshold_percent', v_settings.bucket_threshold_percent,
+    'threshold_min_files', 100,
+    'registry_problems', to_jsonb(v_problems),
     'storage_unreadable', v_unreadable,
+    'needs_review', v_review or cardinality(v_problems) > 0,
     'buckets', v_buckets
   );
 
@@ -937,8 +1071,25 @@ begin
 end;
 $$;
 
--- Claims one file for removal, re-checking everything under the file's lock.
--- Only files this delete run listed as eligible can be claimed.
+-- The files a delete run may try to remove, oldest first, within the limit.
+create function private.cleanup_eligible_files(p_run_id bigint)
+returns table (bucket_id text, object_path text)
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select c.bucket_id, c.object_path
+  from private.cleanup_candidates c
+  join private.cleanup_runs r on r.id = c.run_id and r.status = 'running' and r.mode = 'delete'
+  where c.run_id = p_run_id and c.kind = 'file' and c.outcome = 'eligible'
+  order by c.id
+  limit (select s.max_files_per_run from private.cleanup_settings s)
+$$;
+
+-- Claims one file for removal, re-checking everything under the file's lock,
+-- and records exactly which object was claimed (id, eTag, size). Only files
+-- this delete run listed as eligible can be claimed.
 create function private.cleanup_claim_file(p_run_id bigint, p_bucket_id text, p_object_path text)
 returns jsonb
 language plpgsql
@@ -965,6 +1116,9 @@ begin
   if not v_settings.deletion_enabled then
     raise exception 'Cleanup deletion is not authorized.' using errcode = '42501';
   end if;
+  if cardinality(private.cleanup_registry_problems()) > 0 then
+    raise exception 'The cleanup registry is incomplete.' using errcode = 'SWC02';
+  end if;
 
   select c.id into v_candidate
   from private.cleanup_candidates c
@@ -978,9 +1132,10 @@ begin
 
   select count(*) into v_claimed
   from private.cleanup_candidates c
-  where c.run_id = p_run_id and c.kind = 'file' and c.outcome in ('claimed', 'deleted', 'failed');
+  where c.run_id = p_run_id and c.kind = 'file'
+    and c.outcome in ('claimed', 'deleted', 'replaced', 'missing', 'failed');
 
-  select o.created_at, o.updated_at into v_obj
+  select o.id, o.created_at, o.updated_at, o.metadata into v_obj
   from storage.objects o where o.bucket_id = p_bucket_id and o.name = p_object_path;
   v_exists := found;
 
@@ -989,7 +1144,7 @@ begin
   elsif not v_exists then
     v_reason := 'missing';
   else
-    v_status := private.storage_file_status(p_bucket_id, p_object_path, v_obj.created_at, v_obj.updated_at, now());
+    v_status := private.storage_file_status(p_bucket_id, p_object_path, v_obj.created_at, v_obj.updated_at, v_obj.metadata, now());
     if v_status <> 'orphan' then
       v_reason := v_status;
     end if;
@@ -998,8 +1153,8 @@ begin
   if v_reason is null then
     select * into v_claim from private.storage_cleanup_claims k
     where k.bucket_id = p_bucket_id and k.object_path = p_object_path for update;
-    if found and v_claim.status = 'failed' then
-      v_reason := 'failed_before';
+    if found and v_claim.status in ('failed', 'deleted', 'replaced', 'missing') then
+      v_reason := 'claimed_before';
     end if;
   end if;
 
@@ -1008,20 +1163,78 @@ begin
     return jsonb_build_object('claimed', false, 'reason', v_reason);
   end if;
 
-  insert into private.storage_cleanup_claims as k (bucket_id, object_path, status, run_id, claimed_at, attempts)
-  values (p_bucket_id, p_object_path, 'claimed', p_run_id, now(), 1)
+  insert into private.storage_cleanup_claims as k (
+    bucket_id, object_path, status, run_id, claimed_at, attempts, object_id, object_etag, object_size
+  ) values (
+    p_bucket_id, p_object_path, 'claimed', p_run_id, now(), 1,
+    v_obj.id, v_obj.metadata ->> 'eTag', (v_obj.metadata ->> 'size')::bigint
+  )
   on conflict (bucket_id, object_path) do update
-    set status = 'claimed', run_id = excluded.run_id, claimed_at = now(), finished_at = null,
-        last_error = null, attempts = k.attempts + 1;
+    set status = 'claimed', run_id = excluded.run_id, claimed_at = now(), finished_at = null, last_error = null,
+        attempts = k.attempts + 1, object_id = excluded.object_id, object_etag = excluded.object_etag,
+        object_size = excluded.object_size;
 
   update private.cleanup_candidates set outcome = 'claimed', detail = null where id = v_candidate;
-  return jsonb_build_object('claimed', true);
+  return jsonb_build_object('claimed', true, 'object_id', v_obj.id);
 end;
 $$;
 
--- After the Storage API call: records whether the file is really gone.
+-- Immediately before the Storage call: the object at the path must still be
+-- exactly the one claimed (same id, eTag and size) and still an orphan. If
+-- anything changed, the claim is released and the file is not removed.
+create function private.cleanup_verify_claim(p_run_id bigint, p_bucket_id text, p_object_path text)
+returns jsonb
+language plpgsql
+volatile
+security definer
+set search_path = ''
+as $$
+declare
+  v_claim private.storage_cleanup_claims;
+  v_obj record;
+  v_reason text;
+begin
+  if not (select s.deletion_enabled from private.cleanup_settings s) then
+    raise exception 'Cleanup deletion is not authorized.' using errcode = '42501';
+  end if;
+  perform pg_advisory_xact_lock(private.storage_lock_key(p_bucket_id, p_object_path));
+  select * into v_claim from private.storage_cleanup_claims k
+  where k.bucket_id = p_bucket_id and k.object_path = p_object_path for update;
+  if not found or v_claim.status <> 'claimed' or v_claim.run_id is distinct from p_run_id then
+    raise exception 'This file was not claimed in this run.' using errcode = '55000';
+  end if;
+
+  select o.id, o.created_at, o.updated_at, o.metadata into v_obj
+  from storage.objects o where o.bucket_id = p_bucket_id and o.name = p_object_path;
+  if not found then
+    v_reason := 'missing';
+  elsif v_obj.id is distinct from v_claim.object_id
+     or v_obj.metadata ->> 'eTag' is distinct from v_claim.object_etag
+     or (v_obj.metadata ->> 'size')::bigint is distinct from v_claim.object_size then
+    v_reason := 'changed';
+  else
+    v_reason := nullif(private.storage_file_status(p_bucket_id, p_object_path, v_obj.created_at, v_obj.updated_at, v_obj.metadata, now()), 'orphan');
+  end if;
+
+  if v_reason is not null then
+    update private.storage_cleanup_claims
+    set status = 'released', finished_at = now(), last_error = 'Not removed: ' || v_reason
+    where bucket_id = p_bucket_id and object_path = p_object_path;
+    update private.cleanup_candidates set outcome = 'not_claimed', detail = v_reason
+    where run_id = p_run_id and kind = 'file' and bucket_id = p_bucket_id and object_path = p_object_path;
+    return jsonb_build_object('ok', false, 'reason', v_reason);
+  end if;
+  return jsonb_build_object('ok', true);
+end;
+$$;
+
+-- After the Storage API call. p_deleted_object is the object Storage reports
+-- it removed. If it is not the claimed object (a replacement uploaded in the
+-- moment between the check and the removal), the result is 'replaced' and
+-- flagged for review; the path stays blocked, so no record can point at it.
 create function private.cleanup_record_file_result(
-  p_run_id bigint, p_bucket_id text, p_object_path text, p_removed boolean, p_error text default null
+  p_run_id bigint, p_bucket_id text, p_object_path text, p_removed boolean,
+  p_error text default null, p_deleted_object jsonb default null
 )
 returns jsonb
 language plpgsql
@@ -1033,7 +1246,9 @@ declare
   v_claim private.storage_cleanup_claims;
   v_still_there boolean;
   v_status text;
+  v_outcome text;
   v_error text;
+  v_has_object boolean := jsonb_typeof(p_deleted_object) = 'object' and p_deleted_object ? 'id';
 begin
   perform pg_advisory_xact_lock(private.storage_lock_key(p_bucket_id, p_object_path));
   select * into v_claim from private.storage_cleanup_claims k
@@ -1045,38 +1260,48 @@ begin
   select exists (select 1 from storage.objects o where o.bucket_id = p_bucket_id and o.name = p_object_path)
     into v_still_there;
 
-  if p_removed and not v_still_there then
-    v_status := 'deleted';
-  elsif v_claim.attempts >= 3 then
-    v_status := 'failed';
+  if p_removed and v_has_object then
+    if (p_deleted_object ->> 'id')::uuid = v_claim.object_id
+       and p_deleted_object -> 'metadata' ->> 'eTag' is not distinct from v_claim.object_etag
+       and (p_deleted_object -> 'metadata' ->> 'size')::bigint is not distinct from v_claim.object_size then
+      v_status := 'deleted';
+      v_outcome := 'deleted';
+    else
+      v_status := 'replaced';
+      v_outcome := 'replaced';
+      v_error := 'Storage removed a different file than the one claimed (replaced at the same path). Review needed.';
+    end if;
+  elsif p_removed and not v_still_there then
+    v_status := 'missing';
+    v_outcome := 'missing';
+    v_error := 'Storage removed nothing; the file was already gone.';
   else
-    v_status := 'released';
+    v_status := case when v_claim.attempts >= 3 then 'failed' else 'released' end;
+    v_outcome := 'failed';
+    v_error := case when p_removed then 'Storage reported success but the file is still there.'
+                    else left(coalesce(p_error, 'Not removed.'), 500) end;
   end if;
-  v_error := case
-    when v_status = 'deleted' then null
-    when p_removed then 'Still in storage after removal.'
-    else left(coalesce(p_error, 'Not removed.'), 500)
-  end;
 
   update private.storage_cleanup_claims
   set status = v_status, finished_at = now(), last_error = v_error
   where bucket_id = p_bucket_id and object_path = p_object_path;
 
   update private.cleanup_candidates
-  set outcome = case when v_status = 'deleted' then 'deleted' else 'failed' end, detail = v_error
+  set outcome = v_outcome, detail = v_error
   where run_id = p_run_id and kind = 'file' and bucket_id = p_bucket_id and object_path = p_object_path;
 
-  if v_status = 'deleted' then
+  if v_status in ('deleted', 'replaced') then
     update private.cleanup_runs set files_deleted = files_deleted + 1 where id = p_run_id;
   end if;
   return jsonb_build_object('status', v_status);
 end;
 $$;
 
--- A claimed path cannot be attached to a record (insert or path change). The
--- claim and this check take the same per-path lock, so one always sees the
--- other: either the record exists first (the claim is refused) or the claim
--- exists first (attaching is refused).
+-- A claimed path cannot be attached to a record (insert or path change), and
+-- neither can a path the cleanup has removed. The claim and this check take
+-- the same per-path lock, so one always sees the other: either the record
+-- exists first (the claim is refused) or the claim exists first (attaching is
+-- refused).
 create function private.tg_storage_claim_guard()
 returns trigger
 language plpgsql
@@ -1085,6 +1310,7 @@ set search_path = ''
 as $$
 declare
   v_path text := to_jsonb(new) ->> tg_argv[1];
+  v_status text;
 begin
   if v_path is null then
     return new;
@@ -1093,11 +1319,12 @@ begin
     return new;
   end if;
   perform pg_advisory_xact_lock(private.storage_lock_key(tg_argv[0], v_path));
-  if exists (
-    select 1 from private.storage_cleanup_claims k
-    where k.bucket_id = tg_argv[0] and k.object_path = v_path and k.status = 'claimed'
-  ) then
+  select k.status into v_status from private.storage_cleanup_claims k
+  where k.bucket_id = tg_argv[0] and k.object_path = v_path;
+  if v_status = 'claimed' then
     raise exception 'This photo is being removed. Add it again.' using errcode = '55006';
+  elsif v_status in ('deleted', 'replaced', 'missing') then
+    raise exception 'This photo was removed. Add it again.' using errcode = '55006';
   end if;
   return new;
 end;
@@ -1133,10 +1360,11 @@ begin
     raise exception 'Mode must be report or delete.' using errcode = '22023';
   end if;
 
-  -- A run that never finished (job crashed or timed out) is closed after 2 hours.
+  -- A run that never finished (job crashed or timed out) is closed after 30
+  -- minutes (the job itself stops after 60 seconds).
   update private.cleanup_runs
-  set status = 'abandoned', finished_at = now(), error = 'Did not finish within 2 hours.'
-  where status = 'running' and started_at < now() - interval '2 hours';
+  set status = 'abandoned', finished_at = now(), error = 'Did not finish within 30 minutes.'
+  where status = 'running' and started_at < now() - interval '30 minutes';
 
   if p_mode = 'delete' and not (select s.deletion_enabled from private.cleanup_settings s) then
     raise exception 'Cleanup deletion is not authorized.' using errcode = '42501';
@@ -1161,10 +1389,15 @@ as $$
 declare
   v_run private.cleanup_runs;
 begin
-  -- Claims this run never reported on are released (attaching works again).
-  update private.storage_cleanup_claims
-  set status = 'released', finished_at = now(), last_error = 'The run finished without a result for this file.'
-  where run_id = p_run_id and status = 'claimed';
+  -- Claims this run never reported on (the job stopped mid-file): a file
+  -- still in Storage is released; a file that is gone may have been removed
+  -- by this run, so its path stays blocked ('missing').
+  update private.storage_cleanup_claims k
+  set status = case when exists (select 1 from storage.objects o where o.bucket_id = k.bucket_id and o.name = k.object_path)
+                    then 'released' else 'missing' end,
+      finished_at = now(),
+      last_error = 'The run finished without a result for this file.'
+  where k.run_id = p_run_id and k.status = 'claimed';
 
   update private.cleanup_runs
   set status = case when p_error is null then 'completed' else 'failed' end,
@@ -1237,6 +1470,14 @@ security definer
 set search_path = ''
 as $$ select private.cleanup_report_files(p_run_id) $$;
 
+create function public.cleanup_eligible_files(p_run_id bigint)
+returns table (bucket_id text, object_path text)
+language sql
+stable
+security definer
+set search_path = ''
+as $$ select * from private.cleanup_eligible_files(p_run_id) $$;
+
 create function public.cleanup_claim_file(p_run_id bigint, p_bucket_id text, p_object_path text)
 returns jsonb
 language sql
@@ -1245,15 +1486,24 @@ security definer
 set search_path = ''
 as $$ select private.cleanup_claim_file(p_run_id, p_bucket_id, p_object_path) $$;
 
+create function public.cleanup_verify_claim(p_run_id bigint, p_bucket_id text, p_object_path text)
+returns jsonb
+language sql
+volatile
+security definer
+set search_path = ''
+as $$ select private.cleanup_verify_claim(p_run_id, p_bucket_id, p_object_path) $$;
+
 create function public.cleanup_record_file_result(
-  p_run_id bigint, p_bucket_id text, p_object_path text, p_removed boolean, p_error text default null
+  p_run_id bigint, p_bucket_id text, p_object_path text, p_removed boolean,
+  p_error text default null, p_deleted_object jsonb default null
 )
 returns jsonb
 language sql
 volatile
 security definer
 set search_path = ''
-as $$ select private.cleanup_record_file_result(p_run_id, p_bucket_id, p_object_path, p_removed, p_error) $$;
+as $$ select private.cleanup_record_file_result(p_run_id, p_bucket_id, p_object_path, p_removed, p_error, p_deleted_object) $$;
 
 create function public.cleanup_finish_run(p_run_id bigint, p_error text default null)
 returns jsonb
@@ -1278,11 +1528,15 @@ revoke all on function
   private.storage_lock_key(text, text),
   private.storage_path_recognized(text, text),
   private.storage_path_referenced(text, text),
-  private.storage_file_status(text, text, timestamptz, timestamptz, timestamptz),
+  private.storage_reference_count(text),
+  private.cleanup_registry_problems(),
+  private.storage_file_status(text, text, timestamptz, timestamptz, jsonb, timestamptz),
   private.storage_file_candidates(timestamptz),
   private.cleanup_report_files(bigint),
+  private.cleanup_eligible_files(bigint),
   private.cleanup_claim_file(bigint, text, text),
-  private.cleanup_record_file_result(bigint, text, text, boolean, text),
+  private.cleanup_verify_claim(bigint, text, text),
+  private.cleanup_record_file_result(bigint, text, text, boolean, text, jsonb),
   private.tg_storage_claim_guard(),
   private.cleanup_begin_run(text, text),
   private.cleanup_finish_run(bigint, text),
@@ -1293,8 +1547,10 @@ revoke all on function
   public.cleanup_begin_run(text),
   public.cleanup_process_records(bigint),
   public.cleanup_report_files(bigint),
+  public.cleanup_eligible_files(bigint),
   public.cleanup_claim_file(bigint, text, text),
-  public.cleanup_record_file_result(bigint, text, text, boolean, text),
+  public.cleanup_verify_claim(bigint, text, text),
+  public.cleanup_record_file_result(bigint, text, text, boolean, text, jsonb),
   public.cleanup_finish_run(bigint, text)
 from public, anon, authenticated;
 
@@ -1302,7 +1558,29 @@ grant execute on function
   public.cleanup_begin_run(text),
   public.cleanup_process_records(bigint),
   public.cleanup_report_files(bigint),
+  public.cleanup_eligible_files(bigint),
   public.cleanup_claim_file(bigint, text, text),
-  public.cleanup_record_file_result(bigint, text, text, boolean, text),
+  public.cleanup_verify_claim(bigint, text, text),
+  public.cleanup_record_file_result(bigint, text, text, boolean, text, jsonb),
   public.cleanup_finish_run(bigint, text)
 to service_role;
+
+-- -----------------------------------------------------------------------------
+-- 14. What needs an administrator's attention: from the latest finished run,
+--     groups too large to delete, failures, unrecognised files, files with
+--     incomplete metadata and blocked files; and every file claim that failed
+--     or removed a replaced file. Read-only; for the SQL editor and the future
+--     administrator dashboard.
+-- -----------------------------------------------------------------------------
+create view private.cleanup_review with (security_invoker = true) as
+  select 'run'::text as source, c.run_id, c.kind, c.outcome, c.table_name, c.record_id, c.sled_id,
+         c.group_rows, c.bucket_id, c.object_path, c.detail, c.logged_at as at
+  from private.cleanup_candidates c
+  where c.run_id = (select max(r.id) from private.cleanup_runs r where r.status in ('completed', 'failed'))
+    and c.outcome in ('too_large', 'failed', 'replaced', 'unrecognized', 'metadata_missing', 'blocked')
+  union all
+  select 'claim', k.run_id, 'file', k.status, null, null, null, null, k.bucket_id, k.object_path, k.last_error, k.finished_at
+  from private.storage_cleanup_claims k
+  where k.status in ('failed', 'replaced');
+
+revoke all on private.cleanup_review from public, anon, authenticated;

@@ -7,7 +7,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set search_path = public, extensions;
 
-select plan(149);
+select plan(178);
 
 insert into auth.users (id, email, email_confirmed_at) values
   ('c1111111-1111-1111-1111-111111111111', 'cl-owner@example.com',  now()),
@@ -38,8 +38,9 @@ grant execute on function pg_temp.p3(text, text, text) to authenticated;
 -- Puts a file in Storage (as the database owner) with the given age.
 create function pg_temp.object(p_bucket text, p_path text, p_age interval, p_updated_age interval default null) returns void
 language sql volatile as $$
-  insert into storage.objects (bucket_id, name, created_at, updated_at)
-  values (p_bucket, p_path, now() - p_age, now() - coalesce(p_updated_age, p_age));
+  insert into storage.objects (bucket_id, name, created_at, updated_at, metadata)
+  values (p_bucket, p_path, now() - p_age, now() - coalesce(p_updated_age, p_age),
+          jsonb_build_object('eTag', '"' || md5(p_path) || '"', 'size', 1234, 'mimetype', 'image/jpeg'));
 $$;
 create function pg_temp.remove_object(p_bucket text, p_path text) returns void language plpgsql volatile as $$
 begin
@@ -263,8 +264,8 @@ select is((select count(*)::int from pg_proc p, unnest(array['anon', 'authentica
              and has_function_privilege(r.role, p.oid, 'execute')), 0,
   'visitors and signed-in users cannot run any cleanup function');
 select is((select count(*)::int from pg_proc p where p.pronamespace = 'public'::regnamespace and p.proname like 'cleanup\_%'
-           and has_function_privilege('service_role', p.oid, 'execute')), 6,
-  'the service role can run the six cleanup API functions');
+           and has_function_privilege('service_role', p.oid, 'execute')), 8,
+  'the service role can run the eight cleanup API functions');
 select is_empty($$
   select p.proname from pg_proc p where p.pronamespace in ('public'::regnamespace, 'private'::regnamespace)
     and (p.proname like '%cleanup%' or p.proname like 'storage\_%' or p.proname like 'expired\_record%')
@@ -333,7 +334,7 @@ update public.sled_issues set deleted_at = now() - interval '30 days' where id =
 select is((private.cleanup_report_files(private.cleanup_begin_run('report', 'manual')) ->> 'storage_unreadable')::boolean, true,
   'empty Storage while records point at files is flagged as unreadable');
 select is((select count(*)::int from private.cleanup_runs r, jsonb_each(r.summary -> 'files' -> 'buckets') b
-           where r.status = 'running' and (b.value ->> 'threshold_exceeded')::boolean), 3,
+           where r.status = 'running' and (b.value ->> 'blocked')::boolean), 3,
   'and every bucket is blocked');
 select private.cleanup_finish_run(id) from private.cleanup_runs where status = 'running';
 
@@ -365,8 +366,9 @@ set local role authenticated;
 select pg_temp.as_user('c3333333-3333-3333-3333-333333333333');
 -- (Uploaded 25 hours ago: the timestamps are set on insert, because Storage
 -- resets updated_at on every update.)
-select lives_ok($$ insert into storage.objects (bucket_id, name, created_at, updated_at)
-                    values ('suspension-photos', pg_temp.p3('sus_mech', 'sled', 'rev_keep'), now() - interval '25 hours', now() - interval '25 hours') $$,
+select lives_ok($$ insert into storage.objects (bucket_id, name, created_at, updated_at, metadata)
+                    values ('suspension-photos', pg_temp.p3('sus_mech', 'sled', 'rev_keep'), now() - interval '25 hours', now() - interval '25 hours',
+                            '{"eTag": "\"mech\"", "size": 2048}') $$,
   'a mechanic uploads an adjustment photo (its record is never saved)');
 select set_config('storage.allow_delete_query', 'true', true);
 delete from storage.objects where bucket_id = 'suspension-photos' and name = pg_temp.v('sus_mech');
@@ -448,10 +450,11 @@ select throws_ok($$ select private.cleanup_process_records(pg_temp.v('run_report
   'a finished run cannot be processed again');
 
 -- Files in the report.
-select is(pg_temp.file_outcome(pg_temp.v('run_report')::bigint, 'sus_mech'), 'blocked_threshold',
-  'the mechanic''s file is found as an orphan, but more than 10% of the bucket is blocked');
+select is(pg_temp.file_outcome(pg_temp.v('run_report')::bigint, 'sus_mech'), 'would_delete',
+  'the mechanic''s orphaned upload is found (a bucket under 100 files has no percentage threshold)');
 select is((select summary -> 'files' -> 'buckets' -> 'suspension-photos' from private.cleanup_runs where id = pg_temp.v('run_report')::bigint),
-  '{"objects": 10, "orphans": 2, "too_new": 2, "referenced": 4, "unrecognized": 2, "threshold_exceeded": true}'::jsonb,
+  '{"objects": 10, "orphans": 2, "too_new": 2, "referenced": 4, "unrecognized": 2, "metadata_missing": 0, "reference_rows": 4,
+    "threshold_applies": false, "blocked": false, "blocked_reason": null}'::jsonb,
   'suspension photos: 4 referenced (active and deleted records), 2 orphans, 2 too new, 2 unrecognised');
 select is(pg_temp.file_outcome(pg_temp.v('run_report')::bigint, 'sus_ref_deleted'), null,
   'a file of a record in Recently Deleted is referenced, never a candidate');
@@ -464,13 +467,15 @@ select is(pg_temp.file_outcome(pg_temp.v('run_report')::bigint, 'iss_exp_p1'), n
   'files of records awaiting purge are still referenced');
 select is((select string_agg(object_path, ',') from private.cleanup_candidates where run_id = pg_temp.v('run_report')::bigint
            and bucket_id = 'sled-photos'), pg_temp.v('sled_orphan'), 'an unused snowmobile photo is an orphan; the current one is not');
-select is(private.storage_file_status('suspension-photos', pg_temp.v('sus_24h'), now() - interval '24 hours', null, now()), 'orphan',
+select is(private.storage_file_status('suspension-photos', pg_temp.v('sus_24h'), now() - interval '24 hours', now() - interval '24 hours', '{"eTag": "x", "size": 1}'::jsonb, now()), 'orphan',
   'exactly 24 hours old counts as old enough');
-select is(private.storage_file_status('suspension-photos', pg_temp.v('sus_24h'), now() - interval '24 hours' + interval '1 second', null, now()), 'too_new',
+select is(private.storage_file_status('suspension-photos', pg_temp.v('sus_24h'), now() - interval '24 hours' + interval '1 second', now() - interval '2 days', '{"eTag": "x", "size": 1}'::jsonb, now()), 'too_new',
   'one second less does not');
-select is(private.storage_file_status('suspension-photos', pg_temp.v('sus_24h'), null, null, now()), 'too_new',
-  'a file without a storage timestamp is never old enough');
-select is(private.storage_file_status('suspension-photos', '../' || pg_temp.v('sus_24h'), now() - interval '9 days', null, now()), 'unrecognized',
+select is(private.storage_file_status('suspension-photos', pg_temp.v('sus_24h'), null, null, '{"eTag": "x", "size": 1}'::jsonb, now()), 'metadata_missing',
+  'a file without Storage timestamps is never removable');
+select is(private.storage_file_status('suspension-photos', pg_temp.v('sus_24h'), now() - interval '9 days', now() - interval '9 days', '{"size": 1}', now()), 'metadata_missing',
+  'neither is a file without an eTag (its identity could not be checked)');
+select is(private.storage_file_status('suspension-photos', '../' || pg_temp.v('sus_24h'), now() - interval '9 days', now() - interval '9 days', '{"eTag": "x", "size": 1}'::jsonb, now()), 'unrecognized',
   'a path outside the expected format is unrecognised');
 
 -- ---------------------------------------------------------------------------
@@ -590,6 +595,11 @@ select is((select string_agg(table_name || ':' || outcome, ',' order by sort_key
              where run_id = pg_temp.v('run_big')::bigint and group_parent is null) x),
   'sled_issues:too_large,sled_issues:too_large,sled_issue_photos:deleted',
   'groups over the whole limit are reported as too large; a 1-row group is still deleted');
+select is((select jsonb_array_length(summary -> 'records' -> 'too_large') || '|' || (summary -> 'records' ->> 'needs_review')
+           from private.cleanup_runs where id = pg_temp.v('run_big')::bigint), '2|true',
+  'each oversized group is listed (id and size) and the run is flagged for review');
+select is((select count(*)::int from private.cleanup_review where outcome = 'too_large' and group_rows = 3 and detail like 'Needs administrator review%'), 2,
+  'the review list shows them with their size and reason');
 
 -- Safety net: if a group turns out larger than its estimate, the deletion is
 -- undone and the run stops (simulated with a wrong estimate).
@@ -615,10 +625,9 @@ update private.cleanup_settings set max_records_per_run = 200;
 -- ---------------------------------------------------------------------------
 select throws_ok($$ select private.cleanup_claim_file(pg_temp.v('run_report')::bigint, 'suspension-photos', pg_temp.v('sus_mech')) $$,
   '55000', null, 'a report run cannot claim files');
-update private.cleanup_settings set bucket_threshold_percent = 100;
 insert into t select 'run_files', pg_temp.run('delete')::text;
 select is(pg_temp.file_outcome(pg_temp.v('run_files')::bigint, 'sus_mech'), 'eligible',
-  'with the threshold met, the mechanic''s orphaned upload becomes removable');
+  'in a delete run, the mechanic''s orphaned upload becomes removable');
 select is((select string_agg(object_path, ',' order by object_path) from private.cleanup_candidates
            where run_id = pg_temp.v('run_files')::bigint and outcome = 'eligible' and bucket_id = 'suspension-photos'),
   (select string_agg(p, ',' order by p) from unnest(array[pg_temp.v('sus_mech'), pg_temp.v('sus_24h'), pg_temp.v('set_b_p'), pg_temp.v('rev_old_p')]) p),
@@ -641,12 +650,19 @@ select is((private.cleanup_claim_file(pg_temp.v('run_files')::bigint, 'suspensio
 
 select is((private.cleanup_claim_file(pg_temp.v('run_files')::bigint, 'suspension-photos', pg_temp.v('sus_24h')) ->> 'claimed')::boolean, true,
   'another orphan is claimed');
+insert into t select 'sus_24h_obj', jsonb_build_object('id', id, 'name', name, 'metadata', metadata)::text from storage.objects where name = pg_temp.v('sus_24h');
+select is((private.cleanup_verify_claim(pg_temp.v('run_files')::bigint, 'suspension-photos', pg_temp.v('sus_24h')) ->> 'ok')::boolean, true,
+  'right before removal, the file is still exactly the claimed one');
 select pg_temp.remove_object('suspension-photos', pg_temp.v('sus_24h'));
-select is((private.cleanup_record_file_result(pg_temp.v('run_files')::bigint, 'suspension-photos', pg_temp.v('sus_24h'), true) ->> 'status'), 'deleted',
-  'once Storage has removed it, it is recorded as deleted');
+select is((private.cleanup_record_file_result(pg_temp.v('run_files')::bigint, 'suspension-photos', pg_temp.v('sus_24h'), true, null,
+                                              pg_temp.v('sus_24h_obj')::jsonb) ->> 'status'), 'deleted',
+  'Storage removed exactly the claimed object: recorded as deleted');
 select is((select files_deleted from private.cleanup_runs where id = pg_temp.v('run_files')::bigint), 1, 'and counted');
 select throws_ok($$ select private.cleanup_record_file_result(pg_temp.v('run_files')::bigint, 'suspension-photos', pg_temp.v('sus_24h'), true) $$,
   '55000', null, 'a result cannot be recorded twice');
+select throws_ok($$ insert into public.suspension_photos (sled_id, revision_id, path)
+                    values (pg_temp.v('sled')::uuid, pg_temp.v('rev_keep')::uuid, pg_temp.v('sus_24h')) $$,
+  '55006', 'This photo was removed. Add it again.', 'a removed path can never be attached to a record again');
 
 -- Attached between the report and the claim: the record wins.
 insert into public.sled_issue_photos (issue_id, sled_id, path) values (pg_temp.v('iss_act')::uuid, pg_temp.v('sled')::uuid, pg_temp.v('iss_orphan'));
@@ -671,6 +687,69 @@ select private.cleanup_finish_run(pg_temp.v('run_files')::bigint);
 select is((select status from private.storage_cleanup_claims where object_path = pg_temp.v('iss_exp_p2')), 'released',
   'finishing a run releases the claims it never reported on');
 
+-- Same-path replacement: the object is identified by its Storage id, eTag and size.
+select pg_temp.object('suspension-photos', pg_temp.p3('sus_v1', 'sled', 'rev_keep'), interval '3 days');
+select pg_temp.object('suspension-photos', pg_temp.p3('sus_v2', 'sled', 'rev_keep'), interval '3 days');
+insert into t select 'run_verify', pg_temp.run('delete')::text;
+select ok((select count(*) from public.cleanup_eligible_files(pg_temp.v('run_verify')::bigint) e
+           where e.object_path in (pg_temp.v('sus_v1'), pg_temp.v('sus_v2'), pg_temp.v('sus_mech'))) = 3,
+  'the job gets the run''s removable files from the database');
+select throws_ok($$ select private.cleanup_verify_claim(pg_temp.v('run_verify')::bigint, 'suspension-photos', pg_temp.v('sus_v1')) $$,
+  '55000', null, 'a file that was not claimed cannot be verified');
+select is((private.cleanup_claim_file(pg_temp.v('run_verify')::bigint, 'suspension-photos', pg_temp.v('sus_v1')) ->> 'claimed')::boolean, true,
+  'a file is claimed');
+select is((select object_etag || '|' || object_size from private.storage_cleanup_claims where object_path = pg_temp.v('sus_v1')),
+  '"' || md5(pg_temp.v('sus_v1')) || '"|1234', 'the claim records exactly which object it is');
+-- Replaced at the same path after the claim (new content, same row).
+update storage.objects set metadata = metadata || '{"eTag": "\"replacement\""}' where name = pg_temp.v('sus_v1');
+select is((private.cleanup_verify_claim(pg_temp.v('run_verify')::bigint, 'suspension-photos', pg_temp.v('sus_v1')) ->> 'reason'), 'changed',
+  'a file replaced after the claim fails the check right before removal');
+select is((select status from private.storage_cleanup_claims where object_path = pg_temp.v('sus_v1')), 'released',
+  'its claim is released, so it is not removed');
+-- Replaced by a new upload (new row) after the claim.
+select is((private.cleanup_claim_file(pg_temp.v('run_verify')::bigint, 'suspension-photos', pg_temp.v('sus_v2')) ->> 'claimed')::boolean, true,
+  'another file is claimed');
+insert into t select 'sus_v2_obj', jsonb_build_object('id', id, 'metadata', metadata)::text from storage.objects where name = pg_temp.v('sus_v2');
+select pg_temp.remove_object('suspension-photos', pg_temp.v('sus_v2'));
+select pg_temp.object('suspension-photos', pg_temp.v('sus_v2'), interval '3 days');
+select is((private.cleanup_verify_claim(pg_temp.v('run_verify')::bigint, 'suspension-photos', pg_temp.v('sus_v2')) ->> 'reason'), 'changed',
+  'a file deleted and uploaded again at the same path also fails the check');
+-- Replaced in the moment between the check and the removal: detected afterwards.
+select is((private.cleanup_claim_file(pg_temp.v('run_verify')::bigint, 'suspension-photos', pg_temp.v('sus_mech')) ->> 'claimed')::boolean, true,
+  'the mechanic''s orphaned upload is claimed');
+select is((private.cleanup_verify_claim(pg_temp.v('run_verify')::bigint, 'suspension-photos', pg_temp.v('sus_mech')) ->> 'ok')::boolean, true,
+  'and passes the check');
+select is((private.cleanup_record_file_result(pg_temp.v('run_verify')::bigint, 'suspension-photos', pg_temp.v('sus_mech'), true, null,
+             (select jsonb_build_object('id', gen_random_uuid(), 'metadata', '{"eTag": "\"other\"", "size": 9}'::jsonb))) ->> 'status'),
+  'replaced', 'if Storage reports removing a different object, it is recorded as replaced');
+select is((select outcome from private.cleanup_review where object_path = pg_temp.v('sus_mech') and source = 'claim'), 'replaced',
+  'and flagged for administrator review');
+set local role authenticated;
+select pg_temp.as_user('c3333333-3333-3333-3333-333333333333');
+select throws_ok($$ insert into public.suspension_photos (sled_id, revision_id, path)
+                    values (pg_temp.v('sled')::uuid, pg_temp.v('rev_keep')::uuid, pg_temp.v('sus_mech')) $$,
+  '55006', 'This photo was removed. Add it again.', 'no record can ever point at that path, so nothing referenced is lost');
+reset role;
+set local request.jwt.claims = '';
+select private.cleanup_finish_run(pg_temp.v('run_verify')::bigint);
+
+-- An incomplete registry stops deletion.
+delete from private.storage_reference_columns where bucket_id = 'issue-photos';
+select is(private.cleanup_registry_problems(),
+  array['Photo column not registered: sled_issue_photos.path', 'Registered bucket without reference column: issue-photos'],
+  'the registry self-check names what is missing');
+insert into t select 'run_reg', private.cleanup_begin_run('delete')::text;
+select throws_ok($$ select private.cleanup_process_records(pg_temp.v('run_reg')::bigint) $$, 'SWC02', null,
+  'a delete run stops when the registry is incomplete');
+select private.cleanup_finish_run(pg_temp.v('run_reg')::bigint);
+insert into t select 'run_reg2', private.cleanup_begin_run('report')::text;
+select lives_ok($$ select private.cleanup_process_records(pg_temp.v('run_reg2')::bigint) $$, 'a report run still runs');
+select is((select count(*)::int from jsonb_each(private.cleanup_report_files(pg_temp.v('run_reg2')::bigint) -> 'buckets') b
+           where (b.value ->> 'blocked')::boolean), 3, 'with every bucket blocked');
+select private.cleanup_finish_run(pg_temp.v('run_reg2')::bigint);
+insert into private.storage_reference_columns values ('issue-photos', 'sled_issue_photos', 'path');
+select is(private.cleanup_registry_problems(), '{}'::text[], 'the registry is complete again');
+
 -- A file that cannot be removed is tried three times, then left for review.
 do $$
 declare i int; v_run bigint;
@@ -686,7 +765,7 @@ $$;
 select is((select status || '|' || attempts || '|' || last_error from private.storage_cleanup_claims where object_path = pg_temp.v('iss_extra2')),
   'failed|3|Storage error 500', 'after three failed attempts the file is marked failed');
 insert into t select 'run_after', pg_temp.run('delete')::text;
-select is((private.cleanup_claim_file(pg_temp.v('run_after')::bigint, 'issue-photos', pg_temp.v('iss_extra2')) ->> 'reason'), 'failed_before',
+select is((private.cleanup_claim_file(pg_temp.v('run_after')::bigint, 'issue-photos', pg_temp.v('iss_extra2')) ->> 'reason'), 'claimed_before',
   'and it is not tried again automatically');
 select private.revoke_cleanup_deletion();
 select throws_ok($$ select private.cleanup_claim_file(pg_temp.v('run_after')::bigint, 'issue-photos', pg_temp.v('iss_extra1')) $$, '42501', null,
@@ -700,8 +779,60 @@ select private.cleanup_begin_run('report');
 select throws_ok($$ select private.cleanup_begin_run('report') $$, '55P03', 'Another cleanup run is in progress.', 'only one run at a time');
 update private.cleanup_runs set started_at = now() - interval '3 hours' where status = 'running';
 select lives_ok($$ select private.cleanup_finish_run(private.cleanup_begin_run('report')) $$,
-  'a run that never finished is abandoned after 2 hours');
+  'a run that never finished is abandoned after 30 minutes');
 select is((select count(*)::int from private.cleanup_runs where status = 'abandoned'), 1, 'and marked as abandoned');
+
+-- ---------------------------------------------------------------------------
+-- The 10% threshold applies only to buckets of 100 files or more
+-- ---------------------------------------------------------------------------
+create temporary table pool (n serial, path text) on commit drop;
+do $$
+declare i int; j int; v_issue uuid; v_path text;
+begin
+  for i in 1..20 loop
+    insert into public.sled_issues (sled_id, title) values (pg_temp.v('sled')::uuid, 'Pool ' || i) returning id into v_issue;
+    for j in 1..6 loop
+      v_path := pg_temp.v('sled') || '/' || v_issue || '/' || gen_random_uuid() || '.jpg';
+      insert into public.sled_issue_photos (issue_id, sled_id, path) values (v_issue, pg_temp.v('sled')::uuid, v_path);
+      insert into pool (path) values (v_path);
+    end loop;
+  end loop;
+end;
+$$;
+-- Fills issue-photos with p_ref referenced files and p_orphans orphans (and
+-- p_no_meta orphans without metadata), runs a report, and returns the result.
+create function pg_temp.issue_bucket(p_ref int, p_orphans int, p_no_meta int default 0) returns text language plpgsql volatile as $$
+declare v_run bigint; v_b jsonb; i int;
+begin
+  perform set_config('storage.allow_delete_query', 'true', true);
+  delete from storage.objects where bucket_id = 'issue-photos';
+  perform set_config('storage.allow_delete_query', 'false', true);
+  perform pg_temp.object('issue-photos', p.path, interval '3 days') from pool p where p.n <= p_ref;
+  for i in 1..p_orphans loop
+    perform pg_temp.object('issue-photos', pg_temp.v('sled') || '/' || pg_temp.v('iss_act') || '/' || gen_random_uuid() || '.jpg', interval '3 days');
+  end loop;
+  for i in 1..p_no_meta loop
+    insert into storage.objects (bucket_id, name, created_at, updated_at)
+    values ('issue-photos', pg_temp.v('sled') || '/' || pg_temp.v('iss_act') || '/' || gen_random_uuid() || '.jpg', now() - interval '3 days', now() - interval '3 days');
+  end loop;
+  v_run := private.cleanup_begin_run('report', 'manual');
+  v_b := private.cleanup_report_files(v_run) -> 'buckets' -> 'issue-photos';
+  perform private.cleanup_finish_run(v_run);
+  return case when (v_b ->> 'blocked')::boolean then 'blocked: ' || (v_b ->> 'blocked_reason') else 'open' end
+         || ' (' || (v_b ->> 'objects') || ' files, ' || (v_b ->> 'orphans') || ' orphans)';
+end;
+$$;
+select is(pg_temp.issue_bucket(49, 50), 'open (99 files, 50 orphans)', '99 files: no percentage threshold, even with half orphans');
+select is(pg_temp.issue_bucket(90, 10), 'open (100 files, 10 orphans)', '100 files: exactly 10% is allowed');
+select is(pg_temp.issue_bucket(89, 11), 'blocked: More than 10.00% of this bucket''s 100 files would be removed. (100 files, 11 orphans)',
+  '100 files: more than 10% blocks the bucket');
+select is(pg_temp.issue_bucket(110, 12), 'open (122 files, 12 orphans)', '122 files: 9.8% is allowed');
+select is(pg_temp.issue_bucket(0, 5),
+  format('blocked: No file matches any of the %s record(s) that point at this bucket; the reference lookup is not trusted. (5 files, 5 orphans)',
+         private.storage_reference_count('issue-photos')),
+  'files present, records pointing at the bucket, but no file matches: the bucket is blocked');
+select is(pg_temp.issue_bucket(10, 1, 1), 'blocked: 1 file(s) have incomplete Storage metadata. (12 files, 1 orphans)',
+  'a file with incomplete Storage metadata blocks its bucket');
 
 -- purge_expired_records() uses the same guarded engine.
 select throws_ok($$ select private.purge_expired_records() $$, '42501', 'Cleanup deletion is not authorized.',

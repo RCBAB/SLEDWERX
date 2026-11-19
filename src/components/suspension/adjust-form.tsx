@@ -1,6 +1,6 @@
 "use client";
 
-import { RefreshCw } from "lucide-react";
+import { ChevronDown, RefreshCw } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useActionState, useEffect, useRef, useState } from "react";
 
@@ -31,6 +31,11 @@ const CONFLICT = "This setup was changed by someone else. Reload it and try agai
  * forward. Mileage and engine hours are copied from the sled's current
  * readings and can be edited; they never create or change a reading.
  *
+ * Zones are collapsible: the zone picked on the map opens, the others start
+ * collapsed, and any number can be open at once. Collapsed zones stay in the
+ * form (hidden), so typed values are kept and saved, and their header shows
+ * how many unsaved changes they hold.
+ *
  * One idempotency key per opened form: a double submit, or a retry after a
  * lost response, can't save twice. The base revision is the one the form was
  * opened on, so a save after someone else's is refused with a reload message.
@@ -59,6 +64,16 @@ export function AdjustForm({
   const router = useRouter();
   const [key] = useState(randomUuid);
   const [edited, setEdited] = useState<Record<string, string>>({});
+  const zones = ZONE_GROUPS.flatMap((group) => group.zones).filter((zone) => settings.some((s) => s.zone === zone));
+  const startZone = focusZone && zones.includes(focusZone) ? focusZone : zones[0];
+  const [expanded, setExpanded] = useState<ReadonlySet<SuspensionZone>>(() => new Set(startZone ? [startZone] : []));
+  const toggle = (zone: SuspensionZone) =>
+    setExpanded((open) => {
+      const next = new Set(open);
+      if (next.has(zone)) next.delete(zone);
+      else next.add(zone);
+      return next;
+    });
   const zoneRef = useRef<HTMLFieldSetElement>(null);
   const [state, action] = useActionState<SuspensionActionState, FormData>(async (prev, formData) => {
     const result = await saveAdjustment(prev, formData);
@@ -67,6 +82,20 @@ export function AdjustForm({
   }, {});
   const errors = state.fieldErrors ?? {};
   const v = state.values;
+
+  /** Fields edited since the last save attempt: their server message is out of date (the live check still applies). */
+  const [touched, setTouched] = useState<ReadonlySet<string>>(new Set());
+
+  // Values the server refused: open their zones so the messages are visible.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reacting to a finished save, not to rendering
+    setTouched(new Set());
+    const refused = Object.keys(state.fieldErrors ?? {})
+      .filter((key) => key.startsWith("value."))
+      .map((key) => settings.find((s) => `value.${s.id}` === key)?.zone)
+      .filter((zone): zone is SuspensionZone => Boolean(zone));
+    if (refused.length) setExpanded((open) => new Set([...open, ...refused]));
+  }, [state, settings]);
 
   // Start at the zone that was selected on the map.
   useEffect(() => {
@@ -122,47 +151,91 @@ export function AdjustForm({
         <Alert tone="error">Check the highlighted values.</Alert>
       ) : null}
 
-      {ZONE_GROUPS.flatMap((group) => group.zones).map((zone) => {
-        const list = settingsInZone(settings, zone);
-        if (!list.length) return null;
-        return (
-          <fieldset
-            key={zone}
-            ref={zone === focusZone ? zoneRef : undefined}
-            className={cn(
-              "scroll-mt-4 rounded-xl border px-4 pb-4 pt-1",
-              zone === focusZone ? "border-accent/60 bg-accent/5" : "border-white/10",
-            )}
-            data-testid="adjust-zone"
-            data-zone={zone}
-          >
-            <legend className="px-1 text-sm font-semibold uppercase tracking-[0.15em] text-foreground/90">{ZONE_LABEL[zone]}</legend>
-            <div className="space-y-3">
-              {list.map((setting) => {
-                const name = `value.${setting.id}`;
-                const before = values[setting.id]?.value ?? "";
-                const now = edited[setting.id] ?? before;
-                const changed = now.trim() !== before;
-                const error = errors[name]?.[0] ?? (edited[setting.id] !== undefined ? invalid[setting.id] : undefined);
-                return (
-                  <ValueInput
-                    key={setting.id}
-                    name={name}
-                    label={setting.name}
-                    accessibleName={`${ZONE_LABEL[zone]}: ${setting.name}`}
-                    unit={setting.valueType === "number" ? setting.unit : null}
-                    numeric={setting.valueType === "number"}
-                    defaultValue={v?.[name] ?? before}
-                    changedFrom={changed ? before || "blank" : null}
-                    error={error}
-                    onChange={(value) => setEdited((map) => ({ ...map, [setting.id]: value }))}
-                  />
-                );
-              })}
-            </div>
-          </fieldset>
-        );
-      })}
+      <div className="space-y-3">
+        {zones.map((zone) => {
+          const list = settingsInZone(settings, zone);
+          const open = expanded.has(zone);
+          const zoneChanges = changes.filter((c) => c.zone === zone).length;
+          const zoneInvalid = list.some(
+            (s) => (invalid[s.id] && edited[s.id] !== undefined) || (errors[`value.${s.id}`] && !touched.has(s.id)),
+          );
+          const panelId = `adjust-zone-${zone}`;
+          return (
+            <fieldset
+              key={zone}
+              ref={zone === startZone ? zoneRef : undefined}
+              className={cn(
+                "scroll-mt-4 rounded-xl border",
+                zoneInvalid ? "border-accent/70" : zoneChanges ? "border-accent-hot/50" : "border-white/10",
+                open && "bg-white/[0.02]",
+              )}
+              data-testid="adjust-zone"
+              data-zone={zone}
+              data-expanded={open ? "true" : "false"}
+            >
+              <legend className="sr-only">{ZONE_LABEL[zone]}</legend>
+              <button
+                type="button"
+                aria-expanded={open}
+                aria-controls={panelId}
+                onClick={() => toggle(zone)}
+                className="flex min-h-14 w-full items-center gap-3 rounded-xl px-4 py-2 text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+              >
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-semibold uppercase tracking-[0.15em] text-foreground/90">{ZONE_LABEL[zone]}</span>
+                  <span className="block text-xs text-muted">
+                    {list.length} setting{list.length === 1 ? "" : "s"}
+                  </span>
+                </span>
+                {zoneInvalid ? (
+                  <span
+                    className="rounded-full bg-accent/20 px-2.5 py-0.5 text-xs font-bold text-accent-hot ring-1 ring-accent/60"
+                    data-testid="zone-status"
+                  >
+                    Needs fixing
+                  </span>
+                ) : zoneChanges ? (
+                  <span
+                    className="rounded-full bg-accent-hot/15 px-2.5 py-0.5 text-xs font-bold text-accent-hot ring-1 ring-accent-hot/50"
+                    data-testid="zone-status"
+                  >
+                    {zoneChanges} change{zoneChanges === 1 ? "" : "s"}
+                  </span>
+                ) : null}
+                <ChevronDown aria-hidden className={cn("size-5 shrink-0 text-muted transition-transform", open && "rotate-180")} />
+              </button>
+              <div id={panelId} hidden={!open} className="space-y-3 px-4 pb-4">
+                {list.map((setting) => {
+                  const name = `value.${setting.id}`;
+                  const before = values[setting.id]?.value ?? "";
+                  const now = edited[setting.id] ?? before;
+                  const changed = now.trim() !== before;
+                  const error =
+                    (touched.has(setting.id) ? undefined : errors[name]?.[0]) ??
+                    (edited[setting.id] !== undefined ? invalid[setting.id] : undefined);
+                  return (
+                    <ValueInput
+                      key={setting.id}
+                      name={name}
+                      label={setting.name}
+                      accessibleName={`${ZONE_LABEL[zone]}: ${setting.name}`}
+                      unit={setting.valueType === "number" ? setting.unit : null}
+                      numeric={setting.valueType === "number"}
+                      defaultValue={v?.[name] ?? before}
+                      changedFrom={changed ? before || "blank" : null}
+                      error={error}
+                      onChange={(value) => {
+                        setEdited((map) => ({ ...map, [setting.id]: value }));
+                        setTouched((ids) => (ids.has(setting.id) ? ids : new Set([...ids, setting.id])));
+                      }}
+                    />
+                  );
+                })}
+              </div>
+            </fieldset>
+          );
+        })}
+      </div>
 
       <TextareaField
         label="What did you change and why? (optional)"

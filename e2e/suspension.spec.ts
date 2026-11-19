@@ -222,6 +222,9 @@ const zoneValue = (page: Page, name: string) =>
     .filter({ has: page.getByTestId("zone-setting-name").getByText(name, { exact: true }) })
     .getByTestId("zone-setting-value");
 
+const adjustZone = (dialog: Locator, zone: string) => dialog.locator(`[data-testid="adjust-zone"][data-zone="${zone}"]`);
+const zoneToggle = (dialog: Locator, zone: string) => adjustZone(dialog, zone).locator("button[aria-expanded]");
+
 async function openAdjust(page: Page) {
   await zonePanel(page).getByRole("button", { name: "Record adjustment" }).click();
   const dialog = page.getByRole("dialog", { name: "Record adjustment" });
@@ -259,12 +262,33 @@ test("the map selects zones (mouse and keyboard) and adjustments save new revisi
   let dialog = await openAdjust(page);
   await expect(label(dialog, "Mileage", true)).toHaveValue("2000");
   await expect(label(dialog, "Engine hours", true)).toHaveValue("150");
+  // Only the zone picked on the map is open; the others start collapsed.
+  await expect(zoneToggle(dialog, "front_left_shock")).toHaveAttribute("aria-expanded", "true");
+  await expect(zoneToggle(dialog, "rear_springs_limiter")).toHaveAttribute("aria-expanded", "false");
+  await expect(label(dialog, "Springs & limiter strap: Spring", true)).toHaveCount(0);
   await label(dialog, "Left ski shock: Compression", true).fill("soft");
   await expect(dialog.getByText("Enter a number for Compression.")).toBeVisible();
+  // A collapsed zone still shows that it needs fixing.
+  await zoneToggle(dialog, "front_left_shock").click();
+  await expect(adjustZone(dialog, "front_left_shock").getByTestId("zone-status")).toHaveText("Needs fixing");
   await dialog.getByRole("button", { name: "Save adjustment" }).click();
+  // The server's message opens the zone again.
+  await expect(zoneToggle(dialog, "front_left_shock")).toHaveAttribute("aria-expanded", "true");
   await expect(dialog.getByText("Enter a number for Compression.")).toBeVisible();
   await label(dialog, "Left ski shock: Compression", true).fill("+12");
+  // Opening another zone keeps the first one open (keyboard works too).
+  await zoneToggle(dialog, "rear_springs_limiter").focus();
+  await page.keyboard.press("Enter");
+  await expect(zoneToggle(dialog, "rear_springs_limiter")).toHaveAttribute("aria-expanded", "true");
+  await expect(zoneToggle(dialog, "front_left_shock")).toHaveAttribute("aria-expanded", "true");
   await label(dialog, "Springs & limiter strap: Spring", true).fill("Stiff");
+  // Collapsing keeps the typed values and shows the unsaved changes on the header.
+  await zoneToggle(dialog, "front_left_shock").click();
+  await zoneToggle(dialog, "rear_springs_limiter").click();
+  await expect(adjustZone(dialog, "front_left_shock").getByTestId("zone-status")).toHaveText("1 change");
+  await expect(adjustZone(dialog, "rear_springs_limiter").getByTestId("zone-status")).toHaveText("1 change");
+  await zoneToggle(dialog, "rear_springs_limiter").click();
+  await expect(label(dialog, "Springs & limiter strap: Spring", true)).toHaveValue("Stiff");
   await expect(dialog.getByTestId("adjust-changes")).toContainText("2 changes");
   await label(dialog, "Mileage", true).fill("2100");
   await label(dialog, "What did you change and why? (optional)").fill("Baseline");
@@ -303,6 +327,7 @@ test("the map selects zones (mouse and keyboard) and adjustments save new revisi
 
   // A blank value clears the setting.
   dialog = await openAdjust(page);
+  await zoneToggle(dialog, "rear_springs_limiter").click();
   await label(dialog, "Springs & limiter strap: Spring", true).fill("");
   await dialog.getByRole("button", { name: "Save adjustment" }).click();
   await expect(dialog).toBeHidden({ timeout: 15_000 });

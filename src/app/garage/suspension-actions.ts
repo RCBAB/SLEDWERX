@@ -4,6 +4,8 @@ import { refresh } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { getSessionUser } from "@/lib/auth/session";
+import { suspensionCapabilities } from "@/lib/sleds/permissions";
+import { getSled } from "@/lib/sleds/queries";
 import { changedValues } from "@/lib/suspension/diff";
 import { suspensionErrorMessage, type SuspensionSubject } from "@/lib/suspension/errors";
 import { parseSnapshot } from "@/lib/suspension/queries";
@@ -33,6 +35,8 @@ export type SuspensionActionState = {
   ok?: boolean;
   /** The saved setup, setting, revision or feedback. */
   id?: string;
+  /** Saved, but with something to tell (e.g. a photo couldn't be added). */
+  warning?: string;
   savedAt?: number;
 };
 
@@ -409,6 +413,16 @@ export async function saveFeedback(_prev: SuspensionActionState, formData: FormD
   return done(data.id);
 }
 
+/**
+ * Bring removed feedback back (within 30 days), unchanged: author, ride date,
+ * rating, note and revision stay as they were. Owners and editors. The page
+ * only offers feedback whose revision is still in the history; feedback that
+ * went to Recently Deleted with its setup comes back with the setup.
+ */
+export async function restoreFeedback(feedbackId: string, version: number): Promise<SuspensionActionState> {
+  return setDeleted("suspension_feedback", feedbackId, version, false, "feedback");
+}
+
 /** Remove feedback (Recently Deleted). Owners and editors. */
 export async function deleteFeedback(feedbackId: string, version: number): Promise<SuspensionActionState> {
   return setDeleted("suspension_feedback", feedbackId, version, true, "feedback");
@@ -419,6 +433,44 @@ export async function deleteFeedback(feedbackId: string, version: number): Promi
 // this records it). Reference photos: owners and editors. Adjustment photos:
 // owners, editors and mechanics.
 // ---------------------------------------------------------------------------
+export type PhotoRoom = { error?: string; room: number; canRemoveFiles: boolean };
+
+/**
+ * Checked BEFORE any file is uploaded, so an upload that the database would
+ * refuse afterwards (parent removed, no permission, already 6 photos) never
+ * leaves a file behind. Returns how many more photos fit, and whether this
+ * user may remove files (owners and editors; storage policy), which decides
+ * whether a file can be cleaned up if saving its record still fails.
+ */
+export async function prepareSuspensionPhotos(sledId: string, parent: { kind: "setting" | "revision"; id: string }): Promise<PhotoRoom> {
+  const user = await signedInUser();
+  const none = (error: string): PhotoRoom => ({ error, room: 0, canRemoveFiles: false });
+  if (!uuidSchema.safeParse(sledId).success || !uuidSchema.safeParse(parent.id).success) return none("Photo not found.");
+  const sled = await getSled(sledId, user.id);
+  if (!sled) return none("Snowmobile not found.");
+  const can = suspensionCapabilities(sled.role);
+  if (parent.kind === "setting" ? !can.canAddReferencePhotos : !can.canAddAdjustmentPhotos) {
+    return none(parent.kind === "setting" ? "Only the owner or an editor can add reference photos." : "You can't add photos here.");
+  }
+  const supabase = await createClient();
+  const table = parent.kind === "setting" ? "suspension_settings" : "suspension_revisions";
+  const { data: found } = await supabase
+    .from(table)
+    .select("id")
+    .eq("id", parent.id)
+    .eq("sled_id", sledId)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (!found) return none("This was removed meanwhile. Reload the page and try again.");
+  const { count, error } = await supabase
+    .from("suspension_photos")
+    .select("id", { count: "exact", head: true })
+    .eq(parent.kind === "setting" ? "setting_id" : "revision_id", parent.id)
+    .is("deleted_at", null);
+  if (error) return none("Something went wrong. Please try again.");
+  return { room: Math.max(0, MAX_SUSPENSION_PHOTOS - (count ?? 0)), canRemoveFiles: can.canRemove };
+}
+
 export async function addSuspensionPhoto(
   sledId: string,
   parent: { kind: "setting" | "revision"; id: string },

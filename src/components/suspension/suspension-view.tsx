@@ -25,6 +25,7 @@ import {
 import { AdjustForm } from "./adjust-form";
 import { CompareRevisions } from "./compare";
 import { DeletedItems } from "./deleted-items";
+import { PhotoManager } from "./photos";
 import { FeedbackForm, RevisionHistory } from "./history";
 import { RestoreForm } from "./restore-form";
 import { SettingForm, SettingsEditor } from "./settings-editor";
@@ -43,6 +44,7 @@ type OpenSheet =
   | { kind: "adjust" }
   | { kind: "feedback"; revision: SuspensionRevision; feedback?: SuspensionFeedback }
   | { kind: "restore"; revision: SuspensionRevision }
+  | { kind: "photos"; parent: "setting" | "revision"; id: string }
   | null;
 
 /**
@@ -73,7 +75,7 @@ export function SuspensionView({
   // Open while the list is empty; afterwards it stays as the user left it.
   const [editorOpen, setEditorOpen] = useState(data.settings.length === 0);
   /** The revision just saved by an adjustment or a restore (shown as a notice). */
-  const [saved, setSaved] = useState<{ id: string; restoredFrom?: number } | null>(null);
+  const [saved, setSaved] = useState<{ id: string; restoredFrom?: number; warning?: string } | null>(null);
   /** The two revisions being compared (defaults: the selected setup's last two). */
   const [compare, setCompare] = useState<{ a: string; b: string } | null>(null);
   // Close sheets when the page is hidden (Next.js keeps it mounted).
@@ -101,8 +103,21 @@ export function SuspensionView({
   >;
   const adjusted = (result: SuspensionActionState, restoredFrom?: number) => {
     close();
-    if (result.ok && result.id) setSaved({ id: result.id, restoredFrom });
+    if (result.ok && result.id) setSaved({ id: result.id, restoredFrom, warning: result.warning });
   };
+  // The photos sheet reads the current data, so it updates after each upload or removal.
+  const photoTarget = (() => {
+    if (sheet?.kind !== "photos") return undefined;
+    if (sheet.parent === "setting") {
+      const setting = settings.find((s) => s.id === sheet.id);
+      return setting ? { label: setting.name, title: `${setting.name} · ${sled.name}`, photos: setting.photos } : undefined;
+    }
+    const revision = revisions.find((r) => r.id === sheet.id);
+    const setupName = setups.find((s) => s.id === revision?.setupId)?.name ?? "Setup";
+    return revision
+      ? { label: `rev ${revision.number}`, title: `${setupName} · Rev ${revision.number}`, photos: revision.photos }
+      : undefined;
+  })();
   const showCompare = (revision: SuspensionRevision) => {
     const newest = latestRevision(revisions, revision.setupId);
     const other = newest && newest.id !== revision.id ? newest : previousRevision(revisions, revision);
@@ -188,6 +203,11 @@ export function SuspensionView({
                 ? `Rev ${saved.restoredFrom} restored as revision ${savedRevision.number}.`
                 : `Adjustment saved as revision ${savedRevision.number}.`}
             </Alert>
+            {saved?.warning ? (
+              <div className="mt-2" data-testid="adjust-warning">
+                <Alert tone="error">{saved.warning}</Alert>
+              </div>
+            ) : null}
           </div>
         ) : null}
         <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,420px)_minmax(0,1fr)]">
@@ -212,6 +232,7 @@ export function SuspensionView({
                   show({ kind: "adjust" });
                 }}
                 onAddSetting={(z) => show({ kind: "add-setting", zone: z })}
+                onPhotos={(setting) => show({ kind: "photos", parent: "setting", id: setting.id })}
               />
             </Panel>
             <Panel>
@@ -234,6 +255,7 @@ export function SuspensionView({
             onAddFeedback={(revision) => show({ kind: "feedback", revision })}
             onEditFeedback={(revision, feedback) => show({ kind: "feedback", revision, feedback })}
             onCompare={showCompare}
+            onPhotos={(revision) => show({ kind: "photos", parent: "revision", id: revision.id })}
             onRestore={(revision) => {
               setSaved(null);
               show({ kind: "restore", revision });
@@ -316,6 +338,7 @@ export function SuspensionView({
             setupName={selected.name}
             baseRevisionId={latest.id}
             values={values}
+            sledId={sled.id}
             settings={settings}
             focusZone={zone}
             odometer={sled.odometer}
@@ -352,6 +375,25 @@ export function SuspensionView({
             odometer={sled.odometer}
             engineHours={sled.engineHours}
             onDone={(result) => adjusted(result, sheet.revision.number)}
+          />
+        ) : null}
+      </Sheet>
+
+      <Sheet
+        open={sheet?.kind === "photos" && Boolean(photoTarget)}
+        onClose={close}
+        title={sheet?.kind === "photos" && sheet.parent === "setting" ? "Reference photos" : "Adjustment photos"}
+        description={photoTarget?.title}
+      >
+        {sheet?.kind === "photos" && photoTarget ? (
+          <PhotoManager
+            key={session}
+            sledId={sled.id}
+            parent={{ kind: sheet.parent, id: sheet.id }}
+            label={photoTarget.label}
+            photos={photoTarget.photos}
+            canAdd={sheet.parent === "setting" ? can.canAddReferencePhotos : can.canAddAdjustmentPhotos}
+            canRemove={can.canRemove}
           />
         ) : null}
       </Sheet>

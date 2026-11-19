@@ -107,7 +107,7 @@ export type SuspensionSetup = {
 };
 
 export type DeletedSuspensionItem = {
-  kind: "setup" | "setting";
+  kind: "setup" | "setting" | "feedback";
   id: string;
   name: string;
   detail: string | null;
@@ -124,7 +124,7 @@ export type SuspensionData = {
   setups: SuspensionSetup[];
   /** Every revision on the sled (all setups), newest first. */
   revisions: SuspensionRevision[];
-  /** Recently Deleted setups and settings (owners and editors only), newest first. */
+  /** Recently Deleted setups, settings and feedback (owners and editors only), newest first. */
   deleted: DeletedSuspensionItem[];
 };
 

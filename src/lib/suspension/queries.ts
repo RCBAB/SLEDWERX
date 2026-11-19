@@ -1,10 +1,12 @@
 import "server-only";
 
 import { PHOTO_URL_TTL } from "@/lib/sleds/constants";
+import { formatDate } from "@/lib/sleds/format";
 import { createClient } from "@/lib/supabase/server";
 
 import { latestFeedback } from "./diff";
 import {
+  FEEDBACK_LABEL,
   RECOVERY_DAYS,
   daysLeftToRestore,
   SUSPENSION_PHOTO_BUCKET,
@@ -123,7 +125,7 @@ export async function getSuspensionData(sledId: string, userId: string, includeD
   const supabase = await createClient();
   const cutoff = new Date(Date.now() - RECOVERY_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
-  const [settingsBySled, setups, revisions, deletedSetups, deletedSettings] = await Promise.all([
+  const [settingsBySled, setups, revisions, deletedSetups, deletedSettings, deletedFeedback] = await Promise.all([
     loadSettings(supabase, [sledId]),
     supabase
       .from("suspension_setups")
@@ -155,8 +157,16 @@ export async function getSuspensionData(sledId: string, userId: string, includeD
           .not("deleted_at", "is", null)
           .gt("deleted_at", cutoff)
       : Promise.resolve({ data: [], error: null }),
+    includeDeleted
+      ? supabase
+          .from("suspension_feedback")
+          .select("id, revision_id, rating, ridden_on, note, created_by, deleted_at, version")
+          .eq("sled_id", sledId)
+          .not("deleted_at", "is", null)
+          .gt("deleted_at", cutoff)
+      : Promise.resolve({ data: [], error: null }),
   ]);
-  if (setups.error || revisions.error || deletedSetups.error || deletedSettings.error) {
+  if (setups.error || revisions.error || deletedSetups.error || deletedSettings.error || deletedFeedback.error) {
     throw new Error("Could not load suspension setups.");
   }
 
@@ -192,7 +202,15 @@ export async function getSuspensionData(sledId: string, userId: string, includeD
       supabase,
       photoRows.map((p) => p.path),
     ),
-    names(supabase, [...revisionRows.map((r) => r.created_by), ...feedbackRows.map((f) => f.created_by)], userId),
+    names(
+      supabase,
+      [
+        ...revisionRows.map((r) => r.created_by),
+        ...feedbackRows.map((f) => f.created_by),
+        ...(deletedFeedback.data ?? []).map((f) => f.created_by),
+      ],
+      userId,
+    ),
   ]);
 
   const photo = (p: (typeof photoRows)[number]): SuspensionPhoto => ({
@@ -270,6 +288,25 @@ export async function getSuspensionData(sledId: string, userId: string, includeD
       daysLeft: daysLeftToRestore(s.deleted_at!),
       version: s.version,
     })),
+    // Only feedback removed on its own: feedback that went with its setup comes back with the setup.
+    ...(deletedFeedback.data ?? []).flatMap((f) => {
+      const revision = revisionRows.find((r) => r.id === f.revision_id);
+      if (!revision) return [];
+      const setupName = setupList.find((x) => x.id === revision.setup_id)?.name ?? "Setup";
+      const rating = FEEDBACK_LABEL[f.rating as FeedbackRating] ?? f.rating;
+      const note = f.note ? ` · “${f.note.length > 60 ? `${f.note.slice(0, 57)}…` : f.note}”` : "";
+      return [
+        {
+          kind: "feedback" as const,
+          id: f.id,
+          name: `${rating} · ${setupName} rev ${revision.revision_number}`,
+          detail: `Ride feedback · ridden ${formatDate(f.ridden_on)} · ${nameOf(f.created_by)}${note}`,
+          deletedAt: f.deleted_at!,
+          daysLeft: daysLeftToRestore(f.deleted_at!),
+          version: f.version,
+        },
+      ];
+    }),
   ].sort((a, b) => b.deletedAt.localeCompare(a.deletedAt));
 
   return { sledId, settings, setups: setupList, revisions: revisionList, deleted };

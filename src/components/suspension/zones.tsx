@@ -89,6 +89,7 @@ export function ZonePanel({
   canManage,
   onAdjust,
   onAddSetting,
+  onPhotos,
 }: {
   zone: SuspensionZone;
   settings: SuspensionSetting[];
@@ -98,6 +99,8 @@ export function ZonePanel({
   canManage: boolean;
   onAdjust: () => void;
   onAddSetting: (zone: SuspensionZone) => void;
+  /** Reference photos of a setting. */
+  onPhotos: (setting: SuspensionSetting) => void;
 }) {
   const list = settingsInZone(settings, zone);
   const group = ZONE_GROUPS.find((g) => g.zones.includes(zone));
@@ -123,11 +126,19 @@ export function ZonePanel({
                     {setting.name}
                   </p>
                   {setting.notes ? <p className="mt-0.5 whitespace-pre-line break-words text-xs text-muted">{setting.notes}</p> : null}
-                  {setting.photos.length ? (
-                    <p className="mt-1 inline-flex items-center gap-1 text-xs text-muted">
-                      <Camera aria-hidden className="size-3.5" />
-                      {setting.photos.length} reference photo{setting.photos.length === 1 ? "" : "s"}
-                    </p>
+                  {setting.photos.length || canManage ? (
+                    <button
+                      type="button"
+                      onClick={() => onPhotos(setting)}
+                      aria-label={`Reference photos of ${setting.name}`}
+                      className="-ml-2 mt-1 inline-flex min-h-11 items-center gap-1.5 rounded-lg px-2 text-xs font-semibold text-muted hover:bg-white/5 hover:text-foreground"
+                      data-testid="reference-photos-button"
+                    >
+                      <Camera aria-hidden className="size-4" />
+                      {setting.photos.length
+                        ? `${setting.photos.length} reference photo${setting.photos.length === 1 ? "" : "s"}`
+                        : "Add reference photos"}
+                    </button>
                   ) : null}
                 </div>
                 <p

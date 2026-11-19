@@ -2,7 +2,7 @@
 
 import { RotateCcw } from "lucide-react";
 
-import { restoreSetting, restoreSetup } from "@/app/garage/suspension-actions";
+import { restoreFeedback, restoreSetting, restoreSetup } from "@/app/garage/suspension-actions";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import type { DeletedSuspensionItem } from "@/lib/suspension/types";
@@ -10,9 +10,10 @@ import type { DeletedSuspensionItem } from "@/lib/suspension/types";
 import { LocalDate, useRun } from "./shared";
 
 /**
- * Setups and settings deleted in the last 30 days, for owners and editors.
- * Restoring a setup brings back its whole history; a setting, its reference
- * photos. Nothing here is permanently removed by the app.
+ * Setups, settings and ride feedback deleted in the last 30 days, for owners
+ * and editors. Restoring a setup brings back its whole history; a setting,
+ * its reference photos; feedback, exactly as it was (author, ride date,
+ * rating, note, revision). Nothing here is permanently removed by the app.
  */
 export function DeletedItems({ items }: { items: DeletedSuspensionItem[] }) {
   const { busy, error, run } = useRun();
@@ -46,7 +47,13 @@ export function DeletedItems({ items }: { items: DeletedSuspensionItem[] }) {
                 disabled={busy}
                 aria-label={`Restore ${item.name}`}
                 onClick={() =>
-                  void run(() => (item.kind === "setup" ? restoreSetup(item.id, item.version) : restoreSetting(item.id, item.version)))
+                  void run(() =>
+                    item.kind === "setup"
+                      ? restoreSetup(item.id, item.version)
+                      : item.kind === "setting"
+                        ? restoreSetting(item.id, item.version)
+                        : restoreFeedback(item.id, item.version),
+                  )
                 }
               >
                 <RotateCcw aria-hidden className="size-4" />

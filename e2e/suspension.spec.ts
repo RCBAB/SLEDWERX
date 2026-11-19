@@ -1,6 +1,7 @@
+import { createClient } from "@supabase/supabase-js";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
-import { NEEDS_SUPABASE, addSled, hasSupabase, shareSled, signUp, uniqueEmail } from "./helpers";
+import { NEEDS_SUPABASE, PASSWORD, addSled, hasSupabase, shareSled, signUp, uniqueEmail } from "./helpers";
 
 // Phase 6.2: suspension setup & tuning. Needs the local Supabase stack with Migration 7.
 test.skip(!hasSupabase, NEEDS_SUPABASE);
@@ -541,4 +542,206 @@ test("feedback and restore by role: mechanics add and edit their own; viewers on
   await expect(suspensionPage(viewer).getByTestId("compare").getByTestId("compare-summary")).toHaveText("Same values in both.");
 
   await Promise.all(contexts.map((c) => c.close()));
+});
+
+// ---------------------------------------------------------------------------
+// Checkpoint 5: photos, and Recently Deleted feedback
+// ---------------------------------------------------------------------------
+// A small valid PNG (8x6, solid color).
+const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAgAAAAGCAIAAABxZ0isAAAAEUlEQVR4nGOQq7iDFTEMpAQAMUJFYTtzHLAAAAAASUVORK5CYII=", "base64");
+const pngs = (count: number, prefix = "photo") =>
+  Array.from({ length: count }, (_, n) => ({ name: `${prefix}-${n}.png`, mimeType: "image/png", buffer: PNG }));
+
+async function openReferencePhotos(page: Page, setting: string) {
+  await zonePanel(page)
+    .getByRole("button", { name: `Reference photos of ${setting}` })
+    .click();
+  const dialog = page.getByRole("dialog", { name: "Reference photos" });
+  await expect(dialog.getByTestId("photo-manager")).toBeVisible();
+  return dialog;
+}
+
+async function openRevisionPhotos(page: Page, n: number) {
+  await revisionCard(page, n)
+    .getByRole("button", { name: `Photos of rev ${n}` })
+    .click();
+  const dialog = page.getByRole("dialog", { name: "Adjustment photos" });
+  await expect(dialog.getByTestId("photo-manager")).toBeVisible();
+  return dialog;
+}
+
+async function uploadIn(dialog: Locator, files: { name: string; mimeType: string; buffer: Buffer }[], expectSelected = files.length) {
+  await dialog.locator('input[type="file"]').setInputFiles(files);
+  await expect(dialog.getByTestId("new-photos").getByRole("listitem")).toHaveCount(expectSelected);
+  await dialog.getByRole("button", { name: /^Upload \d+ photos?$/ }).click();
+}
+
+/** A signed-in API client (for checking what is in the bucket). */
+async function apiAs(email: string) {
+  const client = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  await client.auth.signInWithPassword({ email, password: PASSWORD });
+  return client;
+}
+
+test("reference and adjustment photos: limits, validation, removal and history", async ({ page }) => {
+  await signUp(page, uniqueEmail("sus-photo"));
+  const sledId = await addSled(page, { make: "Polaris", model: "RMK", year: "2022", odometer: "2000", nickname: "Blue" });
+  await openSuspension(page, sledId);
+  await addSetting(page, { name: "Compression", zone: "Left ski shock", chip: "Clicks" });
+  await createSetup(page, "Trail", { activate: true });
+
+  // Reference photos: up to 6 per setting.
+  let dialog = await openReferencePhotos(page, "Compression");
+  await expect(dialog.getByTestId("no-photos")).toBeVisible();
+  await uploadIn(dialog, pngs(2));
+  await expect(dialog.getByText("2 photos added.")).toBeVisible();
+  await expect(dialog.getByTestId("photo-grid").getByTestId("photo")).toHaveCount(2);
+  // Picking more than fit keeps only what fits (4 more).
+  await uploadIn(dialog, pngs(5, "more"), 4);
+  await expect(dialog.getByTestId("photo-grid").getByTestId("photo")).toHaveCount(6);
+  await expect(dialog.getByText("This already has 6 photos.")).toBeVisible();
+  // Photos open in full and can be removed by the owner.
+  await expect(dialog.getByRole("link", { name: "Open photo 1 of Compression" })).toHaveAttribute("href", /suspension-photos/);
+  page.once("dialog", (d) => d.accept());
+  await dialog.getByRole("button", { name: "Remove photo 6 of Compression" }).click();
+  await expect(dialog.getByTestId("photo-grid").getByTestId("photo")).toHaveCount(5);
+  // A file that isn't an image is refused before anything is uploaded.
+  await uploadIn(dialog, [{ name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("not a photo") }]);
+  await expect(dialog.getByText("Choose an image file, such as a JPEG or PNG.")).toBeVisible();
+  await expect(dialog.getByTestId("photo-grid").getByTestId("photo")).toHaveCount(5);
+  await dialog.getByRole("button", { name: "Close" }).click();
+  await expect(zonePanel(page).getByRole("button", { name: "Reference photos of Compression" })).toHaveText("5 reference photos");
+
+  // Adjustment photos are added while recording an adjustment.
+  dialog = await openAdjust(page);
+  await label(dialog, "Left ski shock: Compression", true).fill("12");
+  await dialog.locator('input[type="file"]').setInputFiles(pngs(2, "adj"));
+  await expect(dialog.getByTestId("new-photos").getByRole("listitem")).toHaveCount(2);
+  await dialog.getByRole("button", { name: "Save adjustment" }).click();
+  await expect(dialog).toBeHidden({ timeout: 20_000 });
+  await expect(visible(page.getByTestId("adjust-notice"))).toContainText("Adjustment saved as revision 2.");
+  await expect(revisionCard(page, 2).getByTestId("revision-photos").getByTestId("photo")).toHaveCount(2);
+  await expect(revisionCard(page, 1).getByTestId("revision-photos")).toHaveCount(0);
+
+  // ... and later from the history; they stay with their revision.
+  dialog = await openRevisionPhotos(page, 1);
+  await uploadIn(dialog, pngs(1, "late"));
+  await expect(dialog.getByText("1 photo added.")).toBeVisible();
+  await dialog.getByRole("button", { name: "Close" }).click();
+  await expect(revisionCard(page, 1).getByTestId("revision-photos").getByTestId("photo")).toHaveCount(1);
+  await expect(revisionCard(page, 2).getByTestId("revision-photos").getByTestId("photo")).toHaveCount(2);
+});
+
+test("photos by role: mechanics add adjustment photos only; viewers only look", async ({ page, browser }) => {
+  const ownerEmail = uniqueEmail("sus-ph-o");
+  const mechanicEmail = uniqueEmail("sus-ph-m");
+  const viewerEmail = uniqueEmail("sus-ph-v");
+  await signUp(page, ownerEmail);
+  const sledId = await addSled(page, { make: "Lynx", model: "Rave", year: "2021", odometer: "800", nickname: "Rave" });
+  await openSuspension(page, sledId);
+  await addSetting(page, { name: "Compression", zone: "Left ski shock", chip: "Clicks" });
+  await createSetup(page, "Trail", { activate: true });
+  const owner = await openReferencePhotos(page, "Compression");
+  await uploadIn(owner, pngs(1));
+  await expect(owner.getByText("1 photo added.")).toBeVisible();
+
+  const contexts = await Promise.all([1, 2].map(() => browser.newContext()));
+  const [mechanic, viewer] = await Promise.all(contexts.map((c) => c.newPage()));
+  await signUp(mechanic, mechanicEmail);
+  await signUp(viewer, viewerEmail);
+  await shareSled(ownerEmail, sledId, mechanicEmail, "mechanic");
+  await shareSled(ownerEmail, sledId, viewerEmail, "viewer");
+
+  // Mechanic: sees reference photos but can't add or remove them; adds adjustment photos, can't remove them.
+  await openSuspension(mechanic, sledId);
+  let dialog = await openReferencePhotos(mechanic, "Compression");
+  await expect(dialog.getByTestId("photo-grid").getByTestId("photo")).toHaveCount(1);
+  await expect(dialog.getByRole("button", { name: /Add photos|Remove photo/ })).toHaveCount(0);
+  await dialog.getByRole("button", { name: "Close" }).click();
+  dialog = await openRevisionPhotos(mechanic, 1);
+  await uploadIn(dialog, pngs(1, "mech"));
+  await expect(dialog.getByText("1 photo added.")).toBeVisible();
+  await expect(dialog.getByRole("button", { name: /Remove photo/ })).toHaveCount(0);
+  await dialog.getByRole("button", { name: "Close" }).click();
+
+  // The storage policy refuses a mechanic's reference photo even outside the app.
+  const api = await apiAs(mechanicEmail);
+  const { data: setting } = await api.from("suspension_settings").select("id").eq("sled_id", sledId).single();
+  const { error: refused } = await api.storage
+    .from("suspension-photos")
+    .upload(`${sledId}/${setting!.id}/00000000-0000-4000-8000-000000000001.jpg`, PNG, {
+      contentType: "image/jpeg",
+    });
+  expect(refused).not.toBeNull();
+
+  // Viewer: sees both kinds of photos, adds and removes nothing.
+  await openSuspension(viewer, sledId);
+  await expect(revisionCard(viewer, 1).getByTestId("revision-photos").getByTestId("photo")).toHaveCount(1);
+  await expect(suspensionPage(viewer).getByRole("button", { name: /Remove photo/ })).toHaveCount(0);
+  dialog = await openReferencePhotos(viewer, "Compression");
+  await expect(dialog.getByTestId("photo-grid").getByTestId("photo")).toHaveCount(1);
+  await expect(dialog.getByRole("button", { name: /Add photos|Remove photo/ })).toHaveCount(0);
+
+  await Promise.all(contexts.map((c) => c.close()));
+});
+
+test("a photo for something removed meanwhile is refused before any file is uploaded", async ({ page, context }) => {
+  const email = uniqueEmail("sus-orphan");
+  await signUp(page, email);
+  const sledId = await addSled(page, { make: "Yamaha", model: "Sidewinder", year: "2022", odometer: "100", nickname: "Side" });
+  await openSuspension(page, sledId);
+  await addSetting(page, { name: "Preload", zone: "Left ski shock", chip: "Turns" });
+  const dialog = await openReferencePhotos(page, "Preload");
+  await dialog.locator('input[type="file"]').setInputFiles(pngs(1));
+
+  // Meanwhile the setting is removed in another tab.
+  const other = await context.newPage();
+  await openSuspension(other, sledId);
+  other.once("dialog", (d) => d.accept());
+  await suspensionPage(other).getByRole("button", { name: "Remove Preload" }).click();
+  await expect(zoneSettings(other, "front_left_shock")).toHaveCount(0);
+  await other.close();
+
+  await dialog.getByRole("button", { name: "Upload 1 photo" }).click();
+  await expect(dialog.getByText("This was removed meanwhile. Reload the page and try again.")).toBeVisible();
+  // Nothing reached the bucket.
+  const api = await apiAs(email);
+  const { data: setting } = await api.from("suspension_settings").select("id").eq("sled_id", sledId).single();
+  const { data: files } = await api.storage.from("suspension-photos").list(`${sledId}/${setting!.id}`);
+  expect(files ?? []).toHaveLength(0);
+});
+
+test("removed ride feedback is restored from Recently Deleted exactly as it was", async ({ page }) => {
+  await signUp(page, uniqueEmail("sus-fbdel"));
+  const sledId = await addSled(page, { make: "Ski-Doo", model: "Summit", year: "2023", odometer: "500", nickname: "Summit" });
+  await openSuspension(page, sledId);
+  await addSetting(page, { name: "Compression", zone: "Left ski shock", chip: "Clicks" });
+  await createSetup(page, "Trail", { activate: true });
+  await adjustValues(page, { "Left ski shock: Compression": "12" });
+  await addFeedback(page, 2, "Worse", "Harsh in the whoops");
+  const before = await revisionCard(page, 2).getByTestId("feedback").innerText();
+
+  page.once("dialog", (d) => d.accept());
+  await revisionCard(page, 2)
+    .getByRole("button", { name: /^Remove feedback/ })
+    .click();
+  await expect(revisionCard(page, 2).getByTestId("feedback")).toHaveCount(0);
+  const item = deletedItems(page).filter({ hasText: "Worse · Trail rev 2" });
+  await expect(item).toHaveAttribute("data-kind", "feedback");
+  await expect(item).toContainText("Ride feedback · ridden");
+  await expect(item).toContainText("“Harsh in the whoops”");
+  await item.getByRole("button", { name: "Restore Worse · Trail rev 2" }).click();
+  await expect(deletedItems(page)).toHaveCount(0);
+  await expect(revisionCard(page, 2).getByTestId("feedback")).toHaveCount(1);
+  await expect(revisionCard(page, 2).getByTestId("feedback")).toHaveText(before);
+
+  // Feedback that goes with its setup comes back with the setup (not listed on its own).
+  await createSetup(page, "Powder", { activate: true });
+  await setupTab(page, "Trail").click();
+  page.once("dialog", (d) => d.accept());
+  await selectedSetup(page).getByRole("button", { name: "Delete" }).click();
+  await expect(deletedItems(page)).toHaveCount(1);
+  await expect(deletedItems(page)).toHaveAttribute("data-kind", "setup");
 });

@@ -20,8 +20,11 @@ import {
   type SuspensionSetting,
   type SuspensionZone,
 } from "@/lib/suspension/types";
+import { addSuspensionPhotos } from "@/lib/suspension/photo-upload";
 import { checkSettingValue } from "@/lib/suspension/validation";
 import { randomUuid } from "@/lib/uuid";
+
+import { PhotoPicker, photoOutcome } from "./photos";
 
 const CONFLICT = "This setup was changed by someone else. Reload it and try again.";
 
@@ -41,6 +44,7 @@ const CONFLICT = "This setup was changed by someone else. Reload it and try agai
  * opened on, so a save after someone else's is refused with a reload message.
  */
 export function AdjustForm({
+  sledId,
   setupId,
   setupName,
   baseRevisionId,
@@ -51,6 +55,7 @@ export function AdjustForm({
   engineHours,
   onDone,
 }: {
+  sledId: string;
   setupId: string;
   setupName: string;
   baseRevisionId: string;
@@ -64,6 +69,7 @@ export function AdjustForm({
   const router = useRouter();
   const [key] = useState(randomUuid);
   const [edited, setEdited] = useState<Record<string, string>>({});
+  const [files, setFiles] = useState<File[]>([]);
   const zones = ZONE_GROUPS.flatMap((group) => group.zones).filter((zone) => settings.some((s) => s.zone === zone));
   const startZone = focusZone && zones.includes(focusZone) ? focusZone : zones[0];
   const [expanded, setExpanded] = useState<ReadonlySet<SuspensionZone>>(() => new Set(startZone ? [startZone] : []));
@@ -77,7 +83,19 @@ export function AdjustForm({
   const zoneRef = useRef<HTMLFieldSetElement>(null);
   const [state, action] = useActionState<SuspensionActionState, FormData>(async (prev, formData) => {
     const result = await saveAdjustment(prev, formData);
-    if (result.ok) onDone(result);
+    if (!result.ok || !result.id) return result;
+    // The revision is saved; now its photos (a photo problem never undoes the adjustment).
+    let warning: string | undefined;
+    if (files.length) {
+      try {
+        const photos = await addSuspensionPhotos(sledId, { kind: "revision", id: result.id }, files);
+        const problem = photoOutcome(photos.added, photos.error, photos.leftover);
+        if (problem) warning = `${problem} You can add photos from the history.`;
+      } catch {
+        warning = "The photos couldn't be added. You can add them from the history.";
+      }
+    }
+    onDone({ ...result, warning });
     return result;
   }, {});
   const errors = state.fieldErrors ?? {};
@@ -244,6 +262,10 @@ export function AdjustForm({
         defaultValue={v?.note ?? ""}
         error={errors.note?.[0]}
       />
+      <div className="space-y-2">
+        <p className="text-sm font-medium text-foreground/90">Photos (optional)</p>
+        <PhotoPicker files={files} onChange={setFiles} room={6} existing={0} />
+      </div>
       <div className="grid grid-cols-2 gap-3">
         <Field
           label="Mileage"

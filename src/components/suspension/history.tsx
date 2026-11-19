@@ -1,6 +1,17 @@
 "use client";
 
-import { GitCompareArrows, History, MessageSquarePlus, Minus, Pencil, RotateCcw, Trash2, TrendingDown, TrendingUp } from "lucide-react";
+import {
+  Camera,
+  GitCompareArrows,
+  History,
+  MessageSquarePlus,
+  Minus,
+  Pencil,
+  RotateCcw,
+  Trash2,
+  TrendingDown,
+  TrendingUp,
+} from "lucide-react";
 import { useActionState, useState } from "react";
 
 import { deleteFeedback, saveFeedback, type SuspensionActionState } from "@/app/garage/suspension-actions";
@@ -26,6 +37,7 @@ import {
   type SuspensionSetting,
 } from "@/lib/suspension/types";
 
+import { PhotoGrid } from "./photos";
 import { LocalDate, RatingBadge, useRun } from "./shared";
 
 /** How many revisions show before "Show more". */
@@ -49,6 +61,7 @@ export function RevisionHistory({
   onEditFeedback,
   onCompare,
   onRestore,
+  onPhotos,
 }: {
   /** This setup's revisions, newest first. */
   revisions: SuspensionRevision[];
@@ -61,6 +74,7 @@ export function RevisionHistory({
   onEditFeedback: (revision: SuspensionRevision, feedback: SuspensionFeedback) => void;
   onCompare: (revision: SuspensionRevision) => void;
   onRestore: (revision: SuspensionRevision) => void;
+  onPhotos: (revision: SuspensionRevision) => void;
 }) {
   const [shown, setShown] = useState(PAGE);
   const latestId = revisions[0]?.id;
@@ -81,6 +95,7 @@ export function RevisionHistory({
             onEditFeedback={(feedback) => onEditFeedback(revision, feedback)}
             onCompare={() => onCompare(revision)}
             onRestore={() => onRestore(revision)}
+            onPhotos={() => onPhotos(revision)}
           />
         ))}
       </ol>
@@ -104,6 +119,7 @@ function RevisionCard({
   onEditFeedback,
   onCompare,
   onRestore,
+  onPhotos,
 }: {
   revision: SuspensionRevision;
   previous: SuspensionRevision | undefined;
@@ -115,6 +131,7 @@ function RevisionCard({
   onEditFeedback: (feedback: SuspensionFeedback) => void;
   onCompare: () => void;
   onRestore: () => void;
+  onPhotos: () => void;
 }) {
   const can = suspensionCapabilities(role);
   const changes = revisionChanges(previous?.values ?? null, revision.values, settings);
@@ -199,6 +216,12 @@ function RevisionCard({
         </p>
       ) : null}
 
+      {revision.photos.length ? (
+        <div className="mt-3" data-testid="revision-photos">
+          <PhotoGrid photos={revision.photos} label={`rev ${revision.number}`} canRemove={false} size="sm" />
+        </div>
+      ) : null}
+
       {revision.feedback.length ? (
         <div className="mt-4 space-y-2">
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">Ride feedback</p>
@@ -207,52 +230,49 @@ function RevisionCard({
             {revision.feedback.map((feedback) => {
               const canEdit = canEditSuspensionFeedback(role, feedback.createdBy, userId);
               return (
-                <li
-                  key={feedback.id}
-                  className="flex flex-wrap items-start gap-x-3 gap-y-2 rounded-xl border border-white/10 bg-background/40 px-3 py-2"
-                  data-testid="feedback"
-                >
-                  <RatingBadge rating={feedback.rating} className="mt-0.5" />
-                  <div className="min-w-0 flex-1 text-sm">
-                    <p className="text-muted">
-                      Ridden {formatDate(feedback.riddenOn)} · {feedback.createdByName}
+                <li key={feedback.id} className="rounded-xl border border-white/10 bg-background/40 px-3 py-2" data-testid="feedback">
+                  <div className="flex items-center gap-x-3">
+                    <RatingBadge rating={feedback.rating} />
+                    <p className="min-w-0 flex-1 text-sm text-muted">
+                      <span className="whitespace-nowrap">Ridden {formatDate(feedback.riddenOn)}</span>{" "}
+                      <span className="whitespace-nowrap">· {feedback.createdByName}</span>
                     </p>
-                    {feedback.note ? (
-                      <p className="whitespace-pre-line break-words text-foreground/90" data-testid="feedback-note">
-                        {feedback.note}
-                      </p>
+                    {canEdit || can.canRemove ? (
+                      <div className="-my-1 flex shrink-0 gap-1">
+                        {canEdit ? (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            className="size-11 p-0"
+                            disabled={busy}
+                            aria-label={`Edit feedback from ${formatDate(feedback.riddenOn)}`}
+                            onClick={() => onEditFeedback(feedback)}
+                          >
+                            <Pencil aria-hidden className="size-4" />
+                          </Button>
+                        ) : null}
+                        {can.canRemove ? (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            className="size-11 p-0"
+                            disabled={busy}
+                            aria-label={`Remove feedback from ${formatDate(feedback.riddenOn)}`}
+                            onClick={() => {
+                              if (window.confirm("Remove this feedback? It can be restored from Recently Deleted for 30 days."))
+                                void run(() => deleteFeedback(feedback.id, feedback.version));
+                            }}
+                          >
+                            <Trash2 aria-hidden className="size-4" />
+                          </Button>
+                        ) : null}
+                      </div>
                     ) : null}
                   </div>
-                  {canEdit || can.canRemove ? (
-                    <div className="flex gap-1">
-                      {canEdit ? (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          className="size-11 p-0"
-                          disabled={busy}
-                          aria-label={`Edit feedback from ${formatDate(feedback.riddenOn)}`}
-                          onClick={() => onEditFeedback(feedback)}
-                        >
-                          <Pencil aria-hidden className="size-4" />
-                        </Button>
-                      ) : null}
-                      {can.canRemove ? (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          className="size-11 p-0"
-                          disabled={busy}
-                          aria-label={`Remove feedback from ${formatDate(feedback.riddenOn)}`}
-                          onClick={() => {
-                            if (window.confirm("Remove this feedback? It can be restored from Recently Deleted for 30 days."))
-                              void run(() => deleteFeedback(feedback.id, feedback.version));
-                          }}
-                        >
-                          <Trash2 aria-hidden className="size-4" />
-                        </Button>
-                      ) : null}
-                    </div>
+                  {feedback.note ? (
+                    <p className="mt-1 whitespace-pre-line break-words text-sm text-foreground/90" data-testid="feedback-note">
+                      {feedback.note}
+                    </p>
                   ) : null}
                 </li>
               );
@@ -266,6 +286,12 @@ function RevisionCard({
           <Button type="button" variant="secondary" onClick={onAddFeedback} aria-label={`Add ride feedback to rev ${revision.number}`}>
             <MessageSquarePlus aria-hidden className="size-4" />
             Add feedback
+          </Button>
+        ) : null}
+        {can.canAddAdjustmentPhotos || revision.photos.length ? (
+          <Button type="button" variant="ghost" onClick={onPhotos} aria-label={`Photos of rev ${revision.number}`}>
+            <Camera aria-hidden className="size-4" />
+            Photos{revision.photos.length ? ` (${revision.photos.length})` : ""}
           </Button>
         ) : null}
         <Button type="button" variant="ghost" onClick={onCompare} aria-label={`Compare rev ${revision.number}`}>

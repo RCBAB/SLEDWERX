@@ -372,3 +372,173 @@ test("mechanics record adjustments; viewers can't", async ({ page, browser }) =>
 
   await Promise.all(contexts.map((c) => c.close()));
 });
+
+// ---------------------------------------------------------------------------
+// Checkpoint 4: history, feedback, comparison and restore
+// ---------------------------------------------------------------------------
+const revisionCard = (page: Page, n: number) =>
+  suspensionPage(page).getByTestId("revision-history").locator(`[data-testid="revision"][data-number="${n}"]`);
+
+async function adjustValues(page: Page, values: Record<string, string>, note?: string) {
+  const dialog = await openAdjust(page);
+  for (const [field, value] of Object.entries(values)) await label(dialog, field, true).fill(value);
+  if (note) await label(dialog, "What did you change and why? (optional)").fill(note);
+  await dialog.getByRole("button", { name: "Save adjustment" }).click();
+  await expect(dialog).toBeHidden({ timeout: 15_000 });
+}
+
+async function addFeedback(page: Page, n: number, rating: "Improved" | "Worse" | "No change", note?: string) {
+  await revisionCard(page, n)
+    .getByRole("button", { name: `Add ride feedback to rev ${n}` })
+    .click();
+  const dialog = page.getByRole("dialog", { name: "Ride feedback" });
+  await dialog.getByText(rating, { exact: true }).click();
+  if (note) await label(dialog, "Notes (optional)").fill(note);
+  await dialog.getByRole("button", { name: "Save feedback" }).click();
+  await expect(dialog).toBeHidden({ timeout: 15_000 });
+}
+
+test("history, multiple feedback, comparison across setups, and restore", async ({ page }) => {
+  await signUp(page, uniqueEmail("sus-hist"));
+  const sledId = await addSled(page, { make: "Polaris", model: "RMK", year: "2022", odometer: "2000", hours: "150", nickname: "Blue" });
+  await openSuspension(page, sledId);
+  await addSetting(page, { name: "Compression", zone: "Left ski shock", chip: "Clicks" });
+  await addSetting(page, { name: "Rebound", zone: "Left ski shock", chip: "Clicks" });
+  await createSetup(page, "Trail", { activate: true });
+  await adjustValues(page, { "Left ski shock: Compression": "12", "Left ski shock: Rebound": "8" }, "Baseline");
+  await adjustValues(page, { "Left ski shock: Rebound": "10" }, "More rebound");
+
+  // History: newest first, what changed, who, when, mileage; the first revision started blank.
+  const cards = suspensionPage(page).getByTestId("revision-history").getByTestId("revision");
+  await expect(cards).toHaveCount(3);
+  await expect(cards.first()).toHaveAttribute("data-number", "3");
+  await expect(revisionCard(page, 3)).toContainText("Current");
+  await expect(revisionCard(page, 3).getByTestId("revision-changes")).toContainText("Rebound: 8 → 10 Clicks");
+  await expect(revisionCard(page, 3).getByTestId("revision-changes")).not.toContainText("Compression");
+  await expect(revisionCard(page, 3).getByTestId("revision-note")).toHaveText("More rebound");
+  await expect(revisionCard(page, 3).getByTestId("revision-meta")).toContainText("You");
+  await expect(revisionCard(page, 3).getByTestId("revision-meta")).toContainText("2,000 mi");
+  await expect(revisionCard(page, 2).getByTestId("revision-changes")).toContainText("Compression: set to 12 Clicks");
+  await expect(revisionCard(page, 1).getByTestId("revision-changes")).toHaveText("Started blank.");
+  await expect(revisionCard(page, 3).getByRole("button", { name: "Restore rev 3" })).toHaveCount(0);
+
+  // Several feedback entries on one revision; edit and remove.
+  await addFeedback(page, 2, "Improved", "Smooth on the trail");
+  await addFeedback(page, 2, "Worse", "Harsh in the whoops");
+  await expect(revisionCard(page, 2).getByTestId("feedback")).toHaveCount(2);
+  await expect(revisionCard(page, 2).getByTestId("feedback-rating")).toHaveText(["Worse", "Improved"]);
+  await revisionCard(page, 2)
+    .getByRole("button", { name: /^Edit feedback/ })
+    .first()
+    .click();
+  let dialog = page.getByRole("dialog", { name: "Edit feedback" });
+  await label(dialog, "Notes (optional)").fill("Harsh in the whoops at speed");
+  await dialog.getByRole("button", { name: "Save changes" }).click();
+  await expect(dialog).toBeHidden();
+  await expect(revisionCard(page, 2).getByTestId("feedback-note").first()).toHaveText("Harsh in the whoops at speed");
+  page.once("dialog", (d) => d.accept());
+  await revisionCard(page, 2)
+    .getByRole("button", { name: /^Remove feedback/ })
+    .last()
+    .click();
+  await expect(revisionCard(page, 2).getByTestId("feedback")).toHaveCount(1);
+  await addFeedback(page, 2, "No change");
+  await expect(revisionCard(page, 2).getByTestId("feedback")).toHaveCount(2);
+
+  // Compare: rev 1 against the current revision.
+  await revisionCard(page, 1).getByRole("button", { name: "Compare rev 1" }).click();
+  const compare = suspensionPage(page).getByTestId("compare");
+  await expect(compare.getByTestId("compare-summary")).toHaveText("2 settings differ");
+  await expect(compare.getByTestId("compare-changed").getByTestId("compare-name")).toHaveText(["Compression", "Rebound"]);
+  await expect(compare.getByTestId("compare-changed").getByTestId("compare-b")).toHaveText(["12 Clicks", "10 Clicks"]);
+  await expect(compare.getByTestId("compare-changed").getByTestId("compare-a")).toHaveText(["—", "—"]);
+
+  // Compare across setups: a copy of rev 2 as a new setup.
+  await createSetup(page, "Powder", { copy: "Trail · Rev 2" });
+  await label(compare, "Compare").selectOption({ label: "Powder · Rev 1 (current)" });
+  await label(compare, "With").selectOption({ label: "Trail · Rev 3 (current)" });
+  await expect(compare.getByTestId("compare-summary")).toHaveText("1 setting differs");
+  await expect(compare.getByTestId("compare-changed").getByTestId("compare-name")).toHaveText(["Rebound"]);
+  await expect(compare.getByTestId("compare-changed").getByTestId("compare-a")).toHaveText("8 Clicks");
+  await compare.getByTestId("compare-same").locator("summary").click();
+  await expect(compare.getByTestId("compare-same").getByTestId("compare-name")).toHaveText(["Compression"]);
+
+  // Restore rev 2: a new revision with its values; nothing is erased.
+  await setupTab(page, "Trail").click();
+  await revisionCard(page, 2).getByRole("button", { name: "Restore rev 2" }).click();
+  dialog = page.getByRole("dialog", { name: "Restore revision" });
+  await expect(dialog.getByTestId("restore-changes")).toContainText("Rebound: 10 → 8 Clicks");
+  await expect(label(dialog, "Mileage", true)).toHaveValue("2000");
+  await dialog.getByRole("button", { name: "Restore rev 2" }).click();
+  await expect(dialog).toBeHidden({ timeout: 15_000 });
+  await expect(visible(page.getByTestId("adjust-notice"))).toContainText("Rev 2 restored as revision 4.");
+  await expect(cards).toHaveCount(4);
+  await expect(revisionCard(page, 4).getByTestId("restored-from")).toHaveText("Restored from rev 2");
+  await expect(revisionCard(page, 4).getByTestId("revision-note")).toHaveText("Restored revision 2");
+  await expect(revisionCard(page, 3).getByTestId("revision-note")).toHaveText("More rebound");
+  await expect(revisionCard(page, 2).getByTestId("feedback")).toHaveCount(2);
+  await expect(zoneValue(page, "Rebound")).toContainText("8");
+
+  // Restoring values the setup already has is refused.
+  await revisionCard(page, 2).getByRole("button", { name: "Restore rev 2" }).click();
+  dialog = page.getByRole("dialog", { name: "Restore revision" });
+  await expect(dialog.getByTestId("restore-changes")).toContainText("Rev 4 already has these values.");
+  await dialog.getByRole("button", { name: "Restore rev 2" }).click();
+  await expect(dialog.getByText("The latest revision already has these values.")).toBeVisible();
+  await dialog.getByRole("button", { name: "Close" }).click();
+  await expect(cards).toHaveCount(4);
+
+  // Still no readings were created.
+  await page.goto(`/garage/${sledId}`);
+  await expect(visible(page.getByTestId("reading-history")).getByRole("listitem")).toHaveCount(1);
+});
+
+test("feedback and restore by role: mechanics add and edit their own; viewers only read", async ({ page, browser }) => {
+  const ownerEmail = uniqueEmail("sus-fb-o");
+  const mechanicEmail = uniqueEmail("sus-fb-m");
+  const viewerEmail = uniqueEmail("sus-fb-v");
+  await signUp(page, ownerEmail);
+  const sledId = await addSled(page, { make: "Ski-Doo", model: "Summit", year: "2023", odometer: "500", nickname: "Summit" });
+  await openSuspension(page, sledId);
+  await addSetting(page, { name: "Compression", zone: "Left ski shock", chip: "Clicks" });
+  await createSetup(page, "Trail", { activate: true });
+  await adjustValues(page, { "Left ski shock: Compression": "12" });
+  await addFeedback(page, 2, "Improved", "Owner's ride");
+
+  const contexts = await Promise.all([1, 2].map(() => browser.newContext()));
+  const [mechanic, viewer] = await Promise.all(contexts.map((c) => c.newPage()));
+  await signUp(mechanic, mechanicEmail);
+  await signUp(viewer, viewerEmail);
+  await shareSled(ownerEmail, sledId, mechanicEmail, "mechanic");
+  await shareSled(ownerEmail, sledId, viewerEmail, "viewer");
+
+  // Mechanic: can't change the owner's feedback; adds and edits their own (but can't remove it); can restore.
+  await openSuspension(mechanic, sledId);
+  await expect(revisionCard(mechanic, 2).getByRole("button", { name: /^(Edit|Remove) feedback/ })).toHaveCount(0);
+  await addFeedback(mechanic, 2, "No change", "Mechanic's ride");
+  await expect(revisionCard(mechanic, 2).getByTestId("feedback")).toHaveCount(2);
+  await expect(revisionCard(mechanic, 2).getByRole("button", { name: /^Edit feedback/ })).toHaveCount(1);
+  await expect(revisionCard(mechanic, 2).getByRole("button", { name: /^Remove feedback/ })).toHaveCount(0);
+  await revisionCard(mechanic, 2)
+    .getByRole("button", { name: /^Edit feedback/ })
+    .click();
+  const dialog = mechanic.getByRole("dialog", { name: "Edit feedback" });
+  await dialog.getByText("Worse", { exact: true }).click();
+  await dialog.getByRole("button", { name: "Save changes" }).click();
+  await expect(dialog).toBeHidden();
+  await expect(revisionCard(mechanic, 2).getByTestId("feedback-rating")).toHaveText(["Worse", "Improved"]);
+  await revisionCard(mechanic, 1).getByRole("button", { name: "Restore rev 1" }).click();
+  await mechanic.getByRole("dialog", { name: "Restore revision" }).getByRole("button", { name: "Restore rev 1" }).click();
+  await expect(revisionCard(mechanic, 3).getByTestId("restored-from")).toHaveText("Restored from rev 1");
+
+  // Viewer: sees history and feedback, can compare, but adds, edits or restores nothing.
+  await openSuspension(viewer, sledId);
+  await expect(revisionCard(viewer, 2).getByTestId("feedback")).toHaveCount(2);
+  await expect(
+    suspensionPage(viewer).getByRole("button", { name: /Add ride feedback|Restore rev|Edit feedback|Remove feedback/ }),
+  ).toHaveCount(0);
+  await revisionCard(viewer, 1).getByRole("button", { name: "Compare rev 1" }).click();
+  await expect(suspensionPage(viewer).getByTestId("compare").getByTestId("compare-summary")).toHaveText("Same values in both.");
+
+  await Promise.all(contexts.map((c) => c.close()));
+});

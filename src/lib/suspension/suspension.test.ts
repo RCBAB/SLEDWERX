@@ -11,6 +11,8 @@ import {
   daysLeftToRestore,
   isRestorable,
   latestRevision,
+  previousRevision,
+  restorableValues,
   sortSettings,
   type Snapshot,
   type SuspensionRevision,
@@ -174,6 +176,20 @@ describe("history helpers", () => {
     const rev = (setupId: string, number: number) => ({ id: `${setupId}-${number}`, setupId, number }) as SuspensionRevision;
     expect(latestRevision([rev("a", 1), rev("a", 3), rev("b", 9), rev("a", 2)], "a")?.number).toBe(3);
     expect(latestRevision([], "a")).toBeUndefined();
+  });
+
+  it("finds the revision before one in the same setup", () => {
+    const rev = (setupId: string, number: number) => ({ id: `${setupId}-${number}`, setupId, number }) as SuspensionRevision;
+    const list = [rev("a", 4), rev("b", 3), rev("a", 2), rev("a", 1)];
+    expect(previousRevision(list, list[0])?.id).toBe("a-2");
+    expect(previousRevision(list, list[3])).toBeUndefined();
+    expect(previousRevision(list, list[1])).toBeUndefined();
+  });
+
+  it("restores only values whose setting still exists", () => {
+    const values = snap({ [COMP]: ["12", "Compression", "clicks", "number"], [REB]: ["8", "Rebound", "clicks", "number"] });
+    expect(Object.keys(restorableValues(values, [{ id: REB }]))).toEqual([REB]);
+    expect(restorableValues(values, [])).toEqual({});
   });
 
   it("picks the newest feedback by ride date", () => {

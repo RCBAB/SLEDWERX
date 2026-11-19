@@ -11,10 +11,22 @@ import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import type { SledRole } from "@/lib/sleds/constants";
 import { ROLE_LABELS, suspensionCapabilities } from "@/lib/sleds/permissions";
-import { SUSPENSION_ZONES, latestRevision, type SuspensionData, type SuspensionSetting, type SuspensionZone } from "@/lib/suspension/types";
+import {
+  SUSPENSION_ZONES,
+  latestRevision,
+  previousRevision,
+  type SuspensionData,
+  type SuspensionFeedback,
+  type SuspensionRevision,
+  type SuspensionSetting,
+  type SuspensionZone,
+} from "@/lib/suspension/types";
 
 import { AdjustForm } from "./adjust-form";
+import { CompareRevisions } from "./compare";
 import { DeletedItems } from "./deleted-items";
+import { FeedbackForm, RevisionHistory } from "./history";
+import { RestoreForm } from "./restore-form";
 import { SettingForm, SettingsEditor } from "./settings-editor";
 import { ActiveBadge, Panel, SectionTitle } from "./shared";
 import { SetupActions, SetupBar, SetupForm, SetupSummary } from "./setups";
@@ -29,17 +41,21 @@ type OpenSheet =
   | { kind: "add-setting"; zone?: SuspensionZone }
   | { kind: "edit-setting"; setting: SuspensionSetting }
   | { kind: "adjust" }
+  | { kind: "feedback"; revision: SuspensionRevision; feedback?: SuspensionFeedback }
+  | { kind: "restore"; revision: SuspensionRevision }
   | null;
 
 /**
- * The Suspension Tuning page for one sled: its setups, the settings list,
- * and Recently Deleted. Everything is saved through the suspension server
+ * The Suspension Tuning page for one sled: its setups, the map with the
+ * current values, the selected setup's history (feedback, restore), the
+ * comparison of any two revisions, the settings list and Recently Deleted. Everything is saved through the suspension server
  * actions as the signed-in user; the controls shown follow the user's role.
  */
 export function SuspensionView({
   data,
   sled,
   role,
+  userId,
   initialSetupId,
 }: {
   data: SuspensionData;
@@ -56,8 +72,10 @@ export function SuspensionView({
   const [zone, setZone] = useState<SuspensionZone>(SUSPENSION_ZONES[0]);
   // Open while the list is empty; afterwards it stays as the user left it.
   const [editorOpen, setEditorOpen] = useState(data.settings.length === 0);
-  /** The revision just saved from the adjust sheet (shown as a notice). */
-  const [savedId, setSavedId] = useState<string | null>(null);
+  /** The revision just saved by an adjustment or a restore (shown as a notice). */
+  const [saved, setSaved] = useState<{ id: string; restoredFrom?: number } | null>(null);
+  /** The two revisions being compared (defaults: the selected setup's last two). */
+  const [compare, setCompare] = useState<{ a: string; b: string } | null>(null);
   // Close sheets when the page is hidden (Next.js keeps it mounted).
   useLayoutEffect(() => () => setSheet(null), []);
 
@@ -72,14 +90,24 @@ export function SuspensionView({
   const renaming = sheet?.kind === "rename-setup" ? setups.find((s) => s.id === sheet.id) : undefined;
   const latest = selected ? latestRevision(revisions, selected.id) : undefined;
   const values = latest?.values ?? {};
-  const saved = savedId ? revisions.find((r) => r.id === savedId && r.setupId === selected?.id) : undefined;
+  const savedRevision = saved ? revisions.find((r) => r.id === saved.id && r.setupId === selected?.id) : undefined;
+  const history = selected ? revisions.filter((r) => r.setupId === selected.id).sort((x, y) => y.number - x.number) : [];
+  const compareB = (compare && revisions.find((r) => r.id === compare.b)) || latest;
+  const compareA =
+    (compare && revisions.find((r) => r.id === compare.a)) || (latest ? (previousRevision(revisions, latest) ?? latest) : undefined);
   const counts = Object.fromEntries(SUSPENSION_ZONES.map((z) => [z, settings.filter((s) => s.zone === z).length])) as Record<
     SuspensionZone,
     number
   >;
-  const adjusted = (result: SuspensionActionState) => {
+  const adjusted = (result: SuspensionActionState, restoredFrom?: number) => {
     close();
-    if (result.ok && result.id) setSavedId(result.id);
+    if (result.ok && result.id) setSaved({ id: result.id, restoredFrom });
+  };
+  const showCompare = (revision: SuspensionRevision) => {
+    const newest = latestRevision(revisions, revision.setupId);
+    const other = newest && newest.id !== revision.id ? newest : previousRevision(revisions, revision);
+    setCompare({ a: revision.id, b: other?.id ?? revision.id });
+    document.getElementById("compare")?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
   return (
@@ -153,9 +181,13 @@ export function SuspensionView({
 
       <section aria-labelledby="map-heading" className="space-y-4" id="tuning-map">
         <SectionTitle id="map-heading">{selected ? `${selected.name} · current values` : "Suspension map"}</SectionTitle>
-        {saved ? (
+        {savedRevision ? (
           <div data-testid="adjust-notice">
-            <Alert tone="success">Adjustment saved as revision {saved.number}.</Alert>
+            <Alert tone="success">
+              {saved?.restoredFrom
+                ? `Rev ${saved.restoredFrom} restored as revision ${savedRevision.number}.`
+                : `Adjustment saved as revision ${savedRevision.number}.`}
+            </Alert>
           </div>
         ) : null}
         <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,420px)_minmax(0,1fr)]">
@@ -176,7 +208,7 @@ export function SuspensionView({
                 canAdjust={can.canAdjust}
                 canManage={can.canManage}
                 onAdjust={() => {
-                  setSavedId(null);
+                  setSaved(null);
                   show({ kind: "adjust" });
                 }}
                 onAddSetting={(z) => show({ kind: "add-setting", zone: z })}
@@ -188,6 +220,43 @@ export function SuspensionView({
           </div>
         </div>
       </section>
+
+      {selected && history.length ? (
+        <section aria-labelledby="history-heading" className="scroll-mt-20 space-y-4" id="history">
+          <SectionTitle id="history-heading">{`${selected.name} · history`}</SectionTitle>
+          <RevisionHistory
+            key={selected.id}
+            revisions={history}
+            allRevisions={revisions}
+            settings={settings}
+            role={role}
+            userId={userId}
+            onAddFeedback={(revision) => show({ kind: "feedback", revision })}
+            onEditFeedback={(revision, feedback) => show({ kind: "feedback", revision, feedback })}
+            onCompare={showCompare}
+            onRestore={(revision) => {
+              setSaved(null);
+              show({ kind: "restore", revision });
+            }}
+          />
+        </section>
+      ) : null}
+
+      {compareA && compareB ? (
+        <section aria-labelledby="compare-heading" className="scroll-mt-20 space-y-4" id="compare">
+          <SectionTitle id="compare-heading">Compare revisions</SectionTitle>
+          <Panel>
+            <CompareRevisions
+              setups={setups}
+              revisions={revisions}
+              settings={settings}
+              aId={compareA.id}
+              bId={compareB.id}
+              onChange={(a, b) => setCompare({ a, b })}
+            />
+          </Panel>
+        </section>
+      ) : null}
 
       {can.canManage ? (
         <section aria-labelledby="settings-heading" className="space-y-4" id="settings">
@@ -252,6 +321,37 @@ export function SuspensionView({
             odometer={sled.odometer}
             engineHours={sled.engineHours}
             onDone={adjusted}
+          />
+        ) : null}
+      </Sheet>
+
+      <Sheet
+        open={sheet?.kind === "feedback"}
+        onClose={close}
+        title={sheet?.kind === "feedback" && sheet.feedback ? "Edit feedback" : "Ride feedback"}
+        description={sheet?.kind === "feedback" ? `${selected?.name ?? "Setup"} · Rev ${sheet.revision.number}` : undefined}
+      >
+        {sheet?.kind === "feedback" ? (
+          <FeedbackForm key={session} sledId={sled.id} revision={sheet.revision} feedback={sheet.feedback} onDone={close} />
+        ) : null}
+      </Sheet>
+
+      <Sheet
+        open={sheet?.kind === "restore" && Boolean(latest)}
+        onClose={close}
+        title="Restore revision"
+        description={sheet?.kind === "restore" ? `${selected?.name ?? "Setup"} · Rev ${sheet.revision.number}` : undefined}
+      >
+        {sheet?.kind === "restore" && latest && selected ? (
+          <RestoreForm
+            key={session}
+            revision={sheet.revision}
+            current={latest}
+            setupName={selected.name}
+            settings={settings}
+            odometer={sled.odometer}
+            engineHours={sled.engineHours}
+            onDone={(result) => adjusted(result, sheet.revision.number)}
           />
         ) : null}
       </Sheet>

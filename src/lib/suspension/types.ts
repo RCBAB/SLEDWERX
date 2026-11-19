@@ -171,3 +171,17 @@ export function daysLeftToRestore(deletedAt: string, now = new Date()): number {
   const left = RECOVERY_DAYS * 24 * 60 * 60 * 1000 - (now.getTime() - new Date(deletedAt).getTime());
   return Math.max(0, Math.ceil(left / (24 * 60 * 60 * 1000)));
 }
+
+/** The revision saved just before this one in the same setup, if any. */
+export function previousRevision(revisions: SuspensionRevision[], revision: SuspensionRevision): SuspensionRevision | undefined {
+  let previous: SuspensionRevision | undefined;
+  for (const r of revisions)
+    if (r.setupId === revision.setupId && r.number < revision.number && (!previous || r.number > previous.number)) previous = r;
+  return previous;
+}
+
+/** The values of a revision that still have a setting on the sled (what a restore or copy brings back). */
+export function restorableValues(values: Snapshot, settings: Pick<SuspensionSetting, "id">[]): Snapshot {
+  const ids = new Set(settings.map((s) => s.id));
+  return Object.fromEntries(Object.entries(values).filter(([id]) => ids.has(id)));
+}

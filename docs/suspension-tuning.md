@@ -125,7 +125,9 @@ Primary buttons and other filled controls with white text use `--primary`
 unchanged for text, borders, focus outlines and decoration, where it reads
 better on the dark background (5.46:1). The diagram's selected marker keeps
 the accent (large bold number, 3.56:1; 3:1 needed). The automated
-accessibility tests check every axe rule, color contrast included.
+accessibility tests check every axe rule, color contrast included. The
+maintenance board's interval line ("Every 500 mi") uses the full muted gray
+(5.95:1; it was 80% opacity, 4.25:1).
 
 ## Who can do what
 
@@ -173,9 +175,6 @@ deleted by the app; see Migration 8 below.
 - **Photo recovery** from Recently Deleted is deferred to a future release.
 - **Photo links** expire after an hour; a page left open longer shows
   "Photo unavailable" until reloaded (same as issue photos).
-- **Maintenance board schedule text (pre-existing, outside Phase 6.2):** the
-  small "Every 500 mi" line on the sled page's maintenance list measures
-  4.25:1 (4.5:1 needed). Left unchanged pending approval.
 - **History size:** the page loads a sled's newest 500 revisions and shows
   ten at a time.
 

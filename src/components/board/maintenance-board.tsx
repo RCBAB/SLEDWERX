@@ -123,7 +123,7 @@ export function MaintenanceBoard(props: Props) {
                     <p className="text-xs text-muted" data-testid="board-last-done">
                       {lastDoneLine(row)}
                     </p>
-                    <p className="text-xs text-muted/80">{scheduleSummary(row)}</p>
+                    <p className="text-xs text-muted">{scheduleSummary(row)}</p>
                   </div>
                   {!selecting ? (
                     <div className="flex shrink-0 items-center gap-1">

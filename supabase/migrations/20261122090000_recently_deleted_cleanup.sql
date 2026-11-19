@@ -23,7 +23,9 @@
 --   points at it. That is checked again, under a lock, when the file is
 --   claimed, and a claimed path cannot be attached to a record.
 -- * Existing storage policies are unchanged; mechanics still cannot delete
---   files. Audit history is unchanged (kept until the snowmobile is purged).
+--   files. Two new RESTRICTIVE storage policies refuse uploads and overwrites
+--   at paths claimed or removed by the cleanup (they only narrow access).
+--   Audit history is unchanged (kept until the snowmobile is purged).
 --
 -- Everything is private to the database owner and the service role. Signed-in
 -- users and visitors can neither read the cleanup tables nor call the
@@ -1204,8 +1206,14 @@ begin
     raise exception 'This file was not claimed in this run.' using errcode = '55000';
   end if;
 
+  -- Lock the object's row: an upload or overwrite still in progress (it
+  -- holds the row) finishes first, and is then seen as a change. Waits at
+  -- most 5 seconds, then fails (nothing removed).
+  perform set_config('lock_timeout', '5s', true);
   select o.id, o.created_at, o.updated_at, o.metadata into v_obj
-  from storage.objects o where o.bucket_id = p_bucket_id and o.name = p_object_path;
+  from storage.objects o where o.bucket_id = p_bucket_id and o.name = p_object_path
+  for update;
+  perform set_config('lock_timeout', '0', true);
   if not found then
     v_reason := 'missing';
   elsif v_obj.id is distinct from v_claim.object_id
@@ -1342,6 +1350,48 @@ begin
   end loop;
 end;
 $$;
+
+-- -----------------------------------------------------------------------------
+-- 10b. Storage: no upload, overwrite or move into a path that is claimed for
+--      removal or was removed by the cleanup. Supabase Storage removes by path
+--      and has no conditional delete, so the write itself is refused instead:
+--      two RESTRICTIVE policies, which can only narrow what the existing
+--      policies allow (they change none of them; reading and deleting are not
+--      affected). The check takes the same per-path lock as a claim, and reads
+--      the claims at that moment (volatile), so a write and a claim of the
+--      same path are always serialised.
+-- -----------------------------------------------------------------------------
+create function private.storage_path_writable(p_bucket text, p_name text)
+returns boolean
+language plpgsql
+volatile
+security definer
+set search_path = ''
+as $$
+begin
+  if p_bucket is null or p_name is null
+     or not exists (select 1 from private.storage_cleanup_buckets b where b.bucket_id = p_bucket) then
+    return true;
+  end if;
+  perform pg_advisory_xact_lock(private.storage_lock_key(p_bucket, p_name));
+  return not exists (
+    select 1 from private.storage_cleanup_claims k
+    where k.bucket_id = p_bucket and k.object_path = p_name and k.status in ('claimed', 'deleted', 'replaced', 'missing')
+  );
+end;
+$$;
+
+revoke all on function private.storage_path_writable(text, text) from public, anon, authenticated;
+grant execute on function private.storage_path_writable(text, text) to authenticated;
+
+create policy "SledWerx cleanup: no uploads to claimed or removed paths"
+  on storage.objects as restrictive for insert to authenticated
+  with check (private.storage_path_writable(bucket_id, name));
+
+create policy "SledWerx cleanup: no overwrites of claimed or removed paths"
+  on storage.objects as restrictive for update to authenticated
+  using (private.storage_path_writable(bucket_id, name))
+  with check (private.storage_path_writable(bucket_id, name));
 
 -- -----------------------------------------------------------------------------
 -- 11. Runs: start and finish.

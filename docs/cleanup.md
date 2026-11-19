@@ -160,7 +160,7 @@ A file may be removed only if **all** of these hold:
    `updated_at`).
 
 This covers a mechanic's upload whose record could not be saved (mechanics
-still cannot delete files; no storage policy was changed), photos of purged
+still cannot delete files; no existing storage policy was changed), photos of purged
 or permanently deleted records, replaced snowmobile photos, and the files of
 deleted accounts.
 
@@ -184,33 +184,82 @@ raises an error (stopping the run); it is never read as "not referenced".
 
 ## File removal and the same-path replacement race
 
-Supabase Storage removes by path and has **no conditional delete** ("remove
-only if this is still version X"). The job therefore uses a fail-closed
-protocol:
+### How photos are written (review, Checkpoint 2 follow-up)
 
-1. **Claim** (`cleanup_claim_file`, under a per-path lock): repeats every
-   check and records exactly which object it is: Storage row `id`, `eTag`
-   and `size`. While claimed, no record can be given that path.
-2. **Verify** (`cleanup_verify_claim`, immediately before the Storage call):
-   the object at the path must still be the claimed one (same id, eTag, size)
-   and still an orphan. If it was replaced (same row with new content, or
-   deleted and uploaded again), the claim is released and the file is **not**
-   removed.
+| Bucket | App upload | Same-path overwrite (upsert) by users | Delete, then upload again at the same path |
+|---|---|---|---|
+| `sled-photos` | New random path (`<sled>/<uuid>.jpg`), `upsert: false` | Allowed to owners and editors by the existing policy "owners and editors can replace sled photos" (the app never does it) | Owners and editors |
+| `issue-photos` | New random path, `upsert: false` | Not possible (no update policy) | Owners and editors (delete), then anyone who may edit the issue (upload) |
+| `suspension-photos` | New random path, `upsert: false` | Not possible (no update policy) | Owners and editors (delete), then anyone who may add that photo (upload) |
+
+The app itself never writes to an existing path. But the policies allowed a
+signed-in owner or editor, using the Storage API directly, to overwrite a
+snowmobile photo or to put a new file at an old path in any bucket. The
+service role (the job, administrators) bypasses all policies.
+
+### Prevention: claimed and removed paths are write-protected
+
+Supabase Storage removes by path and has **no conditional delete** ("remove
+only if this is still version X"). Instead of only detecting a replacement,
+Migration 8 now **refuses the write**:
+
+- Two **restrictive** storage policies on `storage.objects`
+  ("SledWerx cleanup: no uploads to claimed or removed paths" for INSERT,
+  "… no overwrites of claimed or removed paths" for UPDATE) call
+  `private.storage_path_writable(bucket, name)`. It returns false while the
+  path is `claimed`, and for good once the cleanup removed it (`deleted`,
+  `replaced`, `missing`). A restrictive policy can only narrow what the
+  existing policies allow: none of the existing policies changed, reading and
+  deleting are unaffected, and no one gained any permission.
+- That check takes **the same per-path lock as a claim** and reads the claims
+  at that moment (`VOLATILE`), so a write and a claim of the same path are
+  always serialised: a write in progress makes the claim wait (and the claim
+  then sees the new, too-new file and does not claim it); a claim in progress
+  makes the write wait (and the write is then refused).
+- `cleanup_verify_claim` also **locks the object's row** (`FOR UPDATE`, at
+  most 5 seconds), so any write that still held the row finishes first and is
+  then seen as a change.
+
+Writes covered: upload to a claimed or removed path, overwrite (upsert),
+Storage `update`, and a move into or out of a claimed path (all go through
+INSERT/UPDATE on `storage.objects` under the user's role). Normal uploads to
+new paths, overwrites of unclaimed snowmobile photos, and authorized removals
+(owners and editors, even of a claimed file) work exactly as before.
+
+### The removal protocol
+
+1. **Claim** (`cleanup_claim_file`, under the per-path lock): repeats every
+   check and records exactly which object it is (Storage row `id`, `eTag`,
+   `size`). From now on no user can write to the path or attach a record to
+   it.
+2. **Verify** (`cleanup_verify_claim`, immediately before the Storage call,
+   row locked): still exactly the claimed object and still an orphan, or the
+   claim is released and nothing is removed.
 3. **Remove** through the Storage API.
 4. **Record** (`cleanup_record_file_result`) with the object Storage reports
-   it removed. If that is not the claimed object (a replacement uploaded in
-   the milliseconds between steps 2 and 3), the result is `replaced` and
-   flagged for review.
-5. **The path is blocked for good** once removed (`deleted`, `replaced`,
-   `missing`): `storage_claim_guard` refuses to attach any record to it
+   it removed; anything other than the claimed object is recorded as
+   `replaced` and flagged for review.
+5. The path stays closed for good: no upload and no record can use it again
    ("This photo was removed. Add it again."). The app always uploads to a new
    random path, so nothing legitimate needs an old one.
 
-Together: a file is only ever removed while no record can reference its path,
-and after removal no record ever can. In the residual window (between step 2
-and step 3) only an **unreferenceable** file can be lost, and the loss is
-detected and reported. Tests cover replacement after the claim, delete and
-re-upload, and replacement in the last moment, against the real Storage API.
+### What remains
+
+- **For users (signed-in owners, editors, mechanics, viewers): the race is
+  closed.** Between claim and removal they cannot write to the path at all,
+  and tests show the overwrite waiting and then refused, the claim waiting for
+  an overwrite in progress, and a re-upload after removal refused, with two
+  real sessions and through the real Storage API.
+- **The service role bypasses storage policies.** Only the cleanup job and
+  administrators hold that key; a service-role write between steps 2 and 3
+  would still be removed. Steps 4–5 detect and report it (`replaced`), and no
+  record can point at that path, so nothing referenced is lost. Do not upload
+  photos with the service role.
+- Database row locks cannot span the Storage API call (Storage uses its own
+  connection), so the guarantee for users rests on the policies refusing the
+  write, not on holding a lock during the removal.
+- The new policies must be applied with Migration 8 (production Storage
+  policy change, needs approval like the rest of the migration).
 
 ## Failure handling
 
@@ -318,8 +367,9 @@ the same limits), `cleanup_registry_problems`.
   report runs reviewed; verified database and photo backups; deletion
   authorized and a delete run verified, all before Phase 6.2 is released. The
   cron schedule and production credentials also still need approval.
-- **No conditional delete in Storage:** see the replacement race above; the
-  residual window can only remove an unreferenceable file, and is reported.
+- **No conditional delete in Storage:** users cannot write to a claimed or
+  removed path (restrictive policies); only a service-role write in the last
+  moment could still be removed, and it is detected and reported (see above).
 - **Oversized snowmobiles** are skipped daily until a one-time higher limit
   is approved.
 - **Run history** is not trimmed yet (belongs with the dashboard).

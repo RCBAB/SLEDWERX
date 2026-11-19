@@ -8,7 +8,8 @@
 --   candidates, registries, file claims and review view; the cleanup
 --   functions (private and the eight public API functions); the delete-counting triggers on the
 --   purged tables; the claim guard on the three photo-path columns; and the
---   index on sleds.photo_path. Also removes Migration 8's migration-history
+--   index on sleds.photo_path, and the two restrictive storage policies that
+--   refuse uploads to claimed or removed photo paths. Also removes Migration 8's migration-history
 --   entry. All in ONE transaction.
 -- * Puts back private.purge_expired_records() exactly as Migration 2 left it
 --   (unscheduled; it does not cover issues or suspension records).
@@ -59,7 +60,10 @@ begin
   end loop;
 end $$;
 
--- 3. Review view and public API functions.
+-- 3. The two restrictive storage policies, the review view and the public
+--    API functions.
+drop policy if exists "SledWerx cleanup: no uploads to claimed or removed paths" on storage.objects;
+drop policy if exists "SledWerx cleanup: no overwrites of claimed or removed paths" on storage.objects;
 drop view if exists private.cleanup_review;
 drop function if exists public.cleanup_begin_run(text);
 drop function if exists public.cleanup_process_records(bigint);
@@ -130,6 +134,7 @@ revoke all on function private.purge_expired_records() from public;
 drop function if exists private.cleanup_finish_run(bigint, text);
 drop function if exists private.cleanup_begin_run(text, text);
 drop function if exists private.tg_storage_claim_guard();
+drop function if exists private.storage_path_writable(text, text);
 drop function if exists private.cleanup_record_file_result(bigint, text, text, boolean, text, jsonb);
 drop function if exists private.cleanup_verify_claim(bigint, text, text);
 drop function if exists private.cleanup_claim_file(bigint, text, text);
@@ -178,6 +183,7 @@ begin
                   and (p.proname like '%cleanup%' or p.proname like 'storage\_%' or p.proname like 'expired\_record%'))
      or exists (select 1 from pg_trigger where tgname in ('cleanup_count_deletes', 'storage_claim_guard'))
      or to_regclass('public.sleds_photo_path_idx') is not null
+     or exists (select 1 from pg_policies where schemaname = 'storage' and policyname like 'SledWerx cleanup:%')
   then
     raise exception 'Rollback verification failed: Migration 8 objects remain. Nothing was changed.';
   end if;

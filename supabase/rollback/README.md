@@ -31,7 +31,8 @@ cleanup tables (settings, runs, candidates, registries, file claims), the
 cleanup functions including the eight `public.cleanup_*` API functions, the `cleanup_review` view, the
 `cleanup_count_deletes` and `storage_claim_guard` triggers, and
 `sleds_photo_path_idx`. It puts `private.purge_expired_records()` back exactly
-as Migration 2 left it. Storage policies and every other object are untouched.
+as Migration 2 left it, and drops the two restrictive storage policies Migration 8
+added. The ten earlier storage policies and every other object are untouched.
 
 **It cannot bring back anything the cleanup already deleted.** Records and
 files removed by a delete run are gone; restore them from the backup taken

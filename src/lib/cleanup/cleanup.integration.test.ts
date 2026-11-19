@@ -26,15 +26,20 @@ function sql(query: string): string {
   return execFileSync("sh", ["-c", `${PSQL} -X -q -v ON_ERROR_STOP=1 -tA`], { input: query, encoding: "utf8" }).trim();
 }
 const list = (values: string[]) => `array[${values.map((v) => `'${v.replace(/'/g, "''")}'`).join(", ")}]::text[]`;
-const exists = (path: string) => sql(`select count(*) from storage.objects where bucket_id = '${BUCKET}' and name = '${path}';`) === "1";
-const claimStatus = (path: string) => sql(`select status from private.storage_cleanup_claims where bucket_id = '${BUCKET}' and object_path = '${path}';`);
+const SLED_BUCKET = "sled-photos";
+const exists = (path: string, bucket = BUCKET) =>
+  sql(`select count(*) from storage.objects where bucket_id = '${bucket}' and name = '${path}';`) === "1";
+const etag = (path: string, bucket: string) =>
+  sql(`select metadata ->> 'eTag' from storage.objects where bucket_id = '${bucket}' and name = '${path}';`);
+const claimStatus = (path: string, bucket = BUCKET) =>
+  sql(`select status from private.storage_cleanup_claims where bucket_id = '${bucket}' and object_path = '${path}';`);
 
 /**
  * Makes files look uploaded two days ago. Storage resets updated_at on every
  * update, so each row is copied out, removed and put back with old
  * timestamps (the stored file itself is untouched).
  */
-function age(paths: string[]) {
+function age(paths: string[], bucket = BUCKET) {
   sql(`
     select set_config('storage.allow_delete_query', 'true', false);
     do $$
@@ -45,8 +50,8 @@ function age(paths: string[]) {
       where table_schema = 'storage' and table_name = 'objects' and is_generated = 'NEVER'
         and column_name not in ('created_at', 'updated_at');
       execute format('create temporary table aged on commit drop as select %s from storage.objects where bucket_id = %L and name = any(%s)',
-                     v_cols, '${BUCKET}', $q$${list(paths)}$q$);
-      execute format('delete from storage.objects where bucket_id = %L and name = any(%s)', '${BUCKET}', $q$${list(paths)}$q$);
+                     v_cols, '${bucket}', $q$${list(paths)}$q$);
+      execute format('delete from storage.objects where bucket_id = %L and name = any(%s)', '${bucket}', $q$${list(paths)}$q$);
       execute format('insert into storage.objects (%s, created_at, updated_at) select %s, now() - interval ''2 days'', now() - interval ''2 days'' from aged',
                      v_cols, v_cols);
     end $$;`);
@@ -76,10 +81,17 @@ describe.skipIf(!enabled)("cleanup job on the local Supabase stack", () => {
   const deps = () => cleanupDeps(admin);
   const later = () => Date.now() + 60_000;
 
-  async function upload(client: SupabaseClient, name: string, options: { upsert?: boolean } = {}) {
-    const { error } = await client.storage.from(BUCKET).upload(name, jpeg(name), { contentType: "image/jpeg", ...options });
+  async function tryUpload(client: SupabaseClient, name: string, options: { upsert?: boolean; bucket?: string } = {}) {
+    const { error } = await client.storage
+      .from(options.bucket ?? BUCKET)
+      .upload(name, jpeg(name), { contentType: "image/jpeg", upsert: options.upsert ?? false });
+    return error;
+  }
+  async function upload(client: SupabaseClient, name: string, options: { upsert?: boolean; bucket?: string } = {}) {
+    const error = await tryUpload(client, name, options);
     if (error) throw new Error(`upload failed: ${error.message}`);
   }
+  const sledPath = () => `${sledId}/${randomUUID()}.jpg`;
 
   beforeAll(async () => {
     admin = createClient(URL!, SECRET_KEY!, noSession);
@@ -120,7 +132,14 @@ describe.skipIf(!enabled)("cleanup job on the local Supabase stack", () => {
     }
     files.fresh = path();
     await upload(mechanic.client, files.fresh);
-    age([files.mech, files.active, files.recoverable, files.changed, files.race, files.fail]);
+    files.reupload = path();
+    await upload(owner.client, files.reupload);
+    age([files.mech, files.active, files.recoverable, files.changed, files.race, files.fail, files.reupload]);
+    // Snowmobile photos (owners and editors may overwrite these when unclaimed).
+    files.sledClaim = sledPath();
+    files.sledRace = sledPath();
+    for (const key of ["sledClaim", "sledRace"]) await upload(owner.client, files[key], { bucket: SLED_BUCKET });
+    age([files.sledClaim, files.sledRace], SLED_BUCKET);
   }, 60_000);
 
   afterAll(async () => {
@@ -130,6 +149,7 @@ describe.skipIf(!enabled)("cleanup job on the local Supabase stack", () => {
          delete from private.storage_cleanup_claims;
          delete from private.cleanup_runs;`);
     await admin.storage.from(BUCKET).remove(Object.values(files));
+    await admin.storage.from(SLED_BUCKET).remove(Object.values(files));
     for (const user of [owner, mechanic]) if (user) await admin.auth.admin.deleteUser(user.id);
   });
 
@@ -167,11 +187,43 @@ describe.skipIf(!enabled)("cleanup job on the local Supabase stack", () => {
     sql(`select private.cleanup_finish_run(${running});`);
   });
 
-  it("a file replaced at the same path after its claim is not removed", async () => {
+  it("while a file is claimed, nobody but the service role can overwrite it or upload at its path; other uploads work", async () => {
     sql(`insert into private.cleanup_runs (mode, source, status, started_at, finished_at, records_step_at, files_step_at)
          select 'report', 'scheduled', 'completed', now() - d * interval '1 day', now() - d * interval '1 day', now(), now()
          from generate_series(1, 7) d;
          select private.authorize_cleanup_deletion('integration test (throwaway stack)');`);
+    const run = Number(sql(`select private.cleanup_begin_run('delete', 'manual');`));
+    sql(`select private.cleanup_process_records(${run}); select private.cleanup_report_files(${run});`);
+    for (const [bucket, name] of [[SLED_BUCKET, files.sledClaim], [BUCKET, files.reupload]]) {
+      const claim = await admin.rpc("cleanup_claim_file", { p_run_id: run, p_bucket_id: bucket, p_object_path: name });
+      expect(claim.data).toMatchObject({ claimed: true });
+    }
+
+    // Overwrite (upsert) at the claimed path: refused by the storage policy.
+    const before = etag(files.sledClaim, SLED_BUCKET);
+    expect(await tryUpload(owner.client, files.sledClaim, { bucket: SLED_BUCKET, upsert: true })).not.toBeNull();
+    expect(etag(files.sledClaim, SLED_BUCKET)).toBe(before);
+    // Remove (still allowed for owners), then upload again at the same path: refused.
+    const removed = await owner.client.storage.from(BUCKET).remove([files.reupload]);
+    expect(removed.data).toHaveLength(1);
+    expect(await tryUpload(owner.client, files.reupload)).not.toBeNull();
+    expect(exists(files.reupload)).toBe(false);
+    // Uploads to new paths are unaffected.
+    expect(await tryUpload(owner.client, sledPath(), { bucket: SLED_BUCKET })).toBeNull();
+    expect(await tryUpload(mechanic.client, path())).toBeNull();
+    // The claim is still the same object.
+    const verify = await admin.rpc("cleanup_verify_claim", { p_run_id: run, p_bucket_id: SLED_BUCKET, p_object_path: files.sledClaim });
+    expect(verify.data).toEqual({ ok: true });
+
+    sql(`select private.cleanup_finish_run(${run});`);
+    expect(claimStatus(files.sledClaim, SLED_BUCKET)).toBe("released");
+    expect(claimStatus(files.reupload)).toBe("missing");
+    // Released: the owner's existing overwrite permission is back. Gone: the path stays closed.
+    expect(await tryUpload(owner.client, files.sledClaim, { bucket: SLED_BUCKET, upsert: true })).toBeNull();
+    expect(await tryUpload(owner.client, files.reupload)).not.toBeNull();
+  });
+
+  it("a file the service role replaces after its claim is not removed (verification)", async () => {
     const run = sql(`select private.cleanup_begin_run('delete', 'manual');`);
     sql(`select private.cleanup_process_records(${run}); select private.cleanup_report_files(${run});`);
     const claim = await admin.rpc("cleanup_claim_file", { p_run_id: Number(run), p_bucket_id: BUCKET, p_object_path: files.changed });
@@ -184,7 +236,8 @@ describe.skipIf(!enabled)("cleanup job on the local Supabase stack", () => {
     expect(exists(files.changed)).toBe(true);
   });
 
-  it("a delete run removes only the orphans, detects a replacement in the last moment, and survives a Storage failure", async () => {
+  it("a delete run removes only the orphans, refuses an owner's last-moment overwrite, detects a service-role one, and survives a Storage failure", async () => {
+    const ownerAttempts: (string | null)[] = [];
     const real = deps();
     const storage: CleanupStorage = {
       remove: async (bucket, paths) =>
@@ -195,13 +248,22 @@ describe.skipIf(!enabled)("cleanup job on the local Supabase stack", () => {
       storage,
       requestedMode: "delete",
       deadline: later(),
-      // Someone replaces the file between the final check and the removal.
+      // Someone tries to replace the file between the final check and the removal.
       beforeRemove: async (file) => {
+        if (file.object_path === files.sledRace) {
+          const error = await tryUpload(owner.client, files.sledRace, { bucket: SLED_BUCKET, upsert: true });
+          ownerAttempts.push(error?.message ?? null);
+        }
+        // The service role bypasses storage policies (only the job and administrators hold it).
         if (file.object_path === files.race) await upload(admin, files.race, { upsert: true });
       },
     });
     expect(report).toMatchObject({ status: "completed", mode: "delete" });
-    expect(report.removal).toMatchObject({ removed: 1, replaced: 1, failed: 1 });
+    expect(report.removal).toMatchObject({ removed: 2, replaced: 1, failed: 1 });
+    expect(ownerAttempts).toHaveLength(1);
+    expect(ownerAttempts[0]).not.toBeNull();
+    expect(claimStatus(files.sledRace, SLED_BUCKET)).toBe("deleted");
+    expect(exists(files.sledRace, SLED_BUCKET)).toBe(false);
 
     expect(exists(files.mech)).toBe(false);
     expect(claimStatus(files.mech)).toBe("deleted");

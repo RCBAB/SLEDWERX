@@ -7,7 +7,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set search_path = public, extensions;
 
-select plan(178);
+select plan(188);
 
 insert into auth.users (id, email, email_confirmed_at) values
   ('c1111111-1111-1111-1111-111111111111', 'cl-owner@example.com',  now()),
@@ -261,8 +261,12 @@ select is((select count(*)::int from pg_proc p, unnest(array['anon', 'authentica
            where (p.proname like 'cleanup\_%' or p.proname like 'storage\_%' or p.proname like '%cleanup%' or p.proname = 'purge_expired_records'
                   or p.proname like 'expired\_record%')
              and p.pronamespace in ('public'::regnamespace, 'private'::regnamespace)
+             and p.proname <> 'storage_path_writable'
              and has_function_privilege(r.role, p.oid, 'execute')), 0,
   'visitors and signed-in users cannot run any cleanup function');
+select is((select string_agg(r.role, ',' order by r.role) from unnest(array['anon', 'authenticated', 'service_role']) r(role)
+           where has_function_privilege(r.role, 'private.storage_path_writable(text, text)', 'execute')), 'authenticated',
+  'only the storage policies'' path check is callable by signed-in users (it returns a yes/no for one path)');
 select is((select count(*)::int from pg_proc p where p.pronamespace = 'public'::regnamespace and p.proname like 'cleanup\_%'
            and has_function_privilege('service_role', p.oid, 'execute')), 8,
   'the service role can run the eight cleanup API functions');
@@ -377,8 +381,11 @@ reset role;
 set local request.jwt.claims = '';
 select ok(exists (select 1 from storage.objects where name = pg_temp.v('sus_mech')),
   'mechanics still cannot delete photo files (storage policy unchanged)');
-select is((select count(*)::int from pg_policies where schemaname = 'storage' and policyname like 'SledWerx%'), 10,
-  'the ten SledWerx storage policies are unchanged');
+select is((select count(*)::int from pg_policies where schemaname = 'storage' and policyname like 'SledWerx%' and permissive = 'PERMISSIVE'), 10,
+  'the ten existing SledWerx storage policies are unchanged');
+select is((select string_agg(cmd || ':' || permissive, ',' order by cmd) from pg_policies
+           where schemaname = 'storage' and policyname like 'SledWerx cleanup:%'), 'INSERT:RESTRICTIVE,UPDATE:RESTRICTIVE',
+  'the cleanup adds only two restrictive storage policies (uploads and overwrites)');
 
 -- ---------------------------------------------------------------------------
 -- Report-only run
@@ -623,6 +630,8 @@ update private.cleanup_settings set max_records_per_run = 200;
 -- ---------------------------------------------------------------------------
 -- Claiming files (delete runs)
 -- ---------------------------------------------------------------------------
+insert into t values ('sled_claim', pg_temp.v('sled') || '/' || gen_random_uuid() || '.jpg');
+select pg_temp.object('sled-photos', pg_temp.v('sled_claim'), interval '10 days');
 select throws_ok($$ select private.cleanup_claim_file(pg_temp.v('run_report')::bigint, 'suspension-photos', pg_temp.v('sus_mech')) $$,
   '55000', null, 'a report run cannot claim files');
 insert into t select 'run_files', pg_temp.run('delete')::text;
@@ -663,6 +672,39 @@ select throws_ok($$ select private.cleanup_record_file_result(pg_temp.v('run_fil
 select throws_ok($$ insert into public.suspension_photos (sled_id, revision_id, path)
                     values (pg_temp.v('sled')::uuid, pg_temp.v('rev_keep')::uuid, pg_temp.v('sus_24h')) $$,
   '55006', 'This photo was removed. Add it again.', 'a removed path can never be attached to a record again');
+
+-- Claimed files cannot be overwritten or uploaded again (restrictive storage policies).
+select is((private.cleanup_claim_file(pg_temp.v('run_files')::bigint, 'sled-photos', pg_temp.v('sled_claim')) ->> 'claimed')::boolean, true,
+  'an unused snowmobile photo is claimed');
+set local role authenticated;
+select pg_temp.as_user('c1111111-1111-1111-1111-111111111111');
+update storage.objects set metadata = metadata || '{"eTag": "\"overwritten\""}' where bucket_id = 'sled-photos' and name = pg_temp.v('sled_claim');
+update storage.objects set metadata = metadata || '{"eTag": "\"replaced\""}' where bucket_id = 'sled-photos' and name = pg_temp.v('sled_photo');
+reset role;
+set local request.jwt.claims = '';
+select is((select metadata ->> 'eTag' from storage.objects where name = pg_temp.v('sled_claim')), '"' || md5(pg_temp.v('sled_claim')) || '"',
+  'an owner cannot overwrite a claimed photo');
+select is((select metadata ->> 'eTag' from storage.objects where name = pg_temp.v('sled_photo')), '"replaced"',
+  'an owner can still replace an unclaimed snowmobile photo (existing permission)');
+set local role authenticated;
+select pg_temp.as_user('c1111111-1111-1111-1111-111111111111');
+select set_config('storage.allow_delete_query', 'true', true);
+delete from storage.objects where bucket_id = 'sled-photos' and name = pg_temp.v('sled_claim');
+select set_config('storage.allow_delete_query', 'false', true);
+select throws_ok($$ insert into storage.objects (bucket_id, name, metadata) values ('sled-photos', pg_temp.v('sled_claim'), '{"eTag": "x", "size": 1}') $$,
+  '42501', null, 'after removing a claimed photo, an owner cannot upload a new one at the same path');
+select lives_ok($$ insert into storage.objects (bucket_id, name, metadata)
+                    values ('sled-photos', pg_temp.v('sled') || '/' || gen_random_uuid() || '.jpg', '{"eTag": "x", "size": 1}') $$,
+  'uploads to new paths work as before');
+select pg_temp.as_user('c3333333-3333-3333-3333-333333333333');
+select throws_ok($$ insert into storage.objects (bucket_id, name, metadata) values ('suspension-photos', pg_temp.v('sus_24h'), '{"eTag": "x", "size": 1}') $$,
+  '42501', null, 'nobody can upload at a path the cleanup removed');
+select lives_ok($$ insert into storage.objects (bucket_id, name, metadata)
+                    values ('suspension-photos', pg_temp.v('sled') || '/' || pg_temp.v('rev_keep') || '/' || gen_random_uuid() || '.jpg', '{"eTag": "x", "size": 1}') $$,
+  'a mechanic''s adjustment-photo uploads to new paths work as before');
+reset role;
+set local request.jwt.claims = '';
+select ok(not exists (select 1 from storage.objects where name = pg_temp.v('sled_claim')), 'owners can still remove a claimed photo (existing permission)');
 
 -- Attached between the report and the claim: the record wins.
 insert into public.sled_issue_photos (issue_id, sled_id, path) values (pg_temp.v('iss_act')::uuid, pg_temp.v('sled')::uuid, pg_temp.v('iss_orphan'));

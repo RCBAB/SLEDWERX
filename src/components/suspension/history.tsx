@@ -231,12 +231,14 @@ function RevisionCard({
               const canEdit = canEditSuspensionFeedback(role, feedback.createdBy, userId);
               return (
                 <li key={feedback.id} className="rounded-xl border border-white/10 bg-background/40 px-3 py-2" data-testid="feedback">
-                  <div className="flex items-center gap-x-3">
-                    <RatingBadge rating={feedback.rating} />
-                    <p className="min-w-0 flex-1 text-sm text-muted">
-                      <span className="whitespace-nowrap">Ridden {formatDate(feedback.riddenOn)}</span>{" "}
-                      <span className="whitespace-nowrap">· {feedback.createdByName}</span>
-                    </p>
+                  <div className="flex items-start gap-x-3">
+                    {/* Badge, then the ride date and author underneath: room to wrap on the narrowest phones. */}
+                    <div className="min-w-0 flex-1">
+                      <RatingBadge rating={feedback.rating} />
+                      <p className="mt-1 break-words text-sm text-muted">
+                        Ridden {formatDate(feedback.riddenOn)} · {feedback.createdByName}
+                      </p>
+                    </div>
                     {canEdit || can.canRemove ? (
                       <div className="-my-1 flex shrink-0 gap-1">
                         {canEdit ? (

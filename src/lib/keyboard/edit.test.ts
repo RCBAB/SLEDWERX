@@ -104,3 +104,74 @@ describe("± (suspension number fields only)", () => {
     expect(applyKey(at("12"), { kind: "char", char: "-" }, "decimal").value).toBe("12");
   });
 });
+
+describe("number pad sequences (Checkpoint 7)", () => {
+  type Key = string; // a digit, ".", "±", "⌫" (backspace) or "C" (clear)
+  const run = (keys: Key[], start = "", caret?: number) => {
+    let state: EditState = { value: start, start: caret ?? start.length, end: caret ?? start.length };
+    for (const key of keys) {
+      const action =
+        key === "±"
+          ? ({ kind: "negate" } as const)
+          : key === "⌫"
+            ? ({ kind: "backspace" } as const)
+            : key === "C"
+              ? ({ kind: "clear" } as const)
+              : char(key);
+      state = applyKey(state, action, "decimal");
+    }
+    return state;
+  };
+  const isNumber = (v: string) => /^-?\d+(\.\d+)?$/.test(v);
+
+  it.each([
+    [["1", ".", "5"], "1.5"],
+    [["1", ".", "5", "±"], "-1.5"],
+    [["±", "1", ".", "5"], "-1.5"],
+    [["0", ".", "5"], "0.5"],
+    [["±", "0", ".", "5"], "-0.5"],
+    [["1", "2"], "12"],
+  ])("types %j as %s", (keys, value) => {
+    expect(run(keys).value).toBe(value);
+    expect(isNumber(run(keys).value)).toBe(true);
+  });
+
+  it("can't produce 4-3-12: the minus stays in front, only once", () => {
+    // 4, ±, 3, ±, 1, 2 -> the sign flips; a second minus never appears.
+    const state = run(["4", "±", "3", "±", "1", "2"]);
+    expect(state.value).toBe("4312");
+    expect(run(["4", "±", "3", "±", "±", "1", "2"]).value).toBe("-4312");
+    for (const keys of [
+      ["4", "±", "3", "±", "1", "2"],
+      ["±", "±", "±", "4"],
+      ["4", "±", "±", "±", "3"],
+    ]) {
+      expect((run(keys).value.match(/-/g) ?? []).length).toBeLessThanOrEqual(1);
+      expect(run(keys).value.indexOf("-")).toBeLessThanOrEqual(0);
+    }
+  });
+
+  it("a digit typed in front of the minus goes right after it", () => {
+    expect(run(["3"], "-12", 0)).toEqual({ value: "-312", start: 2, end: 2 });
+    expect(run(["."], "-12", 0)).toEqual({ value: "-.12", start: 2, end: 2 });
+  });
+
+  it("can't produce 1.2.3: only one decimal point", () => {
+    expect(run(["1", ".", "2", ".", "3"]).value).toBe("1.23");
+    expect(run(["±", "1", ".", "2", ".", "3"]).value).toBe("-1.23");
+  });
+
+  it("keeps normal editing: backspace, clear and cursor position", () => {
+    expect(run(["1", ".", "5", "±", "⌫"]).value).toBe("-1.");
+    expect(run(["⌫", "⌫"], "-1", 1)).toEqual({ value: "1", start: 0, end: 0 });
+    expect(run(["C"], "-12.5").value).toBe("");
+    expect(run(["7"], "-12", 2)).toEqual({ value: "-172", start: 3, end: 3 });
+  });
+
+  it("leaves pads without ± exactly as before (mileage, hours, costs)", () => {
+    // No minus can be typed there, so nothing changes for them.
+    expect(applyKey({ value: "12", start: 0, end: 0 }, char("3"), "decimal")).toEqual({ value: "312", start: 1, end: 1 });
+    expect(applyKey({ value: "1,200", start: 5, end: 5 }, char("5"), "decimal").value).toBe("1,2005");
+    expect(applyKey({ value: "12", start: 2, end: 2 }, char("-"), "decimal").value).toBe("12");
+  });
+});

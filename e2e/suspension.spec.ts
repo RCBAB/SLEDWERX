@@ -1,3 +1,4 @@
+import AxeBuilder from "@axe-core/playwright";
 import { createClient } from "@supabase/supabase-js";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
@@ -1058,4 +1059,247 @@ test("Wall Display keyboard: ± only on suspension values; negatives save; milea
   await label(meters, "Odometer (miles)").click();
   await expect(keyboard(page)).toHaveAttribute("data-mode", "decimal");
   await expect(keyboard(page).getByRole("button", { name: "Plus or minus" })).toHaveCount(0);
+});
+
+// ---------------------------------------------------------------------------
+// Checkpoint 7: roles end to end, keyboard sequences, accessibility
+// ---------------------------------------------------------------------------
+test("roles on the Garage Board and beyond: editor and owner full, mechanic adjusts, viewer reads, others nothing", async ({
+  page,
+  browser,
+}) => {
+  const ownerEmail = uniqueEmail("sus-r7-o");
+  const editorEmail = uniqueEmail("sus-r7-e");
+  const mechanicEmail = uniqueEmail("sus-r7-m");
+  const viewerEmail = uniqueEmail("sus-r7-v");
+  const strangerEmail = uniqueEmail("sus-r7-x");
+  await signUp(page, ownerEmail);
+  const sledId = await addSled(page, { make: "Arctic Cat", model: "Riot", year: "2024", odometer: "300", nickname: "Riot" });
+  await openSuspension(page, sledId);
+  await addSetting(page, { name: "Compression", zone: "Left ski shock", chip: "Clicks" });
+  await createSetup(page, "Trail", { activate: true });
+
+  const contexts = await Promise.all([1, 2, 3, 4].map(() => browser.newContext()));
+  const [editor, mechanic, viewer, stranger] = await Promise.all(contexts.map((c) => c.newPage()));
+  await signUp(editor, editorEmail);
+  await signUp(mechanic, mechanicEmail);
+  await signUp(viewer, viewerEmail);
+  await signUp(stranger, strangerEmail);
+  await shareSled(ownerEmail, sledId, editorEmail, "editor");
+  await shareSled(ownerEmail, sledId, mechanicEmail, "mechanic");
+  await shareSled(ownerEmail, sledId, viewerEmail, "viewer");
+
+  // Editor, on the Garage Board: views, adjusts, adds feedback, opens the full page and manages there.
+  await editor.goto("/garage/board");
+  const editorBoard = summaryIn(garageSled(editor, "Riot"));
+  await expect(editorBoard.getByTestId("suspension-active")).toHaveText("Trail · Rev 1");
+  await editorBoard.getByRole("button", { name: "View suspension setup on Riot" }).click();
+  await expect(editor.getByRole("dialog", { name: "Suspension setup" }).getByTestId("active-value")).toHaveText(["Compression—"]);
+  await editor.getByRole("dialog", { name: "Suspension setup" }).getByRole("button", { name: "Close", exact: true }).click();
+  await quickAdjust(editor, editorBoard, "Riot", { "Left ski shock: Compression": "11" });
+  await expect(editorBoard.getByTestId("suspension-active")).toHaveText("Trail · Rev 2");
+  await quickFeedback(editor, editorBoard, "Riot", "No change");
+  await expect(editorBoard.getByTestId("feedback-rating")).toHaveText("No change");
+  await editorBoard.getByRole("link", { name: "Open suspension tuning for Riot" }).click();
+  await expect(editor).toHaveURL(new RegExp(`/garage/${sledId}/suspension$`));
+  await expect(visible(editor.getByRole("button", { name: "New setup" }))).toBeVisible();
+  await expect(visible(editor.getByRole("button", { name: "Add setting", exact: true }))).toBeVisible();
+  await expect(suspensionPage(editor).getByRole("heading", { name: "Recently deleted" })).toBeVisible();
+
+  // Owner keeps full access, including what the editor saved.
+  await page.goto("/garage/board");
+  const ownerBoard = summaryIn(garageSled(page, "Riot"));
+  await expect(ownerBoard.getByRole("button", { name: /View suspension setup|Adjust suspension|Add ride feedback/ })).toHaveCount(3);
+  await openSuspension(page, sledId);
+  await expect(revisionCard(page, 2).getByTestId("feedback")).toHaveCount(1);
+  await expect(selectedSetup(page).getByRole("button", { name: "Rename" })).toBeVisible();
+
+  // Mechanic: adjusts and adds feedback; manages nothing.
+  await mechanic.goto("/garage/board");
+  const mechanicBoard = summaryIn(garageSled(mechanic, "Riot"));
+  await expect(mechanicBoard.getByRole("button", { name: /View suspension setup|Adjust suspension|Add ride feedback/ })).toHaveCount(3);
+  await openSuspension(mechanic, sledId);
+  await expect(
+    suspensionPage(mechanic).getByRole("button", { name: /New setup|Add setting|Set active|Rename|Delete|Restore Trail/ }),
+  ).toHaveCount(0);
+  await expect(suspensionPage(mechanic).getByRole("heading", { name: /Settings list|Recently deleted/ })).toHaveCount(0);
+
+  // Viewer: read-only everywhere.
+  await viewer.goto("/garage/board");
+  const viewerBoard = summaryIn(garageSled(viewer, "Riot"));
+  await expect(viewerBoard.getByRole("button")).toHaveText(["View setup"]);
+  await openSuspension(viewer, sledId);
+  await expect(
+    suspensionPage(viewer).getByRole("button", {
+      name: /Record adjustment|Add ride feedback|Restore rev|New setup|Add setting|Rename|Delete/,
+    }),
+  ).toHaveCount(0);
+
+  // Someone without access: not on their board, no page, and the API refuses reads and writes.
+  await stranger.goto("/garage/board");
+  await expect(garage(stranger).getByRole("article", { name: "Riot" })).toHaveCount(0);
+  await stranger.goto(`/garage/${sledId}/suspension`);
+  await expect(stranger.getByRole("heading", { name: "Snowmobile not found" })).toBeVisible();
+  const api = await apiAs(strangerEmail);
+  for (const table of [
+    "suspension_settings",
+    "suspension_setups",
+    "suspension_revisions",
+    "suspension_feedback",
+    "suspension_photos",
+  ] as const) {
+    const { data } = await api.from(table).select("id").eq("sled_id", sledId);
+    expect(data ?? []).toHaveLength(0);
+  }
+  expect((await api.from("suspension_settings").insert({ sled_id: sledId, name: "Sneaky", zone: "rear_general" })).error).not.toBeNull();
+  const owner = await apiAs(ownerEmail);
+  const { data: setup } = await owner.from("suspension_setups").select("id").eq("sled_id", sledId).single();
+  const { data: latest } = await owner
+    .from("suspension_revisions")
+    .select("id")
+    .eq("setup_id", setup!.id)
+    .order("revision_number", { ascending: false })
+    .limit(1)
+    .single();
+  const attempt = await api.rpc("save_suspension_revision", {
+    p_setup_id: setup!.id,
+    p_base_revision_id: latest!.id,
+    p_changes: {},
+    p_idempotency_key: crypto.randomUUID(),
+  });
+  expect(attempt.error).not.toBeNull();
+  expect((await api.rpc("activate_suspension_setup", { p_setup_id: setup!.id })).error).not.toBeNull();
+  expect((await api.storage.from("suspension-photos").list(sledId)).data ?? []).toHaveLength(0);
+
+  await Promise.all(contexts.map((c) => c.close()));
+});
+
+test("Wall Display keyboard: only valid numbers can be typed; invalid text is refused on save", async ({ page }) => {
+  await signUp(page, uniqueEmail("sus-seq"));
+  const sledId = await addSled(page, { make: "Lynx", model: "Rave", year: "2021", odometer: "800", nickname: "Rave" });
+  await openSuspension(page, sledId);
+  await addSetting(page, { name: "Preload", zone: "Left ski shock", chip: "Turns" });
+  await createSetup(page, "Trail", { activate: true });
+  await page.goto("/garage/board");
+  await visible(page.getByRole("button", { name: "Wall display" })).click();
+  await summaryIn(garageSled(page, "Rave")).getByRole("button", { name: "Adjust suspension on Rave" }).click();
+  const dialog = page.getByRole("dialog", { name: "Record adjustment" });
+  const preload = label(dialog, "Left ski shock: Preload", true);
+  await preload.click();
+  await expect(keyboard(page)).toHaveAttribute("data-signed", "true");
+
+  const typed = async (keys: string[]) => {
+    await tapKeys(page, ["Clear", ...keys]);
+    return preload.inputValue();
+  };
+  const pm = "Plus or minus";
+  const dot = "Decimal point";
+  expect(await typed(["1", dot, "5"])).toBe("1.5");
+  expect(await typed(["1", dot, "5", pm])).toBe("-1.5");
+  expect(await typed(["0", dot, "5"])).toBe("0.5");
+  expect(await typed([pm, "0", dot, "5"])).toBe("-0.5");
+  expect(await typed(["1", "2"])).toBe("12");
+  // 4-3-12 and 1.2.3 can't be typed on the pad.
+  expect(await typed(["4", pm, "3", pm, "1", "2"])).toBe("4312");
+  expect(await typed(["1", dot, "2", dot, "3"])).toBe("1.23");
+  // A digit typed in front of the minus goes after it.
+  await typed([pm, "1", "2"]);
+  await preload.evaluate((el: HTMLInputElement) => el.setSelectionRange(0, 0));
+  await tapKeys(page, ["3"]);
+  await expect(preload).toHaveValue("-312");
+  // The Save row stays above the keyboard.
+  const keyboardTop = (await keyboard(page).boundingBox())!.y;
+  const save = dialog.getByRole("button", { name: "Save adjustment" });
+  expect((await save.boundingBox())!.y + (await save.boundingBox())!.height).toBeLessThanOrEqual(keyboardTop + 1);
+
+  // Typed with a physical keyboard instead, invalid text is flagged and never saved.
+  for (const bad of ["4-3-12", "1.2.3"]) {
+    await preload.fill(bad);
+    await expect(dialog.getByText("Enter a number for Preload.")).toBeVisible();
+    await save.click();
+    await expect(dialog.getByText("Enter a number for Preload.")).toBeVisible();
+    await expect(dialog).toBeVisible();
+  }
+  await preload.fill("-0.5");
+  await save.click();
+  await expect(dialog).toBeHidden({ timeout: 15_000 });
+  await expect(summaryIn(garageSled(page, "Rave")).getByTestId("suspension-active")).toHaveText("Trail · Rev 2");
+});
+
+// Pre-existing, app-wide: white text on the brand accent (#ff3b1f) is 3.56:1. Reported
+// separately (a design-token change for every screen); all other rules are checked.
+const axeFor = (page: Page, include: string) => new AxeBuilder({ page }).include(include).disableRules(["color-contrast"]);
+const violations = async (builder: AxeBuilder) =>
+  (await builder.analyze()).violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(" ")).join(", ")}`);
+
+test("accessibility: suspension screens pass automated checks; no sideways scrolling; 44 px targets", async ({ page }) => {
+  await signUp(page, uniqueEmail("sus-a11y"));
+  const sledId = await addSled(page, { make: "Polaris", model: "RMK", year: "2022", odometer: "2000", hours: "150", nickname: "Blue" });
+  await openSuspension(page, sledId);
+  await addSetting(page, { name: "Compression", zone: "Left ski shock", chip: "Clicks" });
+  await addSetting(page, { name: "Spring", zone: "Springs & limiter strap", text: true });
+  await createSetup(page, "Trail", { activate: true });
+  await adjustValues(page, { "Left ski shock: Compression": "12" }, "Baseline");
+  await addFeedback(page, 2, "Improved", "Smooth");
+
+  const noSidewaysScroll = async () =>
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
+  const smallTargets = (scope: string) =>
+    page.evaluate((sel) => {
+      const out: string[] = [];
+      for (const root of document.querySelectorAll(sel))
+        for (const el of root.querySelectorAll<HTMLElement>("button, a, select, summary, input:not([type=hidden]):not(.sr-only)")) {
+          const r = el.getBoundingClientRect();
+          if (r.width && r.height && (r.width < 43.5 || r.height < 43.5))
+            out.push(`${el.tagName} ${el.getAttribute("aria-label") ?? el.textContent}`);
+        }
+      return out;
+    }, scope);
+
+  // The Suspension page, and its sheets (focus moves into each).
+  await expect(await violations(axeFor(page, '[data-testid="suspension-page"]'))).toEqual([]);
+  await noSidewaysScroll();
+  expect(await smallTargets('[data-testid="suspension-page"]')).toEqual([]);
+  for (const [button, title] of [
+    ["Record adjustment", "Record adjustment"],
+    ["Add ride feedback to rev 2", "Ride feedback"],
+    ["Restore rev 1", "Restore revision"],
+    ["Photos of rev 2", "Adjustment photos"],
+  ] as const) {
+    await suspensionPage(page).getByRole("button", { name: button }).first().click();
+    const dialog = page.getByRole("dialog", { name: title });
+    await expect(dialog).toBeVisible();
+    expect(await page.evaluate(() => Boolean(document.activeElement?.closest("dialog[open]")))).toBe(true);
+    await expect(await violations(axeFor(page, "dialog[open]"))).toEqual([]);
+    await page.keyboard.press("Escape");
+    await expect(dialog).toBeHidden();
+  }
+
+  // A small phone (360 px): history metadata never runs under the feedback buttons; no sideways scrolling.
+  const size = page.viewportSize()!;
+  await page.setViewportSize({ width: 360, height: 740 });
+  await noSidewaysScroll();
+  const overlaps = await page.evaluate(() => {
+    let n = 0;
+    for (const li of document.querySelectorAll('[data-testid="feedback"]')) {
+      const text = li.querySelector("p")!.getBoundingClientRect();
+      for (const b of li.querySelectorAll("button")) {
+        const r = b.getBoundingClientRect();
+        if (r.width && r.left < text.right && r.right > text.left && r.top < text.bottom && r.bottom > text.top) n++;
+      }
+    }
+    return n;
+  });
+  expect(overlaps).toBe(0);
+  await page.setViewportSize(size);
+
+  // The sled page section and the Garage Board.
+  await page.goto(`/garage/${sledId}`);
+  await expect(await violations(axeFor(page, "#suspension"))).toEqual([]);
+  expect(await smallTargets("#suspension")).toEqual([]);
+  await noSidewaysScroll();
+  await page.goto("/garage/board");
+  await expect(await violations(axeFor(page, '[data-testid="suspension-summary"]'))).toEqual([]);
+  expect(await smallTargets('[data-testid="suspension-summary"]')).toEqual([]);
+  await noSidewaysScroll();
 });

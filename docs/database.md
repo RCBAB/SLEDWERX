@@ -672,6 +672,11 @@ whose record was later purged) is removed by the Migration 8 cleanup below
 the photo tests in `e2e/suspension.spec.ts` (real storage policies: the
 owner/editor cleanup works, a mechanic's file stays unreferenced).
 
+Restoring removed photos from the app is deferred to a future release
+(Checkpoint 7 decision); removed photos stay in Recently Deleted in the
+database for 30 days. The features, roles and screens are described in
+[suspension-tuning.md](suspension-tuning.md).
+
 Not included (future phase): test sessions and manual ride logs. See also
 the purge gap under "Recently Deleted".
 

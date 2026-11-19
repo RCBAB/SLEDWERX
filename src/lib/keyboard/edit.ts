@@ -70,6 +70,12 @@ export function applyKey(state: EditState, action: KeyAction, mode: KeyboardMode
   }
   if (!allowedChar(mode, action.char, before + after)) return { value: state.value, start, end };
   if (maxLength != null && maxLength >= 0 && (before + action.char + after).length > maxLength) return { value: state.value, start, end };
+  // Negative numbers (± fields): the minus stays the first character. A digit or
+  // point typed in front of it goes right after it, so "4-12" can't be typed.
+  if (mode !== "text" && before === "" && after.startsWith("-")) {
+    const value = `-${action.char}${after.slice(1)}`;
+    return { value, start: 1 + action.char.length, end: 1 + action.char.length };
+  }
   const value = before + action.char + after;
   const caret = start + action.char.length;
   return { value, start: caret, end: caret };

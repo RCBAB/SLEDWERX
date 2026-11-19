@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { afterChar, allowedChar, applyKey, keyboardModeFor, nextShift, type EditState } from "./edit";
+import { afterChar, allowedChar, allowsNegative, applyKey, keyboardModeFor, nextShift, type EditState } from "./edit";
 
 const s = (value: string, start = value.length, end = start): EditState => ({ value, start, end });
 const char = (c: string) => ({ kind: "char" as const, char: c });
@@ -67,5 +67,40 @@ describe("shift", () => {
     expect(afterChar("lock")).toBe("lock");
     expect(nextShift("lock", false)).toBe("off");
     expect(nextShift("once", false)).toBe("off");
+  });
+});
+
+describe("± (suspension number fields only)", () => {
+  const at = (value: string, start = value.length, end = start) => ({ value, start, end });
+
+  it("is offered only to fields that opt in", () => {
+    expect(allowsNegative({ dataset: { allowNegative: "true" } })).toBe(true);
+    expect(allowsNegative({ dataset: {} })).toBe(false);
+    expect(allowsNegative({})).toBe(false);
+  });
+
+  it("flips the sign and keeps the cursor on the same digit", () => {
+    expect(applyKey(at("12"), { kind: "negate" }, "decimal")).toEqual({ value: "-12", start: 3, end: 3 });
+    expect(applyKey(at("-12"), { kind: "negate" }, "decimal")).toEqual({ value: "12", start: 2, end: 2 });
+    expect(applyKey(at("2.5", 1), { kind: "negate" }, "decimal")).toEqual({ value: "-2.5", start: 2, end: 2 });
+    expect(applyKey(at("-2.5", 0), { kind: "negate" }, "decimal")).toEqual({ value: "2.5", start: 0, end: 0 });
+  });
+
+  it("starts a negative number in an empty field, then digits follow", () => {
+    let state = applyKey(at(""), { kind: "negate" }, "decimal");
+    expect(state).toEqual({ value: "-", start: 1, end: 1 });
+    state = applyKey(state, { kind: "char", char: "1" }, "decimal");
+    state = applyKey(state, { kind: "char", char: "." }, "decimal");
+    state = applyKey(state, { kind: "char", char: "5" }, "decimal");
+    expect(state.value).toBe("-1.5");
+  });
+
+  it("respects the field's length limit and does nothing in text fields", () => {
+    expect(applyKey(at("123"), { kind: "negate" }, "decimal", 3).value).toBe("123");
+    expect(applyKey(at("abc"), { kind: "negate" }, "text").value).toBe("abc");
+  });
+
+  it("never lets a minus be typed as a character on the number pad", () => {
+    expect(applyKey(at("12"), { kind: "char", char: "-" }, "decimal").value).toBe("12");
   });
 });

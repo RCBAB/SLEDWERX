@@ -10,6 +10,7 @@ import { Sheet } from "@/components/board/sheet";
 import { useRefreshOnReturn } from "@/components/board/use-refresh-on-return";
 import { SledPhoto } from "@/components/sleds/sled-photo";
 import { SledIssues } from "@/components/issues/issues";
+import { SuspensionSummary } from "@/components/suspension/suspension-summary";
 import { StatusBadge } from "@/components/sleds/status-badge";
 import { UpdateMetersButton } from "@/components/sleds/update-meters";
 import { Button, ButtonLink } from "@/components/ui/button";
@@ -96,15 +97,11 @@ export function GarageBoard({ data, initialWall }: { data: GarageBoardData; init
       data-testid="garage-board"
       data-layout={layout}
       data-wall={wall.active ? "on" : "off"}
-      className={cn(
-        wall.active && "fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-background px-4 pb-10 pt-4 sm:px-8",
-      )}
+      className={cn(wall.active && "fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-background px-4 pb-10 pt-4 sm:px-8")}
     >
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="font-display text-4xl font-extrabold uppercase italic tracking-tight sm:text-5xl">
-            Garage Board
-          </h1>
+          <h1 className="font-display text-4xl font-extrabold uppercase italic tracking-tight sm:text-5xl">Garage Board</h1>
           {wall.active ? <WallClock updatedAt={wall.updatedAt} /> : null}
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -120,14 +117,7 @@ export function GarageBoard({ data, initialWall }: { data: GarageBoardData; init
           </div>
           {wall.active ? (
             <>
-              <Button
-                type="button"
-                variant="secondary"
-                size="lg"
-                className="h-14"
-                aria-pressed={keyboard}
-                onClick={toggleKeyboard}
-              >
+              <Button type="button" variant="secondary" size="lg" className="h-14" aria-pressed={keyboard} onClick={toggleKeyboard}>
                 <Keyboard aria-hidden className="size-5" />
                 Keyboard: {keyboard ? "On" : "Off"}
               </Button>
@@ -453,6 +443,23 @@ function BoardIssues({ entry, userId, big }: SledProps) {
   );
 }
 
+/** The active suspension setup, with View / Adjust / Ride feedback by role (Phase 6.2). */
+function BoardSuspension({ entry, big }: SledProps) {
+  const current = currentMeters(entry);
+  return (
+    <SuspensionSummary
+      sledId={entry.sled.id}
+      sledName={sledName(entry.sled)}
+      active={entry.suspension}
+      role={entry.role}
+      odometer={current.odometer}
+      engineHours={current.engineHours}
+      variant="board"
+      big={big}
+    />
+  );
+}
+
 /** Full Cards: photo, name, mileage, overall status, and every task with Done. */
 function SledCard(props: SledProps) {
   const { entry, big, onOpen } = props;
@@ -511,6 +518,9 @@ function SledCard(props: SledProps) {
           <EmptyRows entry={entry} />
         )}
         <BoardIssues {...props} />
+        <div className="border-t border-white/10 pt-4">
+          <BoardSuspension {...props} />
+        </div>
         <div className="mt-auto">
           <SledActions {...props} />
         </div>
@@ -608,6 +618,9 @@ function SledTable(props: SledProps) {
           <BoardIssues {...props} />
         </div>
       ) : null}
+      <div className="border-t border-white/10 p-3">
+        <BoardSuspension {...props} />
+      </div>
       {entry.canComplete || entry.canManage || entry.canAddReading ? (
         <div className="border-t border-white/10 p-3">
           <SledActions {...props} />

@@ -324,7 +324,7 @@ export function FeedbackForm({
   onDone,
 }: {
   sledId: string;
-  revision: SuspensionRevision;
+  revision: Pick<SuspensionRevision, "id" | "number">;
   feedback?: SuspensionFeedback;
   onDone: () => void;
 }) {

@@ -65,7 +65,7 @@ async function createSetup(page: Page, name: string, options: { activate?: boole
 test("a new snowmobile starts blank; the owner builds the settings list and setups", async ({ page }) => {
   await signUp(page, uniqueEmail("sus-own"));
   const sledId = await addSled(page, { make: "Polaris", model: "RMK", year: "2022", odometer: "2000", hours: "150", nickname: "Blue" });
-  await visible(page.getByRole("link", { name: "Suspension", exact: true })).click();
+  await visible(page.getByRole("link", { name: "Open suspension tuning for Blue" })).click();
   await expect(page).toHaveURL(new RegExp(`/garage/${sledId}/suspension$`));
 
   // Nothing is pre-filled: no settings, no setups.
@@ -873,4 +873,189 @@ test("a file whose record can't be saved: owners and editors remove it; a mechan
   expect(await listed(`${sledId}/${b.revisionId}`)).toHaveLength(0);
 
   await Promise.all(contexts.map((c) => c.close()));
+});
+
+// ---------------------------------------------------------------------------
+// Checkpoint 6: sled page and Garage Board (Cards, Compact, Wall Display)
+// ---------------------------------------------------------------------------
+const garage = (page: Page) => visible(page.getByTestId("garage-board"));
+const garageSled = (page: Page, name: string) => garage(page).getByRole("article", { name, exact: true });
+const summaryIn = (scope: Locator) => scope.getByTestId("suspension-summary");
+const keyboard = (page: Page) => page.getByTestId("wall-keyboard");
+const tapKeys = async (page: Page, keys: string[]) => {
+  for (const key of keys) await keyboard(page).getByRole("button", { name: key, exact: true }).click();
+};
+
+async function quickAdjust(page: Page, scope: Locator, sledName: string, values: Record<string, string>) {
+  await scope.getByRole("button", { name: `Adjust suspension on ${sledName}` }).click();
+  const dialog = page.getByRole("dialog", { name: "Record adjustment" });
+  for (const [field, value] of Object.entries(values)) await label(dialog, field, true).fill(value);
+  await dialog.getByRole("button", { name: "Save adjustment" }).click();
+  await expect(dialog).toBeHidden({ timeout: 15_000 });
+}
+
+async function quickFeedback(page: Page, scope: Locator, sledName: string, rating: string) {
+  await scope.getByRole("button", { name: `Add ride feedback on ${sledName}` }).click();
+  const dialog = page.getByRole("dialog", { name: "Ride feedback" });
+  await dialog.getByText(rating, { exact: true }).click();
+  await dialog.getByRole("button", { name: "Save feedback" }).click();
+  await expect(dialog).toBeHidden({ timeout: 15_000 });
+}
+
+test("sled page: the Suspension section shows the active setup with quick adjust and feedback", async ({ page }) => {
+  await signUp(page, uniqueEmail("sus-page"));
+  const sledId = await addSled(page, { make: "Polaris", model: "RMK", year: "2022", odometer: "2000", hours: "150", nickname: "Blue" });
+  const section = visible(page.locator("#suspension"));
+  await expect(summaryIn(section).getByTestId("suspension-none")).toHaveText("No active setup");
+  await expect(summaryIn(section).getByRole("button")).toHaveCount(0);
+
+  await openSuspension(page, sledId);
+  await addSetting(page, { name: "Compression", zone: "Left ski shock", chip: "Clicks" });
+  await addSetting(page, { name: "Preload", zone: "Rear track shock", chip: "Turns" });
+  await createSetup(page, "Trail", { activate: true });
+
+  await page.goto(`/garage/${sledId}`);
+  await expect(summaryIn(section).getByTestId("suspension-active")).toHaveText("Trail · Rev 1");
+  await expect(summaryIn(section)).toContainText("No ride feedback yet");
+
+  // Adjust from the sled page: the collapsible form, the first zone open.
+  await summaryIn(section).getByRole("button", { name: "Adjust suspension on Blue" }).click();
+  const dialog = page.getByRole("dialog", { name: "Record adjustment" });
+  await expect(zoneToggle(dialog, "front_left_shock")).toHaveAttribute("aria-expanded", "true");
+  await expect(zoneToggle(dialog, "rear_rear_shock")).toHaveAttribute("aria-expanded", "false");
+  await expect(label(dialog, "Mileage", true)).toHaveValue("2000");
+  await label(dialog, "Left ski shock: Compression", true).fill("12");
+  await zoneToggle(dialog, "rear_rear_shock").click();
+  await label(dialog, "Rear track shock: Preload", true).fill("-1");
+  await dialog.getByRole("button", { name: "Save adjustment" }).click();
+  await expect(dialog).toBeHidden({ timeout: 15_000 });
+  await expect(summaryIn(section)).toContainText("Adjustment saved.");
+  await expect(summaryIn(section).getByTestId("suspension-active")).toHaveText("Trail · Rev 2");
+
+  await quickFeedback(page, summaryIn(section), "Blue", "Improved");
+  await expect(summaryIn(section).getByTestId("suspension-feedback").getByTestId("feedback-rating")).toHaveText("Improved");
+
+  await summaryIn(section).getByRole("button", { name: "View suspension setup on Blue" }).click();
+  const view = page.getByRole("dialog", { name: "Suspension setup" });
+  await expect(view.getByTestId("active-value")).toHaveText(["Compression12 Clicks", "Preload-1 Turns"]);
+  await view.getByRole("button", { name: "Close" }).click();
+
+  // Nothing else on the page changed: mileage, readings and Ready.
+  await expect(visible(page.getByTestId("current-odometer"))).toHaveText("2,000 mi");
+  await expect(visible(page.getByTestId("reading-history")).getByRole("listitem")).toHaveCount(1);
+  await expect(visible(page.locator("#sled-name").locator("xpath=..").getByTestId("sled-status"))).toHaveAttribute("data-status", "ready");
+
+  await summaryIn(section).getByRole("link", { name: "Open suspension tuning for Blue" }).click();
+  await expect(page).toHaveURL(new RegExp(`/garage/${sledId}/suspension$`));
+  await expect(revisionCard(page, 2).getByTestId("feedback")).toHaveCount(1);
+});
+
+test("Garage Board: Cards, Compact and Wall Display show the setup; actions follow the role", async ({ page, browser }) => {
+  const ownerEmail = uniqueEmail("sus-gb-o");
+  const mechanicEmail = uniqueEmail("sus-gb-m");
+  const viewerEmail = uniqueEmail("sus-gb-v");
+  await signUp(page, ownerEmail);
+  const sledId = await addSled(page, { make: "Ski-Doo", model: "Summit", year: "2023", odometer: "500", nickname: "Summit" });
+  await openSuspension(page, sledId);
+  await addSetting(page, { name: "Compression", zone: "Left ski shock", chip: "Clicks" });
+  await createSetup(page, "Trail", { activate: true });
+
+  // Cards (default).
+  await page.goto("/garage/board");
+  const card = garageSled(page, "Summit");
+  await expect(summaryIn(card).getByTestId("suspension-active")).toHaveText("Trail · Rev 1");
+  await quickAdjust(page, summaryIn(card), "Summit", { "Left ski shock: Compression": "10" });
+  await expect(summaryIn(card).getByTestId("suspension-active")).toHaveText("Trail · Rev 2");
+  // The rest of the board is unchanged (no tasks yet, Ready).
+  await expect(card.getByTestId("sled-status")).toHaveAttribute("data-status", "ready");
+
+  // Compact.
+  await garage(page).getByRole("group", { name: "Layout" }).getByRole("button", { name: "Compact" }).click();
+  await quickFeedback(page, summaryIn(garageSled(page, "Summit")), "Summit", "Worse");
+  await expect(summaryIn(garageSled(page, "Summit")).getByTestId("feedback-rating")).toHaveText("Worse");
+
+  // Wall Display: large controls.
+  await visible(page.getByRole("button", { name: "Wall display" })).click();
+  await expect(garage(page)).toHaveAttribute("data-wall", "on");
+  const adjust = summaryIn(garageSled(page, "Summit")).getByRole("button", { name: "Adjust suspension on Summit" });
+  expect((await adjust.boundingBox())!.height).toBeGreaterThanOrEqual(56);
+  await visible(page.getByRole("button", { name: "Exit wall display" })).click();
+  await garage(page).getByRole("group", { name: "Layout" }).getByRole("button", { name: "Cards" }).click();
+
+  const contexts = await Promise.all([1, 2].map(() => browser.newContext()));
+  const [mechanic, viewer] = await Promise.all(contexts.map((c) => c.newPage()));
+  await signUp(mechanic, mechanicEmail);
+  await signUp(viewer, viewerEmail);
+  await shareSled(ownerEmail, sledId, mechanicEmail, "mechanic");
+  await shareSled(ownerEmail, sledId, viewerEmail, "viewer");
+
+  // Mechanic: adjusts and adds feedback from the board.
+  await mechanic.goto("/garage/board");
+  await quickAdjust(mechanic, summaryIn(garageSled(mechanic, "Summit")), "Summit", { "Left ski shock: Compression": "8" });
+  await expect(summaryIn(garageSled(mechanic, "Summit")).getByTestId("suspension-active")).toHaveText("Trail · Rev 3");
+  await quickFeedback(mechanic, summaryIn(garageSled(mechanic, "Summit")), "Summit", "Improved");
+
+  // Viewer: sees the setup and its values; no adjust or feedback.
+  await viewer.goto("/garage/board");
+  const viewerSummary = summaryIn(garageSled(viewer, "Summit"));
+  await expect(viewerSummary.getByTestId("suspension-active")).toHaveText("Trail · Rev 3");
+  await expect(viewerSummary.getByRole("button", { name: /Adjust suspension|Add ride feedback/ })).toHaveCount(0);
+  await viewerSummary.getByRole("button", { name: "View suspension setup on Summit" }).click();
+  await expect(viewer.getByRole("dialog", { name: "Suspension setup" }).getByTestId("active-value")).toHaveText(["Compression8 Clicks"]);
+
+  // My Snowmobiles is unchanged: no suspension there.
+  await page.goto("/garage");
+  await expect(visible(page.getByTestId("sled-card")).getByTestId("suspension-summary")).toHaveCount(0);
+  await Promise.all(contexts.map((c) => c.close()));
+});
+
+test("Wall Display keyboard: ± only on suspension values; negatives save; mileage pads unchanged", async ({ page }) => {
+  await signUp(page, uniqueEmail("sus-kb"));
+  const sledId = await addSled(page, { make: "Lynx", model: "Rave", year: "2021", odometer: "800", hours: "40", nickname: "Rave" });
+  await openSuspension(page, sledId);
+  await addSetting(page, { name: "Preload", zone: "Left ski shock", chip: "Turns" });
+  await addSetting(page, { name: "Spring", zone: "Left ski shock", text: true });
+  await createSetup(page, "Trail", { activate: true });
+
+  await page.goto("/garage/board");
+  await visible(page.getByRole("button", { name: "Wall display" })).click();
+  await expect(garage(page)).toHaveAttribute("data-wall", "on");
+  await summaryIn(garageSled(page, "Rave")).getByRole("button", { name: "Adjust suspension on Rave" }).click();
+  const dialog = page.getByRole("dialog", { name: "Record adjustment" });
+
+  // A suspension number: the number pad with ±.
+  const preload = label(dialog, "Left ski shock: Preload", true);
+  await preload.click();
+  await expect(keyboard(page)).toHaveAttribute("data-mode", "decimal");
+  await expect(keyboard(page)).toHaveAttribute("data-signed", "true");
+  await tapKeys(page, ["1", "Decimal point", "5", "Plus or minus"]);
+  await expect(preload).toHaveValue("-1.5");
+  await tapKeys(page, ["Plus or minus"]);
+  await expect(preload).toHaveValue("1.5");
+  await tapKeys(page, ["Plus or minus"]);
+  await expect(preload).toHaveValue("-1.5");
+  await expect(dialog.getByTestId("adjust-changes")).toContainText("Preload: set to -1.5 Turns");
+
+  // A suspension text value gets the full keyboard; mileage gets the number pad without ±.
+  await label(dialog, "Left ski shock: Spring", true).click();
+  await expect(keyboard(page)).toHaveAttribute("data-mode", "text");
+  await label(dialog, "Mileage", true).click();
+  await expect(keyboard(page)).toHaveAttribute("data-mode", "decimal");
+  await expect(keyboard(page)).not.toHaveAttribute("data-signed", "true");
+  await expect(keyboard(page).getByRole("button", { name: "Plus or minus" })).toHaveCount(0);
+
+  await dialog.getByRole("button", { name: "Save adjustment" }).click();
+  await expect(dialog).toBeHidden({ timeout: 15_000 });
+  await summaryIn(garageSled(page, "Rave")).getByRole("button", { name: "View suspension setup on Rave" }).click();
+  await expect(page.getByRole("dialog", { name: "Suspension setup" }).getByTestId("active-value").first()).toHaveText("Preload-1.5 Turns");
+  await page.getByRole("dialog", { name: "Suspension setup" }).getByRole("button", { name: "Close" }).click();
+
+  // Update mileage / hours on the Wall Display: unchanged number pad, no ±.
+  await garageSled(page, "Rave")
+    .getByRole("button", { name: /Update mileage \/ hours/ })
+    .click();
+  const meters = page.getByRole("dialog", { name: "Update mileage / hours" });
+  await label(meters, "Odometer (miles)").click();
+  await expect(keyboard(page)).toHaveAttribute("data-mode", "decimal");
+  await expect(keyboard(page).getByRole("button", { name: "Plus or minus" })).toHaveCount(0);
 });

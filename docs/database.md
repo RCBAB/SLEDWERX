@@ -680,6 +680,12 @@ Tests: `supabase/tests/database/010_suspension.test.sql`; rollback test
 
 ## Migration 8: planned cleanup (approved, not built)
 
+> **Release blocker (Phase 6.2):** cleaning up unreferenced suspension photo
+> files (e.g. a mechanic's upload whose record couldn't be saved) depends on
+> this migration. It stays an open release blocker until an approved solution
+> is implemented and verified (report-only run reviewed first). No storage
+> policy is changed to work around it.
+
 **Status: approved as a separate change. Not implemented.** Decisions so far:
 Migration 7 first (done), the cleanup as Migration 8, photo files removed by
 a secure Vercel scheduled job (subject to the Vercel plan allowing the

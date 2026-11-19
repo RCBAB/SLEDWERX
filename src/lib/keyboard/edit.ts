@@ -8,7 +8,16 @@ export type KeyboardMode = "decimal" | "numeric" | "text";
 
 export type EditState = { value: string; start: number; end: number };
 
-export type KeyAction = { kind: "char"; char: string } | { kind: "backspace" } | { kind: "clear" };
+export type KeyAction = { kind: "char"; char: string } | { kind: "backspace" } | { kind: "clear" } | { kind: "negate" };
+
+/**
+ * Whether a number field takes negative values, so the number pad offers a
+ * ± key. Opt-in per field (data-allow-negative="true"): only suspension
+ * values use it; mileage, hours and other numbers never get it.
+ */
+export function allowsNegative(el: { dataset?: Record<string, string | undefined> }): boolean {
+  return el.dataset?.allowNegative === "true";
+}
 
 /** Which keyboard a field gets, or null for fields with their own touch controls. */
 export function keyboardModeFor(el: {
@@ -47,6 +56,13 @@ export function applyKey(state: EditState, action: KeyAction, mode: KeyboardMode
   const after = state.value.slice(end);
 
   if (action.kind === "clear") return { value: "", start: 0, end: 0 };
+  // ± flips the sign of the whole number, wherever the cursor is; the cursor stays on the same digit.
+  if (action.kind === "negate") {
+    if (mode === "text") return { value: state.value, start, end };
+    if (state.value.startsWith("-")) return { value: state.value.slice(1), start: Math.max(0, start - 1), end: Math.max(0, end - 1) };
+    if (maxLength != null && maxLength >= 0 && state.value.length + 1 > maxLength) return { value: state.value, start, end };
+    return { value: `-${state.value}`, start: start + 1, end: end + 1 };
+  }
   if (action.kind === "backspace") {
     if (start !== end) return { value: before + after, start, end: start };
     if (start === 0) return { value: state.value, start: 0, end: 0 };

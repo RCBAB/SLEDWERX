@@ -746,3 +746,131 @@ test("removed ride feedback is restored from Recently Deleted exactly as it was"
   await expect(deletedItems(page)).toHaveCount(1);
   await expect(deletedItems(page)).toHaveAttribute("data-kind", "setup");
 });
+
+// ---------------------------------------------------------------------------
+// Checkpoint 5 follow-up: failed photo saves and cleanup, by role
+// ---------------------------------------------------------------------------
+const objectPath = (sledId: string, parentId: string) => `${sledId}/${parentId}/${crypto.randomUUID()}.jpg`;
+
+test("mechanic: an adjustment photo for a revision removed meanwhile is refused before any file is uploaded", async ({ page, browser }) => {
+  const ownerEmail = uniqueEmail("sus-mo-o");
+  const mechanicEmail = uniqueEmail("sus-mo-m");
+  await signUp(page, ownerEmail);
+  const sledId = await addSled(page, { make: "Lynx", model: "Rave", year: "2021", odometer: "800", nickname: "Rave" });
+  await openSuspension(page, sledId);
+  await addSetting(page, { name: "Compression", zone: "Left ski shock", chip: "Clicks" });
+  await createSetup(page, "Trail", { activate: true });
+  await createSetup(page, "Powder");
+
+  const mechanicContext = await browser.newContext();
+  const mechanic = await mechanicContext.newPage();
+  await signUp(mechanic, mechanicEmail);
+  await shareSled(ownerEmail, sledId, mechanicEmail, "mechanic");
+
+  // The mechanic picks a photo for Powder rev 1 ...
+  await openSuspension(mechanic, sledId);
+  await setupTab(mechanic, "Powder").click();
+  const dialog = await openRevisionPhotos(mechanic, 1);
+  await dialog.locator('input[type="file"]').setInputFiles(pngs(1));
+
+  // ... while the owner deletes Powder (its revisions go with it).
+  await setupTab(page, "Powder").click();
+  page.once("dialog", (d) => d.accept());
+  await selectedSetup(page).getByRole("button", { name: "Delete" }).click();
+  await expect(setupTab(page, "Powder")).toHaveCount(0);
+
+  await dialog.getByRole("button", { name: "Upload 1 photo" }).click();
+  await expect(dialog.getByText("This was removed meanwhile. Reload the page and try again.")).toBeVisible();
+
+  // Nothing reached the bucket (checked as the owner, who can see deleted revisions).
+  const api = await apiAs(ownerEmail);
+  const { data: powder } = await api.from("suspension_setups").select("id").eq("sled_id", sledId).eq("name", "Powder").single();
+  const { data: revision } = await api.from("suspension_revisions").select("id").eq("setup_id", powder!.id).single();
+  const { data: files, error } = await api.storage.from("suspension-photos").list(`${sledId}/${revision!.id}`);
+  expect(error).toBeNull();
+  expect(files ?? []).toHaveLength(0);
+  await mechanicContext.close();
+});
+
+test("a file whose record can't be saved: owners and editors remove it; a mechanic's stays for the Migration 8 cleanup", async ({
+  page,
+  browser,
+}) => {
+  // Same calls as the app (upload, then record, then remove on failure), made through
+  // the API so the record save can be made to fail on purpose: the parent is deleted
+  // between the upload and the save. Real storage policies and RLS apply throughout.
+  const ownerEmail = uniqueEmail("sus-cl-o");
+  const editorEmail = uniqueEmail("sus-cl-e");
+  const mechanicEmail = uniqueEmail("sus-cl-m");
+  await signUp(page, ownerEmail);
+  const sledId = await addSled(page, { make: "Polaris", model: "RMK", year: "2022", odometer: "2000", nickname: "Blue" });
+  const contexts = await Promise.all([1, 2].map(() => browser.newContext()));
+  const [editorPage, mechanicPage] = await Promise.all(contexts.map((c) => c.newPage()));
+  await signUp(editorPage, editorEmail);
+  await signUp(mechanicPage, mechanicEmail);
+  await shareSled(ownerEmail, sledId, editorEmail, "editor");
+  await shareSled(ownerEmail, sledId, mechanicEmail, "mechanic");
+  const [owner, editor, mechanic] = await Promise.all([apiAs(ownerEmail), apiAs(editorEmail), apiAs(mechanicEmail)]);
+  const bucket = (client: typeof owner) => client.storage.from("suspension-photos");
+
+  const { data: setting } = await owner
+    .from("suspension_settings")
+    .insert({ sled_id: sledId, name: "Compression", zone: "front_left_shock" })
+    .select("id")
+    .single();
+  const newSetup = async (name: string) => {
+    const { data } = await owner.rpc("create_suspension_setup", { p_sled_id: sledId, p_name: name });
+    const setupId = (data as { setup_id: string }).setup_id;
+    const { data: revision } = await owner.from("suspension_revisions").select("id").eq("setup_id", setupId).single();
+    return { setupId, revisionId: revision!.id };
+  };
+  const listed = async (folder: string) => ((await bucket(owner).list(folder)).data ?? []).map((f) => f.name);
+
+  // --- Editor, reference photo: upload succeeds, the setting is removed, the save fails, the file is removed.
+  const editorPath = objectPath(sledId, setting!.id);
+  expect((await bucket(editor).upload(editorPath, PNG, { contentType: "image/jpeg" })).error).toBeNull();
+  await owner.from("suspension_settings").update({ deleted_at: new Date().toISOString(), version: 1 }).eq("id", setting!.id);
+  const editorSave = await editor
+    .from("suspension_photos")
+    .insert({ sled_id: sledId, setting_id: setting!.id, path: editorPath })
+    .select("id");
+  expect(editorSave.error?.message).toContain("Restore it before adding photos.");
+  expect(await listed(`${sledId}/${setting!.id}`)).toHaveLength(1);
+  const editorRemove = await bucket(editor).remove([editorPath]);
+  expect(editorRemove.error).toBeNull();
+  expect(editorRemove.data).toHaveLength(1);
+  expect(await listed(`${sledId}/${setting!.id}`)).toHaveLength(0);
+
+  // --- Owner, adjustment photo: same, removed again.
+  const a = await newSetup("Trail");
+  const ownerPath = objectPath(sledId, a.revisionId);
+  expect((await bucket(owner).upload(ownerPath, PNG, { contentType: "image/jpeg" })).error).toBeNull();
+  await owner.from("suspension_setups").update({ deleted_at: new Date().toISOString(), version: 1 }).eq("id", a.setupId);
+  expect(
+    (await owner.from("suspension_photos").insert({ sled_id: sledId, revision_id: a.revisionId, path: ownerPath })).error,
+  ).not.toBeNull();
+  expect((await bucket(owner).remove([ownerPath])).data).toHaveLength(1);
+  expect(await listed(`${sledId}/${a.revisionId}`)).toHaveLength(0);
+
+  // --- Mechanic, adjustment photo: the upload succeeds, both saves fail, and the remove is refused by the
+  // storage policy (owners and editors only): the file stays, unreferenced, for the Migration 8 cleanup.
+  const b = await newSetup("Powder");
+  const mechanicPath = objectPath(sledId, b.revisionId);
+  expect((await bucket(mechanic).upload(mechanicPath, PNG, { contentType: "image/jpeg" })).error).toBeNull();
+  await owner.from("suspension_setups").update({ deleted_at: new Date().toISOString(), version: 1 }).eq("id", b.setupId);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const save = await mechanic.from("suspension_photos").insert({ sled_id: sledId, revision_id: b.revisionId, path: mechanicPath });
+    expect(save.error).not.toBeNull();
+  }
+  const mechanicRemove = await bucket(mechanic).remove([mechanicPath]);
+  expect(mechanicRemove.data ?? []).toHaveLength(0); // nothing removed
+  expect(await listed(`${sledId}/${b.revisionId}`)).toHaveLength(1);
+  // No photo record points at it: this is what the Migration 8 sweep looks for.
+  const { count } = await owner.from("suspension_photos").select("id", { count: "exact", head: true }).eq("path", mechanicPath);
+  expect(count).toBe(0);
+  // An owner (or the future cleanup job) can remove it.
+  expect((await bucket(owner).remove([mechanicPath])).data).toHaveLength(1);
+  expect(await listed(`${sledId}/${b.revisionId}`)).toHaveLength(0);
+
+  await Promise.all(contexts.map((c) => c.close()));
+});

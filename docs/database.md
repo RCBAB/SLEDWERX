@@ -20,9 +20,10 @@ the helpers created in stage 1.
 | 6 | Issue log (Phase 6.1): `sled_issues` (priority, open/resolved, mileage copy, link to the completed service record that fixed it), `sled_issue_photos`, private `issue-photos` bucket | Applied (manually, SQL Editor, 2026-11-18) |
 | 6b | Repairs; installed parts and modifications with install/removal history (can link to logbook parts); shopping list | Planned |
 | 7 | Suspension setup & tuning (Phase 6.2): a custom settings list per sled (no defaults), named setups with one active setup, append-only revisions with restore, ride feedback, reference and adjustment photos in a private `suspension-photos` bucket | Applied (manually, SQL Editor, 2026-11-18) |
-| 8 | Attachments: private Storage bucket, file metadata, size/type validation, storage RLS, cleanup with Recently Deleted and account deletion | Planned |
-| 9 | Community library: opt-in rider profiles, published setup copies, reviews, moderation | Planned |
-| 10 | Offline sync: change feed, conflict records and resolution | Planned |
+| 8 | Recently Deleted & storage cleanup (approved plan, see "Migration 8: planned cleanup"): purge issues and suspension records after 30 days, a file cleanup queue and a sweep for unreferenced photo files, report-only first | Planned |
+| 9 | Attachments: private Storage bucket, file metadata, size/type validation, storage RLS, cleanup with Recently Deleted and account deletion | Planned |
+| 10 | Community library: opt-in rider profiles, published setup copies, reviews, moderation | Planned |
+| 11 | Offline sync: change feed, conflict records and resolution | Planned |
 | Future | Suspension test sessions and manual ride logs (moved out of Phase 6.2) | Planned |
 
 ## Ownership model
@@ -127,7 +128,8 @@ is stored. The provider is chosen when the sharing interface is built.
   tables. Their Recently Deleted rows are hidden from users and can no longer
   be restored after 30 days, but they are not permanently removed yet. Their
   Storage files also stay until the planned storage cleanup. Extending the
-  purge (and scheduling it) is a separate, future change that needs approval.
+  purge (and scheduling it) is Migration 8, approved as a separate change
+  (see "Migration 8: planned cleanup").
 
 ## Audit history
 
@@ -369,7 +371,7 @@ only; Migrations 1 and 2 are unchanged.
   audit history and uses the row version (conflicts are refused).
 - **Known limitation:** when a sled is permanently deleted (after 30 days in
   Recently Deleted, or by `permanently_delete_sled`), its photo file stays in
-  the bucket until the Phase 7 cleanup, which removes files through the
+  the bucket until the Migration 8 cleanup, which removes files through the
   Storage API. Such files are unreachable: no sled matches their path.
 
 ## Service records (Migration 4)
@@ -646,11 +648,73 @@ Storage policies (`suspension-photos`): view = anyone who can view the sled;
 upload = whoever may add that kind of photo (`private.can_add_suspension_photo`);
 remove = owners and editors.
 
+### Photo uploads and leftover files
+
+Photos are added by the app in this order (`addSuspensionPhotos` in
+`src/lib/suspension/photo-upload.ts`):
+
+1. **Check first** (server): the setting or revision still exists, the user
+   may add this kind of photo, and how many more fit (6). If not, nothing is
+   uploaded.
+2. **Resize** in the browser (non-images are refused here, before upload).
+3. **Upload** the file, then **save its record**. A failed save is tried
+   once more (a repeat of a save that did go through is recognised).
+4. If the record still can't be saved, **owners and editors** remove the file
+   again. **Mechanics can't**: the storage policy lets only owners and editors
+   delete files, and that is deliberately not widened. Their file stays in
+   the bucket, unlisted and unreachable from the app, and the app says so.
+
+A record without a file can't happen (the record is saved only after the
+upload). A file without a record (a mechanic's, after step 4, or any file
+whose record was later purged) is removed by the Migration 8 cleanup below
+(decision: option A, no storage policy change). Tests:
+`src/lib/suspension/photo-upload.test.ts` (order, retry, cleanup by role) and
+the photo tests in `e2e/suspension.spec.ts` (real storage policies: the
+owner/editor cleanup works, a mechanic's file stays unreferenced).
+
 Not included (future phase): test sessions and manual ride logs. See also
 the purge gap under "Recently Deleted".
 
 Tests: `supabase/tests/database/010_suspension.test.sql`; rollback test
 `scripts/test-migration-7-rollback.sh`.
+
+## Migration 8: planned cleanup (approved, not built)
+
+**Status: approved as a separate change. Not implemented.** Decisions so far:
+Migration 7 first (done), the cleanup as Migration 8, photo files removed by
+a secure Vercel scheduled job (subject to the Vercel plan allowing the
+schedule), production starting in **report-only** mode, and permanent
+deletion only after separate approval. Leftover suspension photo files are
+handled here (option A), with no change to storage policies.
+
+What it must cover:
+
+- **Expired records:** extend `purge_expired_records()` to issues, issue
+  photos and the five suspension tables (rows in Recently Deleted for more
+  than 30 days; never active rows, never anything still restorable), and run
+  it on a schedule.
+- **Files of purged records:** queue the Storage path of every photo record
+  that is permanently removed (by the purge, a permanent sled delete or an
+  account deletion) and remove the files through the Storage API.
+- **Unreferenced files** (e.g. a mechanic's upload whose record couldn't be
+  saved), identified safely:
+  - only in the app's photo buckets (`suspension-photos`, `issue-photos`,
+    `sled-photos`), and only object names in the app's path format
+    (`<sled>/<parent>/<uuid>.jpg|webp`);
+  - **no photo record of any state** points at the path: rows in Recently
+    Deleted still count as references, so a restore always finds its file;
+    for `sled-photos`, `sleds.photo_path` (including deleted sleds) counts;
+  - the object is **older than 24 hours**, so uploads in progress (file sent,
+    record not yet saved) are never touched;
+  - the check runs again right before each removal, and a removal is skipped
+    if a record has appeared meanwhile.
+- **Report-only verification phase (first, in production):** the job lists
+  what it *would* remove (bucket, path, age, reason: purged record or
+  unreferenced) with counts, and removes nothing. Deletion is switched on
+  only after the report has been reviewed and separately approved.
+- **Security:** the service-role key exists only in the server-side job's
+  environment, never in the browser; the job is protected by a secret; no
+  storage policy is widened for users.
 
 ## Units
 
@@ -668,7 +732,7 @@ those sleds' audit history. Actor columns (`created_by`, `updated_by`, etc.)
 are plain ids without foreign keys, so deletion never rewrites other owners'
 records. Once the account is gone, those ids no longer identify anyone.
 Storage files (sled photos, and later attachments) are removed by the
-Storage cleanup (Phase 7 / migration 8), which must run before the auth user
+Migration 8 storage cleanup, which must run before the auth user
 is deleted.
 
 ## Testing

@@ -27,6 +27,7 @@ function fakeDb(overrides: Record<string, Handler> = {}, files = ["a", "b"]) {
             : "replaced";
       return { data: { status }, error: null };
     },
+    cleanup_retention: () => ({ data: { enabled: false, qualifying: { runs: 0 }, removed: { details: 0, released_claims: 0, runs: 0 } }, error: null }),
     cleanup_finish_run: () => ({ data: {}, error: null }),
     ...overrides,
   };
@@ -59,7 +60,7 @@ describe("runCleanup: report-only", () => {
     const storage = fakeStorage();
     const report = await runCleanup({ db, storage, requestedMode: "report", deadline: later() });
     expect(report).toMatchObject({ status: "completed", runId: 7, mode: "report", error: null });
-    expect(db.names()).toEqual(["cleanup_begin_run", "cleanup_process_records", "cleanup_report_files", "cleanup_finish_run"]);
+    expect(db.names()).toEqual(["cleanup_begin_run", "cleanup_process_records", "cleanup_report_files", "cleanup_retention", "cleanup_finish_run"]);
     expect(db.calls[0][1]).toEqual({ p_mode: "report" });
     expect(storage.remove).not.toHaveBeenCalled();
   });
@@ -90,7 +91,7 @@ describe("runCleanup: delete runs", () => {
       "cleanup_begin_run", "cleanup_process_records", "cleanup_report_files", "cleanup_eligible_files",
       "cleanup_claim_file", "cleanup_verify_claim", "cleanup_record_file_result",
       "cleanup_claim_file", "cleanup_verify_claim", "cleanup_record_file_result",
-      "cleanup_finish_run",
+      "cleanup_retention", "cleanup_finish_run",
     ]);
     const result = db.calls.find(([fn]) => fn === "cleanup_record_file_result")![1];
     expect(result).toEqual({
@@ -167,6 +168,22 @@ describe("runCleanup: delete runs", () => {
     const storage = fakeStorage();
     await runCleanup({ db, storage, requestedMode: "delete", deadline: later() });
     expect(storage.remove).not.toHaveBeenCalled();
+  });
+});
+
+describe("runCleanup: operational-history retention", () => {
+  it("applies the retention step once per run, after the file work, in report runs too", async () => {
+    const db = fakeDb();
+    const report = await runCleanup({ db, storage: fakeStorage(), requestedMode: "report", deadline: later() });
+    expect(db.names().filter((n) => n === "cleanup_retention")).toHaveLength(1);
+    expect(report.retention).toMatchObject({ enabled: false });
+  });
+
+  it("a failed retention step fails the run (closed) and is reported", async () => {
+    const db = fakeDb({ cleanup_retention: () => ({ data: null, error: { code: "SWC03", message: "Retention safety check failed" } }) });
+    const report = await runCleanup({ db, storage: fakeStorage(), requestedMode: "report", deadline: later() });
+    expect(report).toMatchObject({ status: "failed", error: "Applying retention failed: Retention safety check failed (SWC03)" });
+    expect(db.calls.at(-1)).toEqual(["cleanup_finish_run", { p_run_id: 7, p_error: report.error }]);
   });
 });
 

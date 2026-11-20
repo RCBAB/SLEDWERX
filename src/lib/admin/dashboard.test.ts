@@ -1,6 +1,17 @@
 import { describe, expect, it } from "vitest";
 
-import { bucketRows, effectiveMode, formatDuration, formatUtc, outcomeLabel, parseDashboard, runStatusTone, shortId, totalOrphans } from "./dashboard";
+import {
+  bucketRows,
+  effectiveMode,
+  formatDuration,
+  formatUtc,
+  outcomeLabel,
+  parseDashboard,
+  retentionQualifying,
+  runStatusTone,
+  shortId,
+  totalOrphans,
+} from "./dashboard";
 
 const empty = {
   generated_at: "2026-11-20T10:00:00Z",
@@ -76,6 +87,32 @@ describe("parseDashboard", () => {
   it("returns null for something that is not dashboard data at all", () => {
     expect(parseDashboard(null)).toBeNull();
     expect(parseDashboard("text")).toBeNull();
+  });
+});
+
+describe("operational-history retention", () => {
+  it("reads retention status and counts qualifying rows", () => {
+    const data = parseDashboard({
+      ...empty,
+      retention: {
+        enabled: true,
+        authorized_at: "2026-11-20T10:00:00Z",
+        periods: { run_days: 400, report_candidate_days: 30, delete_candidate_days: 180, released_claim_days: 180, keep_report_runs: 7, batch_size: 1000 },
+        qualifying: { runs: 2, report_candidates: 10, delete_candidates: 3, released_claims: 1 },
+        last: { run_id: 4, at: "2026-11-20T09:17:00Z", summary: { enabled: true, removed: { details: 13, released_claims: 1, runs: 2 } } },
+        last_error: null,
+        failed_claims_unreviewed: 1,
+        failed_claims_reviewed: 0,
+        tombstones: 5,
+      },
+    });
+    expect(data!.retention!.enabled).toBe(true);
+    expect(retentionQualifying(data!)).toBe(16);
+    expect(data!.retention!.last!.summary!.removed).toEqual({ details: 13, released_claims: 1, runs: 2 });
+  });
+  it("treats missing retention data as unknown, not as zero rows to keep", () => {
+    const data = parseDashboard({ ...empty, retention: "broken" });
+    expect(data!.retention).toBeNull();
   });
 });
 

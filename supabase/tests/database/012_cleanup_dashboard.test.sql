@@ -5,7 +5,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set search_path = public, extensions;
 
-select plan(37);
+select plan(40);
 
 insert into auth.users (id, email, email_confirmed_at) values
   ('d1111111-1111-1111-1111-111111111111', 'dash-admin@example.com',  now()),
@@ -111,6 +111,10 @@ select is((select format('%s|%s|%s|%s|%s', v::jsonb -> 'latest', v::jsonb -> 'la
   'null|null|[]|0|[]', 'with no cleanup history, the dashboard is empty (no runs, no warnings)');
 select is((select v::jsonb -> 'settings' ->> 'deletion_enabled' || '|' || (v::jsonb -> 'settings' ->> 'backup_recorded') from t where k = 'empty'),
   'false|false', 'and shows deletion off and no backup recorded');
+select is((select (v::jsonb -> 'retention' ->> 'enabled') || '|' || (v::jsonb -> 'retention' -> 'periods' ->> 'run_days') || '|'
+                  || (v::jsonb -> 'retention' -> 'qualifying' ->> 'runs') || '|' || coalesce(v::jsonb -> 'retention' ->> 'last', 'never')
+           from t where k = 'empty'), 'false|400|0|never',
+  'and operational-history retention: off, its periods, nothing qualifying, never run');
 
 -- ---------------------------------------------------------------------------
 -- With history
@@ -166,6 +170,8 @@ select ok(pg_temp.d()::text not like '%SECRET-REFERENCE%' and pg_temp.d()::text 
   'but never the backup reference itself');
 select ok(pg_temp.d()::text not like '%@example.com%' and pg_temp.d()::text not like '%Polaris%',
   'and no names, emails or other user content');
+select is((pg_temp.d() -> 'retention' ->> 'failed_claims_unreviewed')::int, 1, 'counts failed removals awaiting review (retention keeps them)');
+select is((pg_temp.d() -> 'retention' ->> 'tombstones')::int, 1, 'and removed-path tombstones (kept forever)');
 
 -- ---------------------------------------------------------------------------
 -- Revoking

@@ -145,6 +145,7 @@ describe.skipIf(!enabled)("cleanup job on the local Supabase stack", () => {
   afterAll(async () => {
     if (!admin) return;
     sql(`select private.revoke_cleanup_deletion();
+         select private.revoke_retention_maintenance();
          select private.cleanup_finish_run(id) from private.cleanup_runs where status = 'running';
          delete from private.storage_cleanup_claims;
          delete from private.cleanup_runs;`);
@@ -285,5 +286,32 @@ describe.skipIf(!enabled)("cleanup job on the local Supabase stack", () => {
     expect(report.removal).toMatchObject({ removed: 1, replaced: 0, failed: 0 });
     expect(exists(files.fail)).toBe(false);
     for (const key of ["active", "recoverable", "fresh", "changed"]) expect(exists(files[key])).toBe(true);
+  });
+
+  it("retention removes old operational history; a removed path stays closed after its run is gone", async () => {
+    // The mechanic's removed file now belongs to a delete run from 401 days ago.
+    const old = sql(`insert into private.cleanup_runs (mode, source, status, started_at, finished_at)
+                     values ('delete', 'manual', 'completed', now() - interval '401 days', now() - interval '401 days') returning id;`);
+    sql(`insert into private.cleanup_candidates (run_id, kind, bucket_id, object_path, outcome) values (${old}, 'file', '${BUCKET}', '${files.mech}', 'deleted');
+         update private.storage_cleanup_claims set run_id = ${old} where bucket_id = '${BUCKET}' and object_path = '${files.mech}';`);
+
+    // Switched off: only a preview.
+    const preview = await runCleanup({ ...deps(), requestedMode: "report", deadline: later() });
+    expect(preview.retention).toMatchObject({ enabled: false, qualifying: { runs: 1 }, removed: { runs: 0, details: 0 } });
+    expect(sql(`select count(*) from private.cleanup_runs where id = ${old};`)).toBe("1");
+
+    sql(`select private.authorize_retention_maintenance('integration test (throwaway stack)');`);
+    const report = await runCleanup({ ...deps(), requestedMode: "report", deadline: later() });
+    expect(report.status).toBe("completed");
+    expect(report.retention).toMatchObject({ enabled: true, removed: { runs: 1, details: 1 } });
+    expect(sql(`select count(*) from private.cleanup_runs where id = ${old};`)).toBe("0");
+
+    // The tombstone is still there, without its run, and still closes the path.
+    expect(sql(`select coalesce(run_id::text, 'none') || '|' || status from private.storage_cleanup_claims where object_path = '${files.mech}';`))
+      .toBe("none|deleted");
+    expect(await tryUpload(owner.client, files.mech)).not.toBeNull();
+    expect(exists(files.mech)).toBe(false);
+    const attach = await mechanic.client.from("suspension_photos").insert({ sled_id: sledId, revision_id: revisionId, path: files.mech });
+    expect(attach.error?.message).toBe("This photo was removed. Add it again.");
   });
 });

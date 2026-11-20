@@ -48,6 +48,17 @@ create table private.cleanup_settings (
   installed_at timestamptz not null default now(),
   deletion_authorized_at timestamptz,
   deletion_backup_reference text check (char_length(deletion_backup_reference) <= 500),
+  -- Operational-history retention (the cleanup's own logs, not user data):
+  -- its own switch, off by default; the approved periods can only be raised.
+  retention_enabled boolean not null default false,
+  retention_authorized_at timestamptz,
+  retention_authorization_note text check (char_length(retention_authorization_note) <= 500),
+  retention_run_days integer not null default 400 check (retention_run_days >= 400),
+  retention_report_candidate_days integer not null default 30 check (retention_report_candidate_days >= 30),
+  retention_delete_candidate_days integer not null default 180 check (retention_delete_candidate_days >= 180),
+  retention_released_claim_days integer not null default 180 check (retention_released_claim_days >= 180),
+  retention_keep_report_runs integer not null default 7 check (retention_keep_report_runs >= 7),
+  retention_batch_size integer not null default 1000 check (retention_batch_size between 1 and 5000),
   updated_at timestamptz not null default now()
 );
 
@@ -68,6 +79,7 @@ create table private.cleanup_runs (
   finished_at timestamptz,
   records_step_at timestamptz,
   files_step_at timestamptz,
+  retention_step_at timestamptz,
   records_deleted integer not null default 0 check (records_deleted >= 0),
   files_deleted integer not null default 0 check (files_deleted >= 0),
   summary jsonb not null default '{}'::jsonb,
@@ -207,16 +219,24 @@ create table private.storage_cleanup_claims (
   -- path than the one claimed (review; the path stays blocked). missing: it
   -- was gone (path blocked too). released: not removed, may be tried again.
   -- failed: 3 attempts, left alone for review.
-  status text not null check (status in ('claimed', 'deleted', 'replaced', 'missing', 'released', 'failed')),
+  -- closed: a failed removal an administrator reviewed and decided to keep
+  -- (never removed automatically; the path is not blocked).
+  status text not null check (status in ('claimed', 'deleted', 'replaced', 'missing', 'released', 'failed', 'closed')),
   run_id bigint references private.cleanup_runs (id) on delete set null,
   claimed_at timestamptz not null default now(),
   finished_at timestamptz,
-  attempts integer not null default 1 check (attempts >= 1),
+  attempts integer not null default 1 check (attempts >= 0),
   last_error text check (char_length(last_error) <= 1000),
   -- Exactly which object was claimed (Storage row id, eTag and size).
   object_id uuid,
   object_etag text,
   object_size bigint,
+  -- Failed-claim review and resolution (database owner; see docs/cleanup.md).
+  reviewed_at timestamptz,
+  review_note text check (char_length(review_note) <= 1000),
+  resolved_at timestamptz,
+  resolution text check (resolution in ('removed', 'retry', 'keep')),
+  resolution_note text check (char_length(resolution_note) <= 1000),
   primary key (bucket_id, object_path)
 );
 
@@ -276,6 +296,16 @@ begin
   elsif not new.deletion_enabled then
     new.deletion_authorized_at := null;
   end if;
+
+  -- Operational-history retention has its own switch and its own approval note.
+  if new.retention_enabled and not old.retention_enabled then
+    if nullif(btrim(coalesce(new.retention_authorization_note, '')), '') is null then
+      raise exception 'Record who approved operational-history retention before enabling it.' using errcode = '42501';
+    end if;
+    new.retention_authorized_at := now();
+  elsif not new.retention_enabled then
+    new.retention_authorized_at := null;
+  end if;
   return new;
 end;
 $$;
@@ -301,6 +331,26 @@ volatile
 set search_path = ''
 as $$
   update private.cleanup_settings set deletion_enabled = false;
+$$;
+
+-- Operational-history retention (the cleanup's own logs): a separate switch.
+create function private.authorize_retention_maintenance(p_approval_note text)
+returns void
+language sql
+volatile
+set search_path = ''
+as $$
+  update private.cleanup_settings
+  set retention_enabled = true, retention_authorization_note = p_approval_note;
+$$;
+
+create function private.revoke_retention_maintenance()
+returns void
+language sql
+volatile
+set search_path = ''
+as $$
+  update private.cleanup_settings set retention_enabled = false;
 $$;
 
 -- -----------------------------------------------------------------------------
@@ -1155,7 +1205,7 @@ begin
   if v_reason is null then
     select * into v_claim from private.storage_cleanup_claims k
     where k.bucket_id = p_bucket_id and k.object_path = p_object_path for update;
-    if found and v_claim.status in ('failed', 'deleted', 'replaced', 'missing') then
+    if found and v_claim.status in ('failed', 'deleted', 'replaced', 'missing', 'closed') then
       v_reason := 'claimed_before';
     end if;
   end if;
@@ -1718,6 +1768,8 @@ declare
   v_registry text[];
   v_warnings text[] := '{}';
   v_failed_runs integer;
+  v_retention_error text;
+  v_retention jsonb;
 begin
   if not private.is_app_administrator(auth.uid()) then
     raise exception 'Not authorized.' using errcode = '42501';
@@ -1778,6 +1830,29 @@ begin
   if v_failed_runs > 0 then
     v_warnings := v_warnings || (v_failed_runs || ' of the last 14 runs failed or did not finish.');
   end if;
+  -- Operational-history retention (the cleanup's own logs; not user data).
+  select left(r.error, 300) into v_retention_error from private.cleanup_runs r
+  where r.error like 'Applying retention%' order by r.id desc limit 1;
+  v_retention := jsonb_build_object(
+    'enabled', v_settings.retention_enabled,
+    'authorized_at', v_settings.retention_authorized_at,
+    'periods', jsonb_build_object(
+      'run_days', v_settings.retention_run_days,
+      'report_candidate_days', v_settings.retention_report_candidate_days,
+      'delete_candidate_days', v_settings.retention_delete_candidate_days,
+      'released_claim_days', v_settings.retention_released_claim_days,
+      'keep_report_runs', v_settings.retention_keep_report_runs,
+      'batch_size', v_settings.retention_batch_size),
+    'qualifying', private.retention_counts(),
+    'last', (select jsonb_build_object('run_id', r.id, 'at', r.retention_step_at, 'summary', r.summary -> 'retention')
+             from private.cleanup_runs r where r.retention_step_at is not null order by r.id desc limit 1),
+    'last_error', v_retention_error,
+    'failed_claims_unreviewed', (select count(*) from private.storage_cleanup_claims k where k.status = 'failed' and k.reviewed_at is null),
+    'failed_claims_reviewed', (select count(*) from private.storage_cleanup_claims k where k.status = 'failed' and k.reviewed_at is not null),
+    'tombstones', (select count(*) from private.storage_cleanup_claims k where k.status in ('deleted', 'replaced', 'missing')));
+  if v_retention_error is not null then
+    v_warnings := v_warnings || 'A retention step failed; operational history was not trimmed in that run.'::text;
+  end if;
   if v_settings.deletion_enabled and v_report_days < v_settings.required_report_runs then
     v_warnings := v_warnings || 'Deletion is on although fewer daily report runs than required are recorded.'::text;
   end if;
@@ -1811,6 +1886,7 @@ begin
     'claims', v_claims,
     'registry_problems', to_jsonb(v_registry),
     'warnings', to_jsonb(v_warnings),
+    'retention', v_retention,
     'history', v_history
   );
 end;
@@ -1824,3 +1900,267 @@ revoke all on function
 from public, anon, authenticated, service_role;
 -- Signed-in users may call it; it refuses everyone who is not an administrator.
 grant execute on function public.cleanup_dashboard() to authenticated;
+
+-- -----------------------------------------------------------------------------
+-- 16. Operational-history retention: the cleanup system's OWN logs (runs,
+--     candidates, file claims), never user data and unrelated to the 30-day
+--     recovery period. Approved periods: run summaries 400 days; report-run
+--     details 30 days (the latest 7 completed report runs always kept);
+--     delete-run details 180 days; released claims 180 days. Removed-path
+--     tombstones (deleted, replaced, missing), active claims, failed claims and
+--     closed claims are NEVER removed. Runs as a step of the daily job; deletes
+--     only when retention maintenance is switched on (its own switch, off by
+--     default), in bounded batches, in one transaction.
+-- -----------------------------------------------------------------------------
+
+-- Every operational-history row that qualifies for removal now (read-only).
+create function private.retention_candidates(p_now timestamptz default now())
+returns table (kind text, run_id bigint, candidate_id bigint, bucket_id text, object_path text, at timestamptz)
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  with s as (select * from private.cleanup_settings),
+  protected as (
+    select r.id from private.cleanup_runs r
+    where r.mode = 'report' and r.status = 'completed' and r.records_step_at is not null and r.files_step_at is not null
+    order by r.id desc
+    limit (select s.retention_keep_report_runs from s)
+  )
+  select 'run', r.id, null::bigint, null::text, null::text, r.started_at
+  from private.cleanup_runs r, s
+  where r.status <> 'running' and r.started_at < p_now - make_interval(days => s.retention_run_days)
+    and r.id not in (select id from protected)
+  union all
+  select case r.mode when 'report' then 'report_candidate' else 'delete_candidate' end, r.id, c.id, null, null, r.started_at
+  from private.cleanup_candidates c join private.cleanup_runs r on r.id = c.run_id, s
+  where r.status <> 'running' and r.id not in (select id from protected)
+    and r.started_at < p_now - make_interval(days => case r.mode when 'report' then s.retention_report_candidate_days
+                                                                 else s.retention_delete_candidate_days end)
+  union all
+  select 'released_claim', k.run_id, null, k.bucket_id, k.object_path, coalesce(k.finished_at, k.claimed_at)
+  from private.storage_cleanup_claims k, s
+  where k.status = 'released'
+    and coalesce(k.finished_at, k.claimed_at) < p_now - make_interval(days => s.retention_released_claim_days)
+$$;
+
+create function private.retention_counts(p_now timestamptz default now())
+returns jsonb
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select jsonb_build_object(
+    'runs', count(*) filter (where kind = 'run'),
+    'report_candidates', count(*) filter (where kind = 'report_candidate'),
+    'delete_candidates', count(*) filter (where kind = 'delete_candidate'),
+    'released_claims', count(*) filter (where kind = 'released_claim'))
+  from private.retention_candidates(p_now)
+$$;
+
+-- The retention step of a run: previews (always) and, only when retention
+-- maintenance is on, removes at most retention_batch_size rows: details
+-- first, then released claims, then run summaries that no longer have any
+-- details. Every DELETE repeats its rule; tombstones and other claims can
+-- never match. Any failure undoes the whole step.
+create function private.cleanup_retention(p_run_id bigint)
+returns jsonb
+language plpgsql
+volatile
+security definer
+set search_path = ''
+as $$
+declare
+  v_run private.cleanup_runs;
+  v_settings private.cleanup_settings;
+  v_now timestamptz := now();
+  v_counts jsonb;
+  v_budget integer;
+  v_n integer;
+  v_deleted jsonb := jsonb_build_object('details', 0, 'released_claims', 0, 'runs', 0);
+  v_protected integer;
+  v_completed integer;
+  v_tombstones_before bigint;
+  v_tombstones_after bigint;
+  v_summary jsonb;
+begin
+  if not pg_try_advisory_xact_lock(hashtextextended('sledwerx.cleanup.retention', 0)) then
+    raise exception 'Another cleanup is applying retention.' using errcode = '55P03';
+  end if;
+  select * into v_run from private.cleanup_runs r where r.id = p_run_id for update;
+  if not found then
+    raise exception 'Cleanup run not found.' using errcode = 'P0002';
+  end if;
+  if v_run.status <> 'running' then
+    raise exception 'This cleanup run has finished.' using errcode = '55000';
+  end if;
+  if v_run.retention_step_at is not null then
+    raise exception 'Retention was already applied in this run.' using errcode = '55000';
+  end if;
+  select * into strict v_settings from private.cleanup_settings;
+
+  -- Safety checks (fail closed): the protected report runs are intact.
+  select count(*) into v_completed from private.cleanup_runs r
+  where r.mode = 'report' and r.status = 'completed' and r.records_step_at is not null and r.files_step_at is not null;
+  select count(*) into v_protected from private.cleanup_runs r
+  where r.mode = 'report' and r.status = 'completed' and r.records_step_at is not null and r.files_step_at is not null
+    and not exists (select 1 from private.retention_candidates(v_now) x where x.kind = 'run' and x.run_id = r.id);
+  if v_protected < least(v_completed, v_settings.retention_keep_report_runs) then
+    raise exception 'Retention safety check failed: the latest report runs are not protected.' using errcode = 'SWC03';
+  end if;
+
+  v_counts := private.retention_counts(v_now);
+  select count(*) into v_tombstones_before from private.storage_cleanup_claims k
+  where k.status in ('claimed', 'deleted', 'replaced', 'missing', 'failed', 'closed');
+
+  if v_settings.retention_enabled then
+    v_budget := v_settings.retention_batch_size;
+
+    delete from private.cleanup_candidates c
+    where c.id in (
+      select x.candidate_id from private.retention_candidates(v_now) x
+      where x.kind in ('report_candidate', 'delete_candidate') order by x.candidate_id limit v_budget);
+    get diagnostics v_n = row_count;
+    v_deleted := jsonb_set(v_deleted, '{details}', to_jsonb(v_n));
+    v_budget := v_budget - v_n;
+
+    if v_budget > 0 then
+      delete from private.storage_cleanup_claims k
+      where k.status = 'released'
+        and coalesce(k.finished_at, k.claimed_at) < v_now - make_interval(days => v_settings.retention_released_claim_days)
+        and (k.bucket_id, k.object_path) in (
+          select x.bucket_id, x.object_path from private.retention_candidates(v_now) x
+          where x.kind = 'released_claim' order by x.at limit v_budget);
+      get diagnostics v_n = row_count;
+      v_deleted := jsonb_set(v_deleted, '{released_claims}', to_jsonb(v_n));
+      v_budget := v_budget - v_n;
+    end if;
+
+    if v_budget > 0 then
+      -- Only summaries whose details are already gone (no cascades).
+      delete from private.cleanup_runs r
+      where r.status <> 'running'
+        and not exists (select 1 from private.cleanup_candidates c where c.run_id = r.id)
+        and r.id in (select x.run_id from private.retention_candidates(v_now) x where x.kind = 'run' order by x.run_id limit v_budget);
+      get diagnostics v_n = row_count;
+      v_deleted := jsonb_set(v_deleted, '{runs}', to_jsonb(v_n));
+    end if;
+
+    -- Tombstones and every other non-released claim are untouched.
+    select count(*) into v_tombstones_after from private.storage_cleanup_claims k
+    where k.status in ('claimed', 'deleted', 'replaced', 'missing', 'failed', 'closed');
+    if v_tombstones_after <> v_tombstones_before then
+      raise exception 'Retention safety check failed: protected claims changed.' using errcode = 'SWC03';
+    end if;
+  end if;
+
+  v_summary := jsonb_build_object(
+    'enabled', v_settings.retention_enabled,
+    'qualifying', v_counts,
+    'removed', jsonb_build_object(
+      'details', (v_deleted ->> 'details')::integer,
+      'released_claims', (v_deleted ->> 'released_claims')::integer,
+      'runs', (v_deleted ->> 'runs')::integer),
+    'batch_size', v_settings.retention_batch_size,
+    'remaining', private.retention_counts(v_now)
+  );
+
+  update private.cleanup_runs
+  set retention_step_at = now(), summary = summary || jsonb_build_object('retention', v_summary)
+  where id = p_run_id;
+  return v_summary;
+end;
+$$;
+
+create function public.cleanup_retention(p_run_id bigint)
+returns jsonb
+language sql
+volatile
+security definer
+set search_path = ''
+as $$ select private.cleanup_retention(p_run_id) $$;
+
+-- Failed removals (3 failed attempts). Database owner only (SQL editor).
+-- Reviewing records who looked and why; it changes nothing else. Resolving
+-- requires a review first and is one of:
+--   removed: the file is confirmed gone (checked) -> a 'deleted' tombstone;
+--   retry:   the cause is fixed and the file is still there -> 'released',
+--            attempts reset, retried by the next delete run;
+--   keep:    the file stays -> 'closed', never removed automatically.
+-- Review and resolution notes stay on the claim.
+create function private.review_failed_claim(p_bucket_id text, p_object_path text, p_note text)
+returns void
+language plpgsql
+volatile
+security definer
+set search_path = ''
+as $$
+begin
+  if nullif(btrim(coalesce(p_note, '')), '') is null then
+    raise exception 'Describe what was reviewed.' using errcode = '22023';
+  end if;
+  update private.storage_cleanup_claims
+  set reviewed_at = now(), review_note = p_note
+  where bucket_id = p_bucket_id and object_path = p_object_path and status = 'failed';
+  if not found then
+    raise exception 'No failed claim for this file.' using errcode = 'P0002';
+  end if;
+end;
+$$;
+
+create function private.resolve_failed_claim(p_bucket_id text, p_object_path text, p_resolution text, p_note text)
+returns text
+language plpgsql
+volatile
+security definer
+set search_path = ''
+as $$
+declare
+  v_claim private.storage_cleanup_claims;
+  v_exists boolean;
+  v_status text;
+begin
+  if p_resolution is null or p_resolution not in ('removed', 'retry', 'keep') then
+    raise exception 'Resolution must be removed, retry or keep.' using errcode = '22023';
+  end if;
+  if nullif(btrim(coalesce(p_note, '')), '') is null then
+    raise exception 'Describe how it was resolved.' using errcode = '22023';
+  end if;
+  perform pg_advisory_xact_lock(private.storage_lock_key(p_bucket_id, p_object_path));
+  select * into v_claim from private.storage_cleanup_claims k
+  where k.bucket_id = p_bucket_id and k.object_path = p_object_path for update;
+  if not found or v_claim.status <> 'failed' then
+    raise exception 'No failed claim for this file.' using errcode = 'P0002';
+  end if;
+  if v_claim.reviewed_at is null then
+    raise exception 'Review the failed claim first (private.review_failed_claim).' using errcode = '55000';
+  end if;
+  select exists (select 1 from storage.objects o where o.bucket_id = p_bucket_id and o.name = p_object_path) into v_exists;
+  if p_resolution = 'removed' and v_exists then
+    raise exception 'The file is still in Storage; it was not removed.' using errcode = '55000';
+  end if;
+  if p_resolution in ('retry', 'keep') and not v_exists then
+    raise exception 'The file is no longer in Storage; resolve it as removed.' using errcode = '55000';
+  end if;
+  v_status := case p_resolution when 'removed' then 'deleted' when 'retry' then 'released' else 'closed' end;
+  update private.storage_cleanup_claims
+  set status = v_status, resolution = p_resolution, resolution_note = p_note, resolved_at = now(),
+      finished_at = now(), attempts = case when p_resolution = 'retry' then 0 else attempts end
+  where bucket_id = p_bucket_id and object_path = p_object_path;
+  return v_status;
+end;
+$$;
+
+revoke all on function
+  private.authorize_retention_maintenance(text),
+  private.revoke_retention_maintenance(),
+  private.retention_candidates(timestamptz),
+  private.retention_counts(timestamptz),
+  private.cleanup_retention(bigint),
+  private.review_failed_claim(text, text, text),
+  private.resolve_failed_claim(text, text, text, text),
+  public.cleanup_retention(bigint)
+from public, anon, authenticated, service_role;
+grant execute on function public.cleanup_retention(bigint) to service_role;

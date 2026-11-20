@@ -621,6 +621,9 @@ isOneToOne: false
 "cleanup_report_files":
 { Args: { "p_run_id": number }; Returns: Json
                            },
+"cleanup_retention":
+{ Args: { "p_run_id": number }; Returns: Json
+                           },
 "cleanup_verify_claim":
 { Args: { "p_bucket_id": string,"p_object_path": string,"p_run_id": number }; Returns: Json
                            },

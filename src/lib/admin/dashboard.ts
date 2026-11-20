@@ -121,6 +121,41 @@ export const dashboardSchema = z.object({
   review_counts: z.record(z.string(), num).catch({}),
   claims: z.record(z.string(), num).catch({}),
   registry_problems: z.array(z.string()).catch([]),
+  retention: z
+    .object({
+      enabled: bool,
+      authorized_at: str,
+      periods: z
+        .object({
+          run_days: num,
+          report_candidate_days: num,
+          delete_candidate_days: num,
+          released_claim_days: num,
+          keep_report_runs: num,
+          batch_size: num,
+        })
+        .partial()
+        .catch({}),
+      qualifying: z.object({ runs: num, report_candidates: num, delete_candidates: num, released_claims: num }).partial().catch({}),
+      last: z
+        .object({
+          run_id: num,
+          at: str,
+          summary: z
+            .object({ enabled: bool, removed: z.object({ details: num, released_claims: num, runs: num }).partial().catch({}) })
+            .partial()
+            .nullable()
+            .catch(null),
+        })
+        .nullable()
+        .catch(null),
+      last_error: str,
+      failed_claims_unreviewed: num,
+      failed_claims_reviewed: num,
+      tombstones: num,
+    })
+    .nullable()
+    .catch(null),
   warnings: z.array(z.string()).catch([]),
   history: z
     .array(
@@ -226,4 +261,10 @@ export function bucketRows(data: CleanupDashboardData) {
 
 export function totalOrphans(data: CleanupDashboardData): number {
   return bucketRows(data).reduce((sum, b) => sum + (b.orphans ?? 0), 0);
+}
+
+/** Operational-history rows that qualify for removal now. */
+export function retentionQualifying(data: CleanupDashboardData): number {
+  const q = data.retention?.qualifying ?? {};
+  return (q.runs ?? 0) + (q.report_candidates ?? 0) + (q.delete_candidates ?? 0) + (q.released_claims ?? 0);
 }

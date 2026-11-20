@@ -10,8 +10,9 @@ photo files that no record points at. Two parts:
   for Vercel Cron that calls the database and removes the files the database
   has claimed, through the Storage API.
 
-> **Status:** Checkpoints 1–3 built on a branch (database, daily job,
-> administrator dashboard). **Not applied to production,
+> **Status:** Checkpoints 1–4 built on a branch (database, daily job,
+> administrator dashboard, operational-history retention, release runbook:
+> [cleanup-release-runbook.md](cleanup-release-runbook.md)). **Not applied to production,
 > no cron schedule, no production credentials.** Deletion is **off** and needs
 > two switches plus separate approval. Phase 6.2 (suspension photos) must not
 > be released before this cleanup has been verified in deletion mode.
@@ -38,6 +39,11 @@ photo files that no record points at. Two parts:
     never raised automatically.
 12. **Small buckets:** the 10% threshold applies only to buckets of **100
     files or more**. Every other safeguard applies to every bucket.
+13. **Operational-history retention:** run summaries 400 days; report-run
+    details 30 days (the latest seven completed report runs always kept);
+    delete-run details 180 days; removed-path records forever; released
+    claims 180 days; failed claims until reviewed and resolved. Its own
+    switch, off by default.
 
 ## Architecture
 
@@ -51,7 +57,8 @@ Vercel Cron (daily, GET + Authorization: Bearer CRON_SECRET)
             4. delete runs only, for each listed file:
                  cleanup_claim_file  → cleanup_verify_claim
                  → Storage API remove → cleanup_record_file_result
-            5. cleanup_finish_run(run, error)
+            5. cleanup_retention(run)           operational history (own switch)
+            6. cleanup_finish_run(run, error)
 ```
 
 The database makes every decision. The job never decides on its own that a
@@ -82,11 +89,8 @@ Credential protections:
 - Every Supabase request times out after 15 s; the route's `maxDuration` is
   60 s, and new file removals start only during the first 40 s.
 
-Not done yet (needs approval): the `crons` entry in `vercel.json`, e.g.
-
-```json
-{ "crons": [{ "path": "/api/cron/cleanup", "schedule": "17 9 * * *" }] }
-```
+The daily schedule is in `vercel.json` (see "Cron schedule" below); it runs
+only once this branch is merged and deployed to production.
 
 ## Deletion authorization (two switches)
 
@@ -431,30 +435,131 @@ addresses, titles, notes or the backup reference. It has no buttons, forms or
 inputs: switches, limits, backups, the schedule and manual runs are changed
 only in the database or the deployment settings, with approval.
 
-## Run-history retention (proposal, not implemented)
+## Operational-history retention
 
-**Growth.** Each daily run adds one `cleanup_runs` row and one
-`cleanup_candidates` row per eligible record (including rows deleted with
-their group), per orphaned, unrecognised or incomplete file. Once the backlog
-is cleared this is tens of rows a day. While a backlog exists, every report
-run lists it again: e.g. 2,000 eligible records × 30 daily reports ≈ 60,000
-rows (roughly 20 MB). `storage_cleanup_claims` grows by one row per file ever
-removed.
+Retention trims the cleanup system's **own** history: run summaries, run
+details (candidates) and released file claims. It is not user data and has
+nothing to do with the 30-day recovery period for user-deleted records.
 
-**Proposed policy** (needs approval before any automatic deletion):
+### Approved periods
 
-| Data | Keep | Why |
+| Data | Kept | Never removed |
 |---|---|---|
-| `cleanup_runs` (one row per run, summary only) | 400 days | A year of history for audits and trends |
-| `cleanup_candidates` of **report** runs | 30 days, and always the latest 7 report runs | Enough to review before authorizing deletion |
-| `cleanup_candidates` of **delete** runs | 180 days | What was actually deleted (ids only) |
-| `storage_cleanup_claims` with status `deleted`, `replaced`, `missing` | **Never deleted** | They keep removed paths closed to uploads and records |
-| `storage_cleanup_claims` `released` | 180 days | No longer needed once retried |
-| `storage_cleanup_claims` `failed` | Until reviewed | Left for an administrator |
+| Run summaries (`cleanup_runs`) | 400 days | A running run; the latest 7 completed report runs |
+| Report-run details | 30 days | Details of the latest 7 completed report runs (however old) |
+| Delete-run details | 180 days | |
+| Released file claims | 180 days | |
+| Removed-path tombstones (`deleted`, `replaced`, `missing`) | Forever | Always kept: they keep removed paths closed |
+| Active (`claimed`), `failed` and `closed` claims | Forever, until resolved | See "Failed removals" |
 
-Implementation (later, after approval): one more step of the daily job, in its
-own transaction, at most 5,000 rows per run, report-only first, shown on the
-dashboard.
+The periods are columns of `private.cleanup_settings` that can only be
+**raised** (database checks), and at most 1,000 rows (up to 5,000) are
+removed per run.
+
+### How it runs and who allows it
+
+- It is a step of the existing daily job (`cleanup_retention`, after the file
+  work, in report and delete runs alike). There is no second schedule.
+- **Its own switch, off by default:** `retention_enabled`. Switching it on
+  needs an approval note: `select private.authorize_retention_maintenance('<who approved, when>');`
+  Off again: `select private.revoke_retention_maintenance();`. It is
+  independent of deleting user data (and does not authorize it).
+- **While off,** each run records a preview: how many rows of each kind
+  qualify. Exactly which rows: `select * from private.retention_candidates();`
+  (read-only).
+- **While on,** it removes details first, then released claims, then run
+  summaries that no longer have details (so nothing is removed by cascade),
+  each `DELETE` repeating its rule, all in one transaction.
+- **Fails closed:** if the latest report runs would not be protected, or any
+  protected claim count changes, or anything else fails, the whole step is
+  undone and the run is marked failed ("Applying retention failed…"), shown
+  on the dashboard.
+- Repeating is harmless (what is gone no longer qualifies); one retention
+  step per run; two at once are refused.
+
+### Tombstones do not depend on run history
+
+A tombstone is a row in `private.storage_cleanup_claims` keyed by bucket and
+path. Its `run_id` only points back to the run that removed the file and is
+set to null when that run summary expires. Protection comes from the row
+itself: the restrictive storage policies and the record guard read only the
+bucket, path and status. Tests remove the run summary of a removed photo and
+show that uploads (real Storage API) and records are still refused.
+
+## Failed removals (failed claims)
+
+A file whose removal failed 3 times is marked `failed`. It stays in Storage,
+is never retried automatically, and is never removed by retention.
+
+**Investigate:** `select * from private.cleanup_review where outcome = 'failed';`
+and `select * from private.storage_cleanup_claims where status = 'failed';`
+(last error, attempts, run). Check Storage (does the file exist; can it be
+removed with the dashboard's project settings; was there an outage).
+
+**Resolve (database owner, SQL editor; dashboard has no controls):**
+
+```sql
+-- 1. Record the review. Changes nothing else (no release, no deletion).
+select private.review_failed_claim('<bucket>', '<path>', 'What was checked and found');
+
+-- 2. Resolve - only after a review - as one of:
+select private.resolve_failed_claim('<bucket>', '<path>', 'removed', 'How it was removed');
+--    the file must already be gone (checked) -> a permanent tombstone
+select private.resolve_failed_claim('<bucket>', '<path>', 'retry', 'What was fixed');
+--    the file must still exist -> released, attempts reset; next delete run retries
+select private.resolve_failed_claim('<bucket>', '<path>', 'keep', 'Why it is kept');
+--    the file must still exist -> closed: never removed automatically
+```
+
+The review and resolution (who wrote what, and when) stay on the claim.
+A dashboard workflow for this (with its own administrator permission) is a
+possible future change and would need approval.
+
+## Cron schedule
+
+`vercel.json` (on this branch only):
+
+```json
+{ "crons": [{ "path": "/api/cron/cleanup", "schedule": "17 9 * * *" }] }
+```
+
+- **Once a day at 09:17 UTC** (01:17 Pacific / 04:17 Eastern in winter; one
+  hour later in summer clock terms).
+- **Plan compatibility:** Vercel Hobby allows cron jobs that run at most once
+  a day (on Hobby they may fire any time within the scheduled hour); Pro and
+  above run at the minute. A once-daily schedule works on every plan. The
+  route's `maxDuration` is 60 seconds, within every plan's limit.
+- **Production only:** Vercel runs cron jobs only for the production
+  deployment, never for preview deployments. In addition, the endpoint needs
+  `CRON_SECRET` and `SUPABASE_SECRET_KEY` (set for Production only) and never
+  deletes when `VERCEL_ENV` is not `production`.
+- **Deletion stays off:** without `CLEANUP_MODE=delete` **and** the database
+  switch, runs only report; retention has its own switch, also off.
+- The cron entry becomes active only when this branch is merged and deployed
+  to production (a release step that needs approval).
+
+## Security and reliability review (Checkpoint 4)
+
+| Area | Status |
+|---|---|
+| Cron authentication | `Authorization: Bearer CRON_SECRET`, constant-time; no secret configured → 503 for all; wrong → 401 without detail |
+| Environment isolation | Secrets for Production only; no deletion when `VERCEL_ENV` ≠ production; Vercel runs crons for production only |
+| Service-role key | Only in a `server-only` module; refused if publishable or present in a `NEXT_PUBLIC_` variable; never logged or returned; not used by the dashboard |
+| Database access | Cleanup tables private (RLS on, no grants); API functions service role only; dashboard function checks the administrators list; existing RLS unchanged |
+| Administrators | Private list, managed by the database owner only; nothing client-controlled grants access; revocation immediate |
+| Storage | Ten existing policies unchanged; two restrictive policies close claimed and removed paths to uploads and overwrites; tombstones kept forever and independent of run history |
+| Same-path replacement | Prevented for every signed-in user; only a service-role write in the last moment remains, detected and flagged |
+| Deleting user data | Two switches; 7 daily report runs and a backup attestation before the database switch can be turned on |
+| Limits | 200 rows per run counted as actually deleted (cascades included); 100 photos; 10% for buckets of 100+ files; oversized groups skipped whole |
+| Failures | Storage errors retried next run, 3 attempts then kept for review; database errors stop the run; Storage/database disagreement after a crash is resolved by closing paths of missing files |
+| Concurrency | One run at a time; per-step advisory locks; claim/attach/upload serialised per path; restore vs purge serialised per row |
+| Timeouts | 15 s per request; 60 s per run; removals start only in the first 40 s; stuck runs abandoned after 30 minutes |
+| Retention | Its own switch (off); periods can only be raised; tombstones, active, failed and closed claims never removed; bounded batches; one transaction; fails closed |
+| Rollback | Removes the cleanup, cannot restore anything it deleted (backups required) |
+
+Unresolved risks: a service-role write in the last moment before a removal
+(detected, not prevented); the backup reference is an attestation the
+database cannot verify; Hobby-plan crons fire within the scheduled hour.
 
 ## Known limitations and release blockers
 
@@ -467,8 +572,8 @@ dashboard.
   moment could still be removed, and it is detected and reported (see above).
 - **Oversized snowmobiles** are skipped daily until a one-time higher limit
   is approved.
-- **Run history** is not trimmed yet (retention policy proposed above, not
-  implemented).
+- **Operational-history retention** is built but off; it needs its own
+  approval to switch on.
 - **Backup reference** is a recorded attestation; the database cannot verify
   the backup.
 - **Offline devices** that have not synced for more than 30 days must do a
@@ -494,6 +599,11 @@ dashboard.
 - `scripts/test-cleanup-concurrency.sh` (two real sessions) and
   `scripts/test-migration-8-rollback.sh`.
 - `e2e/public.spec.ts`: the endpoint refuses calls without the secret.
+- `supabase/tests/database/013_cleanup_retention.test.sql` (pgTAP): every
+  retention boundary, the latest 7 report runs, tombstones and failed claims
+  kept, switch off by default, batches, an interrupted step, the failed-claim
+  lifecycle; the integration test shows a tombstone still closing its path
+  through the real Storage API after its run summary was removed.
 - `supabase/tests/database/012_cleanup_dashboard.test.sql` (pgTAP) and
   `e2e/admin-cleanup.spec.ts` (CI, local stack): administrator access, every
   other role refused (page and API), empty, report and deletion states,

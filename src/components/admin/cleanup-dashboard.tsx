@@ -1,4 +1,4 @@
-import { CircleAlert, CircleCheck, Clock, Database, FileWarning, History, Images, ShieldAlert, ShieldCheck } from "lucide-react";
+import { Archive, CircleAlert, CircleCheck, Clock, Database, FileWarning, History, Images, ShieldAlert, ShieldCheck } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { cn } from "@/components/ui/cn";
@@ -8,6 +8,7 @@ import {
   formatDuration,
   formatUtc,
   outcomeLabel,
+  retentionQualifying,
   runStatusTone,
   shortId,
   totalOrphans,
@@ -411,6 +412,8 @@ export function CleanupDashboard({ data, server }: { data: CleanupDashboardData;
         </Section>
       ) : null}
 
+      {data.retention ? <RetentionSection retention={data.retention} /> : null}
+
       <section aria-labelledby="dashboard-limits-title" className="text-sm text-muted" data-testid="dashboard-limits">
         <h2 id="dashboard-limits-title" className="font-semibold text-foreground">
           Safety limits (read-only)
@@ -422,5 +425,63 @@ export function CleanupDashboard({ data, server }: { data: CleanupDashboardData;
         </p>
       </section>
     </div>
+  );
+}
+
+/** The cleanup's own logs: never user data, separate switch from deletion. */
+function RetentionSection({ retention }: { retention: NonNullable<CleanupDashboardData["retention"]> }) {
+  const p = retention.periods;
+  const q = retention.qualifying;
+  const removed = retention.last?.summary?.removed;
+  const qualifying = retentionQualifying({ retention } as CleanupDashboardData);
+  return (
+    <Section id="dashboard-retention" title="Operational history" icon={<Archive aria-hidden className="size-5 text-accent-hot" />}>
+      <p className="text-sm text-muted">
+        Retention of the cleanup&apos;s own run reports and file claims. This is not user data and is separate from deleting expired records
+        or photos: it has its own switch, and removed-path records are never trimmed.
+      </p>
+      <dl className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <Stat
+          label="Retention maintenance"
+          testId="retention-status"
+          value={<Badge tone={retention.enabled ? "good" : "neutral"}>{retention.enabled ? "On" : "Off (preview only)"}</Badge>}
+          sub={retention.authorized_at ? `Switched on ${formatUtc(retention.authorized_at)}.` : "Needs its own approval to switch on."}
+        />
+        <Stat
+          label="Last applied"
+          testId="retention-last"
+          value={<span className="text-base font-semibold">{retention.last ? formatUtc(retention.last.at) : "Never"}</span>}
+          sub={
+            retention.last
+              ? removed && retention.last.summary?.enabled
+                ? `Removed ${removed.details ?? 0} details, ${removed.released_claims ?? 0} released claims, ${removed.runs ?? 0} run summaries.`
+                : "Previewed only (switched off)."
+              : "Runs as part of the daily job."
+          }
+        />
+        <Stat
+          label="Qualifying now"
+          testId="retention-qualifying"
+          value={qualifying}
+          sub={`${q.runs ?? 0} run summaries · ${(q.report_candidates ?? 0) + (q.delete_candidates ?? 0)} details · ${q.released_claims ?? 0} released claims`}
+        />
+        <Stat
+          label="Kept for review"
+          testId="retention-kept"
+          value={(retention.failed_claims_unreviewed ?? 0) + (retention.failed_claims_reviewed ?? 0)}
+          sub={`Failed removals: ${retention.failed_claims_unreviewed ?? 0} awaiting review, ${retention.failed_claims_reviewed ?? 0} reviewed, not resolved. Removed-path records: ${retention.tombstones ?? 0} (kept forever).`}
+        />
+      </dl>
+      {retention.last_error ? (
+        <p className="mt-3 text-sm text-red-200" data-testid="retention-error">
+          Blocked: {retention.last_error}
+        </p>
+      ) : null}
+      <p className="mt-3 text-sm text-muted" data-testid="retention-periods">
+        Run summaries {p.run_days ?? 400} days · report details {p.report_candidate_days ?? 30} days (the latest {p.keep_report_runs ?? 7} report runs
+        always kept) · deletion details {p.delete_candidate_days ?? 180} days · released claims {p.released_claim_days ?? 180} days · at most{" "}
+        {p.batch_size ?? 1000} rows per run.
+      </p>
+    </Section>
   );
 }

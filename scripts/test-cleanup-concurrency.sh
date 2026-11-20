@@ -15,6 +15,8 @@
 #      changed (new) file and does not claim it.
 #   8. While claimed, an owner may still remove the file, but cannot upload
 #      a new one at the same path.
+#   9. Two sessions applying operational-history retention at once: the
+#      second is refused.
 #
 # Usage (CI does this against the local Supabase stack):
 #   THROWAWAY_DATABASE=yes PSQL="docker exec -i supabase_db_sledwerx psql -U postgres" \
@@ -157,6 +159,11 @@ RUN2="$(query "select private.cleanup_begin_run('delete', 'manual');")"
 session_a "select private.cleanup_process_records($RUN2);"
 session_b "select private.cleanup_process_records($RUN2);"
 check 'grep -q "Another cleanup is processing records" "$OUT_B"' "a second session processing records at the same time is refused"
+
+# --- 9. Two retention steps at once --------------------------------------------
+session_a "select private.cleanup_retention($RUN2);"
+session_b "select private.cleanup_retention($RUN2);"
+check 'grep -q "Another cleanup is applying retention" "$OUT_B"' "a second session applying retention at the same time is refused"
 query "select private.cleanup_finish_run($RUN2);" > /dev/null
 
 if [[ $failures -eq 0 ]]; then

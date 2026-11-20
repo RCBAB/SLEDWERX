@@ -37,6 +37,8 @@ export type CleanupReport = {
   warnings: string[];
   records: unknown;
   files: unknown;
+  /** Operational-history retention (the cleanup's own logs; not user data). */
+  retention: unknown;
   removal: { removed: number; replaced: number; missing: number; skipped: number; failed: number; stoppedEarly: string | null };
   error: string | null;
 };
@@ -75,6 +77,7 @@ export async function runCleanup(options: RunCleanupOptions): Promise<CleanupRep
     warnings,
     records: null,
     files: null,
+    retention: null,
     removal,
     error: null,
     ...fields,
@@ -106,6 +109,7 @@ export async function runCleanup(options: RunCleanupOptions): Promise<CleanupRep
 
   let records: unknown = null;
   let files: unknown = null;
+  let retention: unknown = null;
   try {
     // 2. Records (the database enforces the 200-row limit and every rule).
     records = await call("Processing records", "cleanup_process_records", {});
@@ -185,13 +189,17 @@ export async function runCleanup(options: RunCleanupOptions): Promise<CleanupRep
       }
     }
 
-    // 5. Close the run (open claims are released).
+    // 5. Operational-history retention (its own switch in the database; only
+    //    previews while that is off). Any failure fails the run, closed.
+    retention = await call("Applying retention", "cleanup_retention", {});
+
+    // 6. Close the run (open claims are released).
     await call("Finishing the run", "cleanup_finish_run", { p_error: null });
-    return report({ runId, mode, records, files });
+    return report({ runId, mode, records, files, retention });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Cleanup failed.";
     await db.rpc("cleanup_finish_run", { p_run_id: runId, p_error: message }).catch(() => undefined);
-    return report({ status: "failed", runId, mode, records, files, error: message });
+    return report({ status: "failed", runId, mode, records, files, retention, error: message });
   }
 }
 
@@ -211,6 +219,7 @@ export function summarizeReport(report: CleanupReport) {
     record_outcomes: records?.outcomes ?? null,
     removal: report.removal,
     needs_review: Boolean(records?.needs_review || files?.needs_review),
+    retention: report.retention,
     storage_unreadable: files?.storage_unreadable ?? null,
     registry_problems: files?.registry_problems?.length ?? null,
     warnings: report.warnings,

@@ -51,7 +51,7 @@ fingerprint() {
       from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname in ('public','private')
     order by 1;"
 }
-M8_OBJECTS='app_administrator|cleanup|storage_cleanup|storage_reference_columns|storage_(lock_key|path_|file_|reference_count)|expired_record|purge_expired_records|sleds_photo_path_idx|storage_claim_guard'
+M8_OBJECTS='app_administrator|retention|failed_claim|cleanup|storage_cleanup|storage_reference_columns|storage_(lock_key|path_|file_|reference_count)|expired_record|purge_expired_records|sleds_photo_path_idx|storage_claim_guard'
 
 # --- The rollback can never run automatically ------------------------------
 check '! ls supabase/migrations | grep -qi rollback' "no rollback script is inside supabase/migrations/"

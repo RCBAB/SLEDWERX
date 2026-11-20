@@ -22,7 +22,7 @@ function sql(query: string): string {
 }
 const userId = (email: string) => sql(`select id from auth.users where email = '${email}';`);
 const resetCleanup = () =>
-  sql(`select private.revoke_cleanup_deletion();
+  sql(`select private.revoke_cleanup_deletion(); select private.revoke_retention_maintenance();
        delete from private.storage_cleanup_claims; delete from private.cleanup_runs;`);
 
 async function expectNotFound(page: Page) {
@@ -109,6 +109,10 @@ test.describe("an administrator", () => {
     await expect(page.getByTestId("dashboard-backup")).toContainText("Not recorded");
     await expect(page.getByTestId("dashboard-last-run")).toContainText("None yet");
     await expect(page.getByTestId("dashboard-no-warnings")).toBeVisible();
+    await expect(page.getByTestId("retention-status")).toContainText("Off (preview only)");
+    await expect(page.getByTestId("retention-last")).toContainText("Never");
+    await expect(page.getByTestId("retention-qualifying")).toContainText("0");
+    await expect(page.getByTestId("retention-periods")).toContainText("Run summaries 400 days");
   });
 
   test("sees what the runs found, warnings, oversized groups and history", async ({ page }) => {
@@ -157,6 +161,31 @@ test.describe("an administrator", () => {
     await expect(page.getByTestId("dashboard-backup")).toContainText("Recorded");
     await expect(page.getByTestId("dashboard-backup")).toContainText("Deletion authorized");
     await expect(page.locator("body")).not.toContainText("SECRET-REFERENCE");
+  });
+
+  test("shows operational-history retention separately from deleting user data", async ({ page }) => {
+    sql(`insert into private.cleanup_runs (mode, source, status, started_at, finished_at)
+         values ('delete', 'manual', 'completed', now() - interval '401 days', now() - interval '401 days');
+         insert into private.storage_cleanup_claims (bucket_id, object_path, status, finished_at)
+         values ('sled-photos', 'e2e/tombstone.jpg', 'deleted', now() - interval '3000 days'),
+                ('sled-photos', 'e2e/failed.jpg', 'failed', now() - interval '3000 days');
+         insert into private.cleanup_runs (mode, source, status, started_at, finished_at, error)
+         values ('report', 'scheduled', 'failed', now(), now(), 'Applying retention failed: test safety check');`);
+    await page.goto(URL);
+    const section = page.getByTestId("dashboard-retention");
+    await expect(section).toContainText("This is not user data");
+    await expect(page.getByTestId("retention-status")).toContainText("Off (preview only)");
+    await expect(page.getByTestId("retention-qualifying")).toContainText("1 run summaries");
+    await expect(page.getByTestId("retention-kept")).toContainText("Failed removals: 1 awaiting review");
+    await expect(page.getByTestId("retention-kept")).toContainText("Removed-path records: 1 (kept forever)");
+    await expect(page.getByTestId("retention-error")).toContainText("Applying retention failed: test safety check");
+    await expect(page.getByTestId("dashboard-warnings")).toContainText("A retention step failed");
+
+    sql(`select private.authorize_retention_maintenance('e2e approval');`);
+    await page.goto(URL);
+    await expect(page.getByTestId("retention-status")).toContainText("On");
+    // Retention on does not mean deleting user data.
+    await expect(page.getByTestId("dashboard-mode")).toContainText("Report-only");
   });
 
   test("the dashboard is read-only: no buttons, forms or inputs", async ({ page }) => {

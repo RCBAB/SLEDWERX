@@ -6,7 +6,8 @@
 --
 -- * Removes everything Migration 8 created: the cleanup settings, runs,
 --   candidates, registries, file claims and review view; the application
---   administrators list and the cleanup dashboard function; the cleanup
+--   administrators list and the cleanup dashboard function; retention
+--   maintenance and the failed-claim review functions; the cleanup
 --   functions (private and the eight public API functions); the delete-counting triggers on the
 --   purged tables; the claim guard on the three photo-path columns; and the
 --   index on sleds.photo_path, and the two restrictive storage policies that
@@ -60,6 +61,16 @@ begin
     execute format('drop trigger %I on %s', v_t.tgname, v_t.rel);
   end loop;
 end $$;
+
+-- 3b. Operational-history retention and the failed-claim lifecycle.
+drop function if exists public.cleanup_retention(bigint);
+drop function if exists private.resolve_failed_claim(text, text, text, text);
+drop function if exists private.review_failed_claim(text, text, text);
+drop function if exists private.cleanup_retention(bigint);
+drop function if exists private.retention_counts(timestamptz);
+drop function if exists private.retention_candidates(timestamptz);
+drop function if exists private.revoke_retention_maintenance();
+drop function if exists private.authorize_retention_maintenance(text);
 
 -- 3a. Administrators and the dashboard.
 drop function if exists public.cleanup_dashboard();
@@ -194,7 +205,8 @@ begin
      or exists (select 1 from pg_policies where schemaname = 'storage' and policyname like 'SledWerx cleanup:%')
      or to_regclass('private.app_administrators') is not null
      or exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-                where n.nspname = 'private' and p.proname like '%app\_administrator%')
+                where n.nspname = 'private' and (p.proname like '%app\_administrator%' or p.proname like '%retention%'
+                                                 or p.proname like '%failed\_claim%'))
   then
     raise exception 'Rollback verification failed: Migration 8 objects remain. Nothing was changed.';
   end if;

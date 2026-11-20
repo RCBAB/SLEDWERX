@@ -268,8 +268,8 @@ select is((select string_agg(r.role, ',' order by r.role) from unnest(array['ano
            where has_function_privilege(r.role, 'private.storage_path_writable(text, text)', 'execute')), 'authenticated',
   'only the storage policies'' path check is callable by signed-in users (it returns a yes/no for one path)');
 select is((select count(*)::int from pg_proc p where p.pronamespace = 'public'::regnamespace and p.proname like 'cleanup\_%'
-           and has_function_privilege('service_role', p.oid, 'execute')), 8,
-  'the service role can run the eight cleanup API functions');
+           and has_function_privilege('service_role', p.oid, 'execute')), 9,
+  'the service role can run the nine cleanup API functions');
 select is_empty($$
   select p.proname from pg_proc p where p.pronamespace in ('public'::regnamespace, 'private'::regnamespace)
     and (p.proname like '%cleanup%' or p.proname like 'storage\_%' or p.proname like 'expired\_record%')

@@ -20,11 +20,23 @@ export default defineConfig({
     { name: "desktop", use: { ...devices["Desktop Chrome"] } },
     { name: "mobile", use: { ...devices["Pixel 7"] } },
   ],
-  // Runs the production build (`npm run build` first).
-  webServer: {
-    command: `npx next start -p ${PORT} -H 127.0.0.1`,
-    url: baseURL,
-    reuseExistingServer: !process.env.CI,
-    timeout: 120_000,
-  },
+  // Runs the production build (`npm run build` first), twice: suspension photo
+  // uploads off (the default, as in production for now) and, on the next
+  // port, on (for the photo tests; see e2e/helpers.ts PHOTOS_URL).
+  webServer: [
+    {
+      command: `npx next start -p ${PORT} -H 127.0.0.1`,
+      url: baseURL,
+      env: { SUSPENSION_PHOTO_UPLOADS: "" },
+      reuseExistingServer: !process.env.CI,
+      timeout: 120_000,
+    },
+    {
+      command: `npx next start -p ${PORT + 1} -H 127.0.0.1`,
+      url: `http://127.0.0.1:${PORT + 1}`,
+      env: { SUSPENSION_PHOTO_UPLOADS: "on" },
+      reuseExistingServer: !process.env.CI,
+      timeout: 120_000,
+    },
+  ],
 });

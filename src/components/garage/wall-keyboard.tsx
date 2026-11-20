@@ -5,7 +5,16 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNo
 import { createPortal } from "react-dom";
 
 import { cn } from "@/components/ui/cn";
-import { afterChar, applyKey, keyboardModeFor, nextShift, type KeyAction, type KeyboardMode, type ShiftState } from "@/lib/keyboard/edit";
+import {
+  afterChar,
+  allowsNegative,
+  applyKey,
+  keyboardModeFor,
+  nextShift,
+  type KeyAction,
+  type KeyboardMode,
+  type ShiftState,
+} from "@/lib/keyboard/edit";
 
 /**
  * SledWerx's on-screen keyboard for the Garage Board Wall Display only.
@@ -95,6 +104,8 @@ function reveal(el: Editable) {
 export function WallKeyboard() {
   const [target, setTarget] = useState<Editable | null>(null);
   const [mode, setMode] = useState<KeyboardMode>("text");
+  /** The number pad shows ± only for fields that take negative values (suspension settings). */
+  const [signed, setSigned] = useState(false);
   const [page, setPage] = useState<"letters" | "symbols">("letters");
   const [shift, setShift] = useState<ShiftState>("off");
   const lastShiftTap = useRef(0);
@@ -114,6 +125,7 @@ export function WallKeyboard() {
     targetRef.current = el;
     setTarget(el);
     setMode(nextMode);
+    setSigned(allowsNegative(el));
     setPage("letters");
     setShift("off");
   }, []);
@@ -252,6 +264,7 @@ export function WallKeyboard() {
       aria-label="On-screen keyboard"
       data-testid="wall-keyboard"
       data-mode={mode}
+      data-signed={signed ? "true" : undefined}
       // Keys never take focus, so the field keeps its cursor and nothing blurs.
       onPointerDown={(event) => event.preventDefault()}
       onMouseDown={(event) => event.preventDefault()}
@@ -278,10 +291,15 @@ export function WallKeyboard() {
             <Key label="Done" onPress={done} tone="accent" className="row-span-2 h-auto">
               Done
             </Key>
+            {signed ? (
+              <Key label="Plus or minus" onPress={() => press({ kind: "negate" })} tone="muted" className="text-2xl">
+                ±
+              </Key>
+            ) : null}
             <Key label="Decimal point" onPress={() => press({ kind: "char", char: "." })} disabled={mode !== "decimal"}>
               .
             </Key>
-            <Key label="0" onPress={() => press({ kind: "char", char: "0" })} className="col-span-2" />
+            <Key label="0" onPress={() => press({ kind: "char", char: "0" })} className={signed ? undefined : "col-span-2"} />
           </div>
         ) : (
           <div className="space-y-2">
@@ -300,7 +318,14 @@ export function WallKeyboard() {
                 ) : null}
                 {row.split("").map((k) => {
                   const shown = page === "letters" && shift !== "off" ? k.toUpperCase() : k;
-                  return <Key key={k} label={shown} onPress={() => (page === "letters" ? type(k) : press({ kind: "char", char: k }))} className="flex-1" />;
+                  return (
+                    <Key
+                      key={k}
+                      label={shown}
+                      onPress={() => (page === "letters" ? type(k) : press({ kind: "char", char: k }))}
+                      className="flex-1"
+                    />
+                  );
                 })}
                 {i === 2 ? (
                   <Key label="Backspace" onPress={() => press({ kind: "backspace" })} tone="muted" className="flex-[1.5]">
@@ -386,7 +411,7 @@ function Key({
         "flex h-16 min-w-0 items-center justify-center rounded-lg text-2xl font-semibold transition-colors active:scale-[0.97] disabled:opacity-30",
         tone === "plain" && "bg-white/10 text-foreground active:bg-white/20",
         tone === "muted" && "bg-white/5 text-base text-foreground/90 active:bg-white/15",
-        tone === "accent" && "bg-accent text-lg text-white active:bg-accent-hot",
+        tone === "accent" && "bg-primary text-lg text-white active:bg-primary-hover",
         pressed && "ring-2 ring-accent",
         className,
       )}

@@ -7,6 +7,14 @@
   --muted: #8b939e;
   --accent: #ff3b1f;
   --accent-hot: #ff7a1a;
+  /*
+   * Filled controls with white text (primary buttons, selected toggles).
+   * Darker than --accent so white text meets WCAG AA (4.88:1; hover 6.37:1).
+   * --accent stays as is for text, borders and decoration on the dark
+   * background, where it is the stronger color (5.46:1).
+   */
+  --primary: #d92b12;
+  --primary-hover: #b8240f;
 }
 
 @theme inline {
@@ -16,6 +24,8 @@
   --color-muted: var(--muted);
   --color-accent: var(--accent);
   --color-accent-hot: var(--accent-hot);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
   --font-display: var(--font-display);

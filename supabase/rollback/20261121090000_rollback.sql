@@ -32,6 +32,10 @@ begin
   if current_setting('sledwerx.confirm_rollback', true) is distinct from '20261121090000' then
     raise exception 'Rollback not confirmed. Run  set sledwerx.confirm_rollback = ''20261121090000'';  first, in the same session. See supabase/rollback/README.md.';
   end if;
+  -- Migration 9 (Quick Tune) extends the suspension tables: roll it back first.
+  if to_regclass('public.sled_suspension_state') is not null then
+    raise exception 'Rollback aborted: Migration 9 (Quick Tune) is applied and extends these tables. Roll back Migration 9 first.';
+  end if;
   -- Migration 8 (cleanup) lists the suspension tables: roll it back first.
   if to_regclass('private.cleanup_record_tables') is not null then
     raise exception 'Rollback aborted: Migration 8 (cleanup) is applied and uses these tables. Roll back Migration 8 first.';

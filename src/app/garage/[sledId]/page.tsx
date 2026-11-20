@@ -6,6 +6,7 @@ import { Suspense } from "react";
 
 import { MaintenanceBoard } from "@/components/board/maintenance-board";
 import { SledIssues } from "@/components/issues/issues";
+import { SuspensionSummary } from "@/components/suspension/suspension-summary";
 import { QuickService } from "@/components/service/quick-service";
 import { ServiceHistory } from "@/components/service/service-history";
 import { BackLink } from "@/components/sleds/back-link";
@@ -23,8 +24,10 @@ import { issuesResolvedByEntry, listSledIssues } from "@/lib/issues/queries";
 import { hasCriticalIssue } from "@/lib/issues/types";
 import { listPackages, listServiceRecords, taskOptionsForSled } from "@/lib/service/queries";
 import { formatDate, formatHours, formatMiles, sledDescription, sledName } from "@/lib/sleds/format";
+import { suspensionPhotoUploadsEnabled } from "@/lib/suspension/photo-flag";
 import { canFixReading, ROLE_LABELS, serviceCapabilities, sledCapabilities } from "@/lib/sleds/permissions";
 import { getSled, type SledDetail } from "@/lib/sleds/queries";
+import { getActiveSuspensions } from "@/lib/suspension/queries";
 
 export const metadata: Metadata = { title: "Snowmobile" };
 
@@ -72,13 +75,14 @@ async function SledDashboard({ params, searchParams }: Pick<PageProps<"/garage/[
               ? NOTICES.serviceUpdated
               : null;
   const last = sled.readings[0];
-  const [services, taskOptions, board, packages, issues, resolvedIssues] = await Promise.all([
+  const [services, taskOptions, board, packages, issues, resolvedIssues, suspensions] = await Promise.all([
     listServiceRecords(sled.id),
     can.canLogService ? taskOptionsForSled(sled) : Promise.resolve([]),
     getBoard(sled.id),
     can.canLogService ? listPackages(user.id) : Promise.resolve([]),
     listSledIssues(sled.id),
     issuesResolvedByEntry(sled.id),
+    getActiveSuspensions([sled.id]),
   ]);
   const lastService = last ? services.find((service) => service.readingId === last.id) : undefined;
   // Oldest first, so readings of the same day keep the order they were entered.
@@ -107,15 +111,10 @@ async function SledDashboard({ params, searchParams }: Pick<PageProps<"/garage/[
               </span>
             ) : null}
           </div>
-          <h1
-            id="sled-name"
-            className="mt-3 font-display text-4xl font-extrabold uppercase italic leading-none tracking-tight sm:text-5xl"
-          >
+          <h1 id="sled-name" className="mt-3 font-display text-4xl font-extrabold uppercase italic leading-none tracking-tight sm:text-5xl">
             {name}
           </h1>
-          <p className="mt-2 text-lg text-muted">
-            {sledDescription({ model_year: sled.modelYear, make: sled.make, model: sled.model })}
-          </p>
+          <p className="mt-2 text-lg text-muted">{sledDescription({ model_year: sled.modelYear, make: sled.make, model: sled.model })}</p>
 
           <dl className="mt-6 grid grid-cols-2 gap-4">
             <Meter label="Odometer" reading={sled.meters.odometer} format={formatMiles} testId="current-odometer" />
@@ -171,13 +170,34 @@ async function SledDashboard({ params, searchParams }: Pick<PageProps<"/garage/[
         />
       </section>
 
+      <section className="mt-10 scroll-mt-24" id="suspension" aria-labelledby="suspension-heading">
+        <h2 id="suspension-heading" className="font-display text-2xl font-bold uppercase tracking-wide">
+          Suspension
+        </h2>
+        <div className="mt-4 rounded-2xl border border-white/10 bg-surface/70 p-5">
+          <SuspensionSummary
+            sledId={sled.id}
+            sledName={name}
+            active={suspensions.get(sled.id) ?? null}
+            role={sled.role}
+            odometer={currentMeters.odometer}
+            engineHours={currentMeters.engineHours}
+            variant="page"
+            photoUploads={suspensionPhotoUploadsEnabled()}
+          />
+        </div>
+      </section>
+
       <section className="mt-10" aria-labelledby="readings-heading" data-testid="readings-section">
         <h2 id="readings-heading" className="font-display text-2xl font-bold uppercase tracking-wide">
           Reading history
         </h2>
 
         {last && lastService ? (
-          <p className="mt-4 rounded-2xl border border-white/10 bg-surface/40 px-5 py-4 text-sm text-muted" data-testid="last-reading-service">
+          <p
+            className="mt-4 rounded-2xl border border-white/10 bg-surface/40 px-5 py-4 text-sm text-muted"
+            data-testid="last-reading-service"
+          >
             The latest reading belongs to the service “{lastService.title}”.{" "}
             {serviceCapabilities(sled.role, lastService.createdBy, user.id).canEdit ? (
               <Link

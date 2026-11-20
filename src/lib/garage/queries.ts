@@ -9,6 +9,7 @@ import type { BoardRow } from "@/lib/board/types";
 import { listPackages, sledRoles, taskOptionsForSleds, type MaintenancePackage, type TaskOption } from "@/lib/service/queries";
 import type { SledRole } from "@/lib/sleds/constants";
 import { sledCapabilities } from "@/lib/sleds/permissions";
+import { suspensionPhotoUploadsEnabled } from "@/lib/suspension/photo-flag";
 import { listGarageSleds, type SledListItem } from "@/lib/sleds/queries";
 import type { RangeReading } from "@/lib/service/meter-range";
 import { createClient } from "@/lib/supabase/server";
@@ -42,6 +43,8 @@ export type GarageBoardData = {
   packages: MaintenancePackage[];
   /** When this was loaded (shown as "Updated" on the wall display). */
   loadedAt: string;
+  /** The suspension photo-upload feature flag (Phase 6.2; off until cleanup is verified). */
+  suspensionPhotoUploads: boolean;
 };
 
 /**
@@ -97,5 +100,6 @@ export async function getGarageBoard(userId: string): Promise<GarageBoardData> {
     shared: entries.filter((e) => e.role !== "owner"),
     packages,
     loadedAt: new Date().toISOString(),
+    suspensionPhotoUploads: suspensionPhotoUploadsEnabled(),
   };
 }

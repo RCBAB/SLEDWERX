@@ -56,6 +56,7 @@ export function RevisionHistory({
   allRevisions,
   settings,
   role,
+  photoUploads,
   userId,
   onAddFeedback,
   onEditFeedback,
@@ -69,6 +70,8 @@ export function RevisionHistory({
   allRevisions: SuspensionRevision[];
   settings: SuspensionSetting[];
   role: SledRole;
+  /** The photo-upload feature flag (decided on the server). */
+  photoUploads: boolean;
   userId: string;
   onAddFeedback: (revision: SuspensionRevision) => void;
   onEditFeedback: (revision: SuspensionRevision, feedback: SuspensionFeedback) => void;
@@ -90,6 +93,7 @@ export function RevisionHistory({
             current={revision.id === latestId}
             settings={settings}
             role={role}
+            photoUploads={photoUploads}
             userId={userId}
             onAddFeedback={() => onAddFeedback(revision)}
             onEditFeedback={(feedback) => onEditFeedback(revision, feedback)}
@@ -114,6 +118,7 @@ function RevisionCard({
   current,
   settings,
   role,
+  photoUploads,
   userId,
   onAddFeedback,
   onEditFeedback,
@@ -126,6 +131,8 @@ function RevisionCard({
   current: boolean;
   settings: SuspensionSetting[];
   role: SledRole;
+  /** The photo-upload feature flag (decided on the server). */
+  photoUploads: boolean;
   userId: string;
   onAddFeedback: () => void;
   onEditFeedback: (feedback: SuspensionFeedback) => void;
@@ -133,7 +140,7 @@ function RevisionCard({
   onRestore: () => void;
   onPhotos: () => void;
 }) {
-  const can = suspensionCapabilities(role);
+  const can = suspensionCapabilities(role, { photoUploads });
   const changes = revisionChanges(previous?.values ?? null, revision.values, settings);
   const { busy, error, run } = useRun();
   const [allChanges, setAllChanges] = useState(false);

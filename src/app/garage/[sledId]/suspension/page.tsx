@@ -9,6 +9,7 @@ import { requireUser } from "@/lib/auth/session";
 import { sledDescription, sledName } from "@/lib/sleds/format";
 import { suspensionCapabilities } from "@/lib/sleds/permissions";
 import { getSled } from "@/lib/sleds/queries";
+import { suspensionPhotoUploadsEnabled } from "@/lib/suspension/photo-flag";
 import { getSuspensionData } from "@/lib/suspension/queries";
 
 export const metadata: Metadata = { title: "Suspension tuning" };
@@ -48,6 +49,7 @@ async function Suspension({ params, searchParams }: Pick<PageProps<"/garage/[sle
           engineHours: sled.meters.engineHours?.value ?? null,
         }}
         role={sled.role}
+        photoUploads={suspensionPhotoUploadsEnabled()}
         userId={user.id}
         initialSetupId={requested}
       />

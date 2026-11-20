@@ -24,6 +24,7 @@ import { issuesResolvedByEntry, listSledIssues } from "@/lib/issues/queries";
 import { hasCriticalIssue } from "@/lib/issues/types";
 import { listPackages, listServiceRecords, taskOptionsForSled } from "@/lib/service/queries";
 import { formatDate, formatHours, formatMiles, sledDescription, sledName } from "@/lib/sleds/format";
+import { suspensionPhotoUploadsEnabled } from "@/lib/suspension/photo-flag";
 import { canFixReading, ROLE_LABELS, serviceCapabilities, sledCapabilities } from "@/lib/sleds/permissions";
 import { getSled, type SledDetail } from "@/lib/sleds/queries";
 import { getActiveSuspensions } from "@/lib/suspension/queries";
@@ -182,6 +183,7 @@ async function SledDashboard({ params, searchParams }: Pick<PageProps<"/garage/[
             odometer={currentMeters.odometer}
             engineHours={currentMeters.engineHours}
             variant="page"
+            photoUploads={suspensionPhotoUploadsEnabled()}
           />
         </div>
       </section>

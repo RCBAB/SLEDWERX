@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 
 import { getSessionUser } from "@/lib/auth/session";
 import { suspensionCapabilities } from "@/lib/sleds/permissions";
+import { suspensionPhotoUploadsEnabled } from "@/lib/suspension/photo-flag";
 import { getSled } from "@/lib/sleds/queries";
 import { changedValues } from "@/lib/suspension/diff";
 import { suspensionErrorMessage, type SuspensionSubject } from "@/lib/suspension/errors";
@@ -431,8 +432,11 @@ export async function deleteFeedback(feedbackId: string, version: number): Promi
 // ---------------------------------------------------------------------------
 // Photos (the file is uploaded from the browser with the user's own session;
 // this records it). Reference photos: owners and editors. Adjustment photos:
-// owners, editors and mechanics.
+// owners, editors and mechanics. Both refuse while the photo-upload feature
+// flag is off (lib/suspension/photo-flag.ts); removing photos still works.
 // ---------------------------------------------------------------------------
+const PHOTO_UPLOADS_OFF = "Adding photos is turned off for now.";
+
 export type PhotoRoom = { error?: string; room: number; canRemoveFiles: boolean };
 
 /**
@@ -445,10 +449,11 @@ export type PhotoRoom = { error?: string; room: number; canRemoveFiles: boolean 
 export async function prepareSuspensionPhotos(sledId: string, parent: { kind: "setting" | "revision"; id: string }): Promise<PhotoRoom> {
   const user = await signedInUser();
   const none = (error: string): PhotoRoom => ({ error, room: 0, canRemoveFiles: false });
+  if (!suspensionPhotoUploadsEnabled()) return none(PHOTO_UPLOADS_OFF);
   if (!uuidSchema.safeParse(sledId).success || !uuidSchema.safeParse(parent.id).success) return none("Photo not found.");
   const sled = await getSled(sledId, user.id);
   if (!sled) return none("Snowmobile not found.");
-  const can = suspensionCapabilities(sled.role);
+  const can = suspensionCapabilities(sled.role, { photoUploads: true });
   if (parent.kind === "setting" ? !can.canAddReferencePhotos : !can.canAddAdjustmentPhotos) {
     return none(parent.kind === "setting" ? "Only the owner or an editor can add reference photos." : "You can't add photos here.");
   }
@@ -478,6 +483,7 @@ export async function addSuspensionPhoto(
   position: number,
 ): Promise<SuspensionActionState> {
   await signedInUser();
+  if (!suspensionPhotoUploadsEnabled()) return { error: PHOTO_UPLOADS_OFF };
   if (!uuidSchema.safeParse(sledId).success || !uuidSchema.safeParse(parent.id).success) return { error: "Photo not found." };
   if (!PHOTO_PATH.test(path) || !path.startsWith(`${sledId}/${parent.id}/`)) return { error: "That photo can't be used." };
   const supabase = await createClient();

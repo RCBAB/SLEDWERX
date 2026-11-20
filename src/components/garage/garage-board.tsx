@@ -172,9 +172,9 @@ export function GarageBoard({ data, initialWall }: { data: GarageBoardData; init
               {section.sleds.map((entry) => (
                 <li key={entry.sled.id} className="min-w-0">
                   {layout === "cards" ? (
-                    <SledCard entry={entry} userId={data.userId} packages={data.packages} big={big} onOpen={open} />
+                    <SledCard entry={entry} userId={data.userId} packages={data.packages} photoUploads={data.suspensionPhotoUploads} big={big} onOpen={open} />
                   ) : (
-                    <SledTable entry={entry} userId={data.userId} packages={data.packages} big={big} onOpen={open} />
+                    <SledTable entry={entry} userId={data.userId} packages={data.packages} photoUploads={data.suspensionPhotoUploads} big={big} onOpen={open} />
                   )}
                 </li>
               ))}
@@ -263,6 +263,8 @@ type SledProps = {
   entry: GarageBoardSled;
   userId: string;
   packages: MaintenancePackage[];
+  /** The suspension photo-upload feature flag. */
+  photoUploads: boolean;
   big: boolean;
   onOpen: (sheet: OpenSheet) => void;
 };
@@ -444,7 +446,7 @@ function BoardIssues({ entry, userId, big }: SledProps) {
 }
 
 /** The active suspension setup, with View / Adjust / Ride feedback by role (Phase 6.2). */
-function BoardSuspension({ entry, big }: SledProps) {
+function BoardSuspension({ entry, big, photoUploads }: SledProps) {
   const current = currentMeters(entry);
   return (
     <SuspensionSummary
@@ -456,6 +458,7 @@ function BoardSuspension({ entry, big }: SledProps) {
       engineHours={current.engineHours}
       variant="board"
       big={big}
+      photoUploads={photoUploads}
     />
   );
 }

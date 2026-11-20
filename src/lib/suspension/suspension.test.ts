@@ -212,7 +212,7 @@ describe("history helpers", () => {
 
 describe("permissions", () => {
   it("owners and editors manage; mechanics adjust; viewers read", () => {
-    expect(suspensionCapabilities("owner")).toEqual({
+    expect(suspensionCapabilities("owner", { photoUploads: true })).toEqual({
       canManage: true,
       canAdjust: true,
       canAddFeedback: true,
@@ -221,7 +221,7 @@ describe("permissions", () => {
       canRemove: true,
     });
     expect(suspensionCapabilities("editor").canManage).toBe(true);
-    expect(suspensionCapabilities("mechanic")).toEqual({
+    expect(suspensionCapabilities("mechanic", { photoUploads: true })).toEqual({
       canManage: false,
       canAdjust: true,
       canAddFeedback: true,
@@ -229,7 +229,20 @@ describe("permissions", () => {
       canAddAdjustmentPhotos: true,
       canRemove: false,
     });
-    expect(Object.values(suspensionCapabilities("viewer")).every((v) => v === false)).toBe(true);
+    expect(Object.values(suspensionCapabilities("viewer", { photoUploads: true })).every((v) => v === false)).toBe(true);
+  });
+
+  it("photo uploads are offered only while the feature flag is on (default off)", () => {
+    for (const role of ["owner", "editor", "mechanic", "viewer"] as const) {
+      for (const can of [suspensionCapabilities(role), suspensionCapabilities(role, { photoUploads: false })]) {
+        expect(can.canAddReferencePhotos).toBe(false);
+        expect(can.canAddAdjustmentPhotos).toBe(false);
+      }
+    }
+    // Everything else is unchanged by the flag.
+    const off = suspensionCapabilities("mechanic");
+    expect(off).toMatchObject({ canAdjust: true, canAddFeedback: true, canManage: false, canRemove: false });
+    expect(suspensionCapabilities("owner")).toMatchObject({ canManage: true, canAdjust: true, canAddFeedback: true, canRemove: true });
   });
 
   it("mechanics edit only their own feedback", () => {

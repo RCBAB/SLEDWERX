@@ -35,6 +35,7 @@ export function SuspensionSummary({
   engineHours,
   variant,
   big = false,
+  photoUploads,
 }: {
   sledId: string;
   sledName: string;
@@ -44,8 +45,10 @@ export function SuspensionSummary({
   engineHours: number | null;
   variant: "page" | "board";
   big?: boolean;
+  /** The photo-upload feature flag (decided on the server). */
+  photoUploads: boolean;
 }) {
-  const can = suspensionCapabilities(role);
+  const can = suspensionCapabilities(role, { photoUploads });
   const [sheet, setSheet] = useState<OpenSheet>(null);
   const [session, setSession] = useState(0);
   const [notice, setNotice] = useState<{ tone: "success" | "error"; text: string } | null>(null);
@@ -163,6 +166,7 @@ export function SuspensionSummary({
             focusZone={zone}
             odometer={odometer}
             engineHours={engineHours}
+            photoUploads={can.canAddAdjustmentPhotos}
             onDone={(result) => {
               close();
               if (result.ok)

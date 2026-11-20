@@ -45,16 +45,20 @@ export function serviceCapabilities(role: SledRole, recordCreatedBy: string | nu
  * - Mechanics record adjustments, restore revisions, add feedback and
  *   adjustment photos, and edit their own feedback.
  * - Viewers only read.
+ *
+ * Adding photos also needs the photo-upload feature flag (server-only
+ * SUSPENSION_PHOTO_UPLOADS, see lib/suspension/photo-flag.ts). It defaults to
+ * off here, so a caller that doesn't pass it never offers uploads.
  */
-export function suspensionCapabilities(role: SledRole) {
+export function suspensionCapabilities(role: SledRole, { photoUploads = false }: { photoUploads?: boolean } = {}) {
   const manages = role === "owner" || role === "editor";
   const adjusts = manages || role === "mechanic";
   return {
     canManage: manages,
     canAdjust: adjusts,
     canAddFeedback: adjusts,
-    canAddReferencePhotos: manages,
-    canAddAdjustmentPhotos: adjusts,
+    canAddReferencePhotos: manages && photoUploads,
+    canAddAdjustmentPhotos: adjusts && photoUploads,
     canRemove: manages,
   };
 }

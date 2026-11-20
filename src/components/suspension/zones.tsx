@@ -87,6 +87,7 @@ export function ZonePanel({
   hasSetup,
   canAdjust,
   canManage,
+  canAddPhotos,
   onAdjust,
   onAddSetting,
   onPhotos,
@@ -97,6 +98,8 @@ export function ZonePanel({
   hasSetup: boolean;
   canAdjust: boolean;
   canManage: boolean;
+  /** Add reference photos (owners and editors, while photo uploads are on). */
+  canAddPhotos: boolean;
   onAdjust: () => void;
   onAddSetting: (zone: SuspensionZone) => void;
   /** Reference photos of a setting. */
@@ -126,7 +129,7 @@ export function ZonePanel({
                     {setting.name}
                   </p>
                   {setting.notes ? <p className="mt-0.5 whitespace-pre-line break-words text-xs text-muted">{setting.notes}</p> : null}
-                  {setting.photos.length || canManage ? (
+                  {setting.photos.length || canAddPhotos ? (
                     <button
                       type="button"
                       onClick={() => onPhotos(setting)}

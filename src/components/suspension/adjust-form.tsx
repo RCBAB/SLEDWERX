@@ -53,6 +53,7 @@ export function AdjustForm({
   focusZone,
   odometer,
   engineHours,
+  photoUploads,
   onDone,
 }: {
   sledId: string;
@@ -64,6 +65,8 @@ export function AdjustForm({
   focusZone?: SuspensionZone | null;
   odometer: number | null;
   engineHours: number | null;
+  /** Offer adjustment photos (role and the photo-upload feature flag). */
+  photoUploads: boolean;
   onDone: (result: SuspensionActionState) => void;
 }) {
   const router = useRouter();
@@ -86,7 +89,7 @@ export function AdjustForm({
     if (!result.ok || !result.id) return result;
     // The revision is saved; now its photos (a photo problem never undoes the adjustment).
     let warning: string | undefined;
-    if (files.length) {
+    if (photoUploads && files.length) {
       try {
         const photos = await addSuspensionPhotos(sledId, { kind: "revision", id: result.id }, files);
         const problem = photoOutcome(photos.added, photos.error, photos.leftover);
@@ -262,10 +265,12 @@ export function AdjustForm({
         defaultValue={v?.note ?? ""}
         error={errors.note?.[0]}
       />
-      <div className="space-y-2">
-        <p className="text-sm font-medium text-foreground/90">Photos (optional)</p>
-        <PhotoPicker files={files} onChange={setFiles} room={6} existing={0} />
-      </div>
+      {photoUploads ? (
+        <div className="space-y-2">
+          <p className="text-sm font-medium text-foreground/90">Photos (optional)</p>
+          <PhotoPicker files={files} onChange={setFiles} room={6} existing={0} />
+        </div>
+      ) : null}
       <div className="grid grid-cols-2 gap-3">
         <Field
           label="Mileage"

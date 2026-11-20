@@ -5,11 +5,15 @@ it, how it rode, and go back to any earlier setup. Data lives in Migration 7
 (see "Suspension setup & tuning" in [database.md](database.md)); nothing here
 needs another migration.
 
-> **Release blocker (production):** a mechanic's photo file can stay in
-> storage when its upload succeeds but saving its record fails. Removing
-> such files depends on the **Migration 8** cleanup ([cleanup.md](cleanup.md)),
-> which must be applied and verified before release.
-> See [Release blocker: leftover photo files](#release-blocker-leftover-photo-files).
+> **Release (Decision 10, amended 2026-11-20):** Phase 6.2 is released with
+> **suspension photo uploads turned off** (feature flag
+> `SUSPENSION_PHOTO_UPLOADS`, off by default). Everything else (setups,
+> settings, adjustments, feedback, comparison, history, restore, Recently
+> Deleted) works as described. Uploads are turned back on only after the
+> **Migration 8** cleanup ([cleanup.md](cleanup.md)) has been verified in
+> deletion mode, because a mechanic's photo file can stay in storage when its
+> upload succeeds but saving its record fails.
+> See [Photo uploads feature flag](#photo-uploads-feature-flag).
 
 ## Where to find it
 
@@ -97,6 +101,10 @@ needs another migration.
 
 ## Photos
 
+> **Uploads are turned off in production for now** (see
+> [Photo uploads feature flag](#photo-uploads-feature-flag)). This section
+> describes the behaviour with `SUSPENSION_PHOTO_UPLOADS=on`.
+
 - **Reference photos** per setting (e.g. where the clicker is) and
   **adjustment photos** per revision, **6 at most each**, in the private
   `suspension-photos` bucket (signed links that expire after an hour).
@@ -155,7 +163,30 @@ rating, note, revision). Feedback that was deleted together with its setup
 comes back with the setup and isn't listed separately. Nothing is permanently
 deleted by the app; see Migration 8 below.
 
-## Release blocker: leftover photo files
+## Photo uploads feature flag
+
+| `SUSPENSION_PHOTO_UPLOADS` | Behaviour |
+|---|---|
+| unset, or anything but `on` (**default; production for now**) | No way to add suspension photos: no "Add reference photos" link, no Photos button on revisions without photos, no photo picker when recording an adjustment (Suspension page, snowmobile page, Garage Board). The server actions also refuse to prepare or record a photo. Photos that already exist are still shown, and owners and editors can still remove them. |
+| `on` | Reference and adjustment photos as described under [Photos](#photos). |
+
+- Server-only (read at request time in `src/lib/suspension/photo-flag.ts`,
+  never sent to the browser as configuration); the interface follows it
+  through the role capabilities (`suspensionCapabilities(role, { photoUploads })`
+  in `src/lib/sleds/permissions.ts`), which default to off.
+- **Turning uploads on later:** set `SUSPENSION_PHOTO_UPLOADS=on` for
+  Production in Vercel and redeploy. No code change. Only after runbook step
+  B9 ([cleanup-release-runbook.md](cleanup-release-runbook.md)) and its own
+  approval.
+- **Limit:** the flag hides the app's upload path. The storage policies are
+  unchanged (by decision), so a signed-in owner, editor or mechanic could
+  still upload a file to their sled's folder with the Storage API directly.
+  Such a file is unreferenced, unlisted in the app, and is reported by the
+  Migration 8 cleanup like any other orphan.
+- **Turning uploads off again** at any time: unset the variable and redeploy;
+  existing photos are unaffected.
+
+## Release blocker for photo uploads: leftover photo files
 
 - Photos are uploaded first, then recorded. The server checks the parent,
   the permission and the room left before any upload, and a failed record
@@ -168,9 +199,11 @@ deleted by the app; see Migration 8 below.
   at least 24 hours old, re-checked under a lock before each removal), starts
   in **report-only** mode, and permanently deletes only after separate
   approval. Claimed and removed paths are closed to new uploads.
-- The cleanup must be **applied and verified in deletion mode before the
-  photo feature is released to production**
+- The cleanup must be **applied and verified in deletion mode before photo
+  uploads are turned on in production**
   ([cleanup-release-runbook.md](cleanup-release-runbook.md), steps B1–B9).
+  Until then Phase 6.2 runs with the
+  [feature flag](#photo-uploads-feature-flag) off (Decision 10, amended).
 
 ## Known limitations
 
@@ -187,4 +220,9 @@ deleted by the app; see Migration 8 below.
 - Browser: `e2e/suspension.spec.ts` (desktop and phone, real local Supabase
   stack in CI): roles end to end, adjustments, history, feedback, compare,
   restore, photos and cleanup, sled page and Garage Board, keyboard,
-  accessibility (axe), no sideways scrolling, 44 px targets.
+  accessibility (axe), no sideways scrolling, 44 px targets. Playwright
+  starts two servers from the same build: the main one with photo uploads
+  **off** (as in production; includes a test that no upload control is
+  offered anywhere and that existing photos stay visible and removable) and
+  one on the next port with `SUSPENSION_PHOTO_UPLOADS=on` for the photo tests
+  (`test.describe("with photo uploads turned on")`).

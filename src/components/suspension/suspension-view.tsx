@@ -57,17 +57,20 @@ export function SuspensionView({
   data,
   sled,
   role,
+  photoUploads,
   userId,
   initialSetupId,
 }: {
   data: SuspensionData;
   sled: SledInfo;
   role: SledRole;
+  /** The photo-upload feature flag (decided on the server). */
+  photoUploads: boolean;
   userId: string;
   initialSetupId?: string;
 }) {
   useRefreshOnReturn();
-  const can = suspensionCapabilities(role);
+  const can = suspensionCapabilities(role, { photoUploads });
   const [sheet, setSheet] = useState<OpenSheet>(null);
   const [session, setSession] = useState(0);
   const [chosen, setChosen] = useState<string | null>(initialSetupId ?? null);
@@ -227,6 +230,7 @@ export function SuspensionView({
                 hasSetup={Boolean(selected && latest)}
                 canAdjust={can.canAdjust}
                 canManage={can.canManage}
+                canAddPhotos={can.canAddReferencePhotos}
                 onAdjust={() => {
                   setSaved(null);
                   show({ kind: "adjust" });
@@ -251,6 +255,7 @@ export function SuspensionView({
             allRevisions={revisions}
             settings={settings}
             role={role}
+            photoUploads={photoUploads}
             userId={userId}
             onAddFeedback={(revision) => show({ kind: "feedback", revision })}
             onEditFeedback={(revision, feedback) => show({ kind: "feedback", revision, feedback })}
@@ -343,6 +348,7 @@ export function SuspensionView({
             focusZone={zone}
             odometer={sled.odometer}
             engineHours={sled.engineHours}
+            photoUploads={can.canAddAdjustmentPhotos}
             onDone={adjusted}
           />
         ) : null}

@@ -261,7 +261,7 @@ select is((select count(*)::int from pg_proc p, unnest(array['anon', 'authentica
            where (p.proname like 'cleanup\_%' or p.proname like 'storage\_%' or p.proname like '%cleanup%' or p.proname = 'purge_expired_records'
                   or p.proname like 'expired\_record%')
              and p.pronamespace in ('public'::regnamespace, 'private'::regnamespace)
-             and p.proname <> 'storage_path_writable'
+             and p.proname not in ('storage_path_writable', 'cleanup_dashboard')
              and has_function_privilege(r.role, p.oid, 'execute')), 0,
   'visitors and signed-in users cannot run any cleanup function');
 select is((select string_agg(r.role, ',' order by r.role) from unnest(array['anon', 'authenticated', 'service_role']) r(role)

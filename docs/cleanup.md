@@ -10,7 +10,8 @@ photo files that no record points at. Two parts:
   for Vercel Cron that calls the database and removes the files the database
   has claimed, through the Storage API.
 
-> **Status:** Checkpoints 1–2 built on a branch. **Not applied to production,
+> **Status:** Checkpoints 1–3 built on a branch (database, daily job,
+> administrator dashboard). **Not applied to production,
 > no cron schedule, no production credentials.** Deletion is **off** and needs
 > two switches plus separate approval. Phase 6.2 (suspension photos) must not
 > be released before this cleanup has been verified in deletion mode.
@@ -361,6 +362,100 @@ columns.
 `revoke_cleanup_deletion`, `purge_expired_records` (manual delete run through
 the same limits), `cleanup_registry_problems`.
 
+## Administrator dashboard (read-only)
+
+`/admin/cleanup` shows SledWerx application administrators what the cleanup
+is doing across the whole installation. It is not a garage feature: owners,
+editors, mechanics and viewers have no access, and nothing on it changes data.
+
+### Who is an administrator
+
+- Administrators are listed in `private.app_administrators` (user id, date,
+  optional note). The table is in the private schema with RLS on and no
+  grants: no user, not even an administrator, can read or change it through
+  the API.
+- Access is decided **in the database** on every request:
+  `public.cleanup_dashboard()` checks the caller's verified user id
+  (`auth.uid()` from the signed JWT) against that table and refuses everyone
+  else (`42501 Not authorized.`). It runs with the user's own session; the
+  page uses no service-role key.
+- Nothing else grants access: not an email address, a profile field, user
+  metadata, a client-side flag or a role in a JWT claim (tests check each).
+- The page itself only renders what the function returns. Anyone refused
+  sees the standard "This page could not be found." page (the dashboard's
+  existence is not confirmed; the response is streamed, so its HTTP status is
+  200). Signed-out visitors are sent to sign in.
+- Default: **no administrators.** None is created by the migration, and none
+  was granted in production.
+
+### Provisioning and revoking (database owner, SQL editor)
+
+```sql
+-- Find the user's id: Supabase dashboard > Authentication > Users.
+-- The account must have a confirmed email address.
+select private.grant_app_administrator('<user id>', 'Who and why, e.g. "SledWerx operator, approved 2026-11-20"');
+
+-- Who is an administrator?
+select a.user_id, u.email, a.granted_at, a.note
+from private.app_administrators a join auth.users u on u.id = a.user_id;
+
+-- Revoke (takes effect on the next page load).
+select private.revoke_app_administrator('<user id>');
+```
+
+Deleting the account also removes its administrator access. Grant and revoke
+only with approval; keep the list short.
+
+### What it shows
+
+- **Mode:** report-only or deletion, with both switches (database and the
+  server's `CLEANUP_MODE`), so "one switch on" is visible.
+- **Daily report runs** counted toward the required seven (the same rule as
+  the deletion gate).
+- **Backup attestation:** recorded or not, and when deletion was authorized.
+  The reference text itself is never shown.
+- **Last run** with status, duration and error.
+- **Expired records** of the latest report: eligible, backlog, newly expired,
+  rows, outcomes.
+- **Orphaned photos by bucket**, with blocked buckets and the reason.
+- **Oversized groups** awaiting review (table, short ids, size).
+- **Needs attention:** blocked files, unrecognised paths, incomplete metadata,
+  failed and replaced removals.
+- **Security and safety warnings** (incomplete registry, unreadable Storage,
+  replaced files, failed or abandoned runs, deletion on with too few report
+  runs).
+- **Recent runs** (last 14) and the safety limits.
+
+It shows ids, counts, timestamps and storage paths only: never names, email
+addresses, titles, notes or the backup reference. It has no buttons, forms or
+inputs: switches, limits, backups, the schedule and manual runs are changed
+only in the database or the deployment settings, with approval.
+
+## Run-history retention (proposal, not implemented)
+
+**Growth.** Each daily run adds one `cleanup_runs` row and one
+`cleanup_candidates` row per eligible record (including rows deleted with
+their group), per orphaned, unrecognised or incomplete file. Once the backlog
+is cleared this is tens of rows a day. While a backlog exists, every report
+run lists it again: e.g. 2,000 eligible records × 30 daily reports ≈ 60,000
+rows (roughly 20 MB). `storage_cleanup_claims` grows by one row per file ever
+removed.
+
+**Proposed policy** (needs approval before any automatic deletion):
+
+| Data | Keep | Why |
+|---|---|---|
+| `cleanup_runs` (one row per run, summary only) | 400 days | A year of history for audits and trends |
+| `cleanup_candidates` of **report** runs | 30 days, and always the latest 7 report runs | Enough to review before authorizing deletion |
+| `cleanup_candidates` of **delete** runs | 180 days | What was actually deleted (ids only) |
+| `storage_cleanup_claims` with status `deleted`, `replaced`, `missing` | **Never deleted** | They keep removed paths closed to uploads and records |
+| `storage_cleanup_claims` `released` | 180 days | No longer needed once retried |
+| `storage_cleanup_claims` `failed` | Until reviewed | Left for an administrator |
+
+Implementation (later, after approval): one more step of the daily job, in its
+own transaction, at most 5,000 rows per run, report-only first, shown on the
+dashboard.
+
 ## Known limitations and release blockers
 
 - **Release blockers:** Migration 8 applied to production; 7 successful daily
@@ -372,12 +467,13 @@ the same limits), `cleanup_registry_problems`.
   moment could still be removed, and it is detected and reported (see above).
 - **Oversized snowmobiles** are skipped daily until a one-time higher limit
   is approved.
-- **Run history** is not trimmed yet (belongs with the dashboard).
+- **Run history** is not trimmed yet (retention policy proposed above, not
+  implemented).
 - **Backup reference** is a recorded attestation; the database cannot verify
   the backup.
 - **Offline devices** that have not synced for more than 30 days must do a
   full resync.
-- The administrator dashboard (Decision 9) is not built.
+- No administrator exists anywhere yet; production access needs approval.
 
 ## Tests
 
@@ -398,3 +494,7 @@ the same limits), `cleanup_registry_problems`.
 - `scripts/test-cleanup-concurrency.sh` (two real sessions) and
   `scripts/test-migration-8-rollback.sh`.
 - `e2e/public.spec.ts`: the endpoint refuses calls without the secret.
+- `supabase/tests/database/012_cleanup_dashboard.test.sql` (pgTAP) and
+  `e2e/admin-cleanup.spec.ts` (CI, local stack): administrator access, every
+  other role refused (page and API), empty, report and deletion states,
+  warnings, read-only, phone/tablet/desktop, accessibility, keyboard.

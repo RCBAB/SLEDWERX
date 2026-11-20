@@ -1620,13 +1620,15 @@ to service_role;
 --     groups too large to delete, failures, unrecognised files, files with
 --     incomplete metadata and blocked files; and every file claim that failed
 --     or removed a replaced file. Read-only; for the SQL editor and the future
---     administrator dashboard.
+--     administrator dashboard. ("Latest" = the latest run that produced a
+--     report.)
 -- -----------------------------------------------------------------------------
 create view private.cleanup_review with (security_invoker = true) as
   select 'run'::text as source, c.run_id, c.kind, c.outcome, c.table_name, c.record_id, c.sled_id,
          c.group_rows, c.bucket_id, c.object_path, c.detail, c.logged_at as at
   from private.cleanup_candidates c
-  where c.run_id = (select max(r.id) from private.cleanup_runs r where r.status in ('completed', 'failed'))
+  where c.run_id = (select max(r.id) from private.cleanup_runs r
+                    where r.status in ('completed', 'failed') and r.records_step_at is not null)
     and c.outcome in ('too_large', 'failed', 'replaced', 'unrecognized', 'metadata_missing', 'blocked')
   union all
   select 'claim', k.run_id, 'file', k.status, null, null, null, null, k.bucket_id, k.object_path, k.last_error, k.finished_at
@@ -1634,3 +1636,191 @@ create view private.cleanup_review with (security_invoker = true) as
   where k.status in ('failed', 'replaced');
 
 revoke all on private.cleanup_review from public, anon, authenticated;
+
+-- -----------------------------------------------------------------------------
+-- 15. SledWerx application administrators and the read-only cleanup
+--     dashboard. Administrators are listed in a private table that no user
+--     (not even an administrator) can read or change through the API; they
+--     are added and removed only by the database owner (SQL editor). The
+--     dashboard function checks the caller's verified user id against that
+--     table and refuses everyone else. It returns ids, counts, timestamps and
+--     storage paths only - never names, emails, titles, notes or the backup
+--     reference text - and changes nothing (STABLE).
+-- -----------------------------------------------------------------------------
+create table private.app_administrators (
+  user_id uuid primary key references auth.users (id) on delete cascade,
+  granted_at timestamptz not null default now(),
+  note text check (char_length(note) <= 200)
+);
+
+comment on table private.app_administrators is
+  'Migration 8: SledWerx application administrators (system-wide cleanup monitoring). Managed only by the database owner.';
+
+alter table private.app_administrators enable row level security;
+revoke all on private.app_administrators from public, anon, authenticated;
+
+create function private.is_app_administrator(p_user_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select p_user_id is not null and exists (select 1 from private.app_administrators a where a.user_id = p_user_id)
+$$;
+
+-- For the SQL editor (database owner only). Takes the user's id (from
+-- Authentication > Users), never an email address alone.
+create function private.grant_app_administrator(p_user_id uuid, p_note text default null)
+returns void
+language plpgsql
+volatile
+security definer
+set search_path = ''
+as $$
+begin
+  if not exists (select 1 from auth.users u where u.id = p_user_id and u.email_confirmed_at is not null) then
+    raise exception 'No confirmed user with this id.' using errcode = 'P0002';
+  end if;
+  insert into private.app_administrators (user_id, note) values (p_user_id, p_note)
+  on conflict (user_id) do update set note = excluded.note;
+end;
+$$;
+
+create function private.revoke_app_administrator(p_user_id uuid)
+returns boolean
+language sql
+volatile
+security definer
+set search_path = ''
+as $$
+  with removed as (delete from private.app_administrators a where a.user_id = p_user_id returning 1)
+  select exists (select 1 from removed)
+$$;
+
+create function public.cleanup_dashboard()
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_settings private.cleanup_settings;
+  v_last private.cleanup_runs;
+  v_finished private.cleanup_runs;
+  v_report_days integer;
+  v_history jsonb;
+  v_too_large jsonb;
+  v_review jsonb;
+  v_review_counts jsonb;
+  v_claims jsonb;
+  v_registry text[];
+  v_warnings text[] := '{}';
+  v_failed_runs integer;
+begin
+  if not private.is_app_administrator(auth.uid()) then
+    raise exception 'Not authorized.' using errcode = '42501';
+  end if;
+
+  select * into strict v_settings from private.cleanup_settings;
+  select * into v_last from private.cleanup_runs r order by r.id desc limit 1;
+  -- The latest run that produced a report (a run that failed before its
+  -- record step has nothing to show).
+  select * into v_finished from private.cleanup_runs r
+  where r.status in ('completed', 'failed') and r.records_step_at is not null order by r.id desc limit 1;
+
+  -- The same rule as the deletion gate (private.tg_cleanup_settings_guard).
+  select count(distinct (r.started_at at time zone 'UTC')::date) into v_report_days
+  from private.cleanup_runs r
+  where r.mode = 'report' and r.source = 'scheduled' and r.status = 'completed'
+    and r.records_step_at is not null and r.files_step_at is not null;
+
+  select coalesce(jsonb_agg(h order by h.id desc), '[]'::jsonb) into v_history from (
+    select r.id, r.mode, r.source, r.status, r.started_at, r.finished_at, r.records_deleted, r.files_deleted,
+           (r.summary -> 'records' ->> 'candidates')::integer as record_candidates,
+           (select sum((b.value ->> 'orphans')::integer) from jsonb_each(coalesce(r.summary -> 'files' -> 'buckets', '{}')) b)::integer as orphans,
+           coalesce((r.summary -> 'records' ->> 'needs_review')::boolean, false)
+             or coalesce((r.summary -> 'files' ->> 'needs_review')::boolean, false) as needs_review,
+           r.error is not null as has_error
+    from private.cleanup_runs r order by r.id desc limit 14
+  ) h;
+
+  select coalesce(jsonb_agg(jsonb_build_object('table', c.table_name, 'record_id', c.record_id, 'sled_id', c.sled_id,
+                                                'rows', c.group_rows, 'expired_at', c.expired_at) order by c.group_rows desc), '[]'::jsonb)
+    into v_too_large
+  from (select * from private.cleanup_candidates c
+        where c.run_id = v_finished.id and c.outcome = 'too_large' order by c.group_rows desc limit 50) c;
+
+  select coalesce(jsonb_agg(to_jsonb(x) order by x.at desc nulls last), '[]'::jsonb) into v_review from (
+    select v.source, v.kind, v.outcome, v.table_name, v.bucket_id, v.object_path, v.detail, v.at
+    from private.cleanup_review v where v.outcome <> 'too_large' order by v.at desc nulls last limit 50
+  ) x;
+  select coalesce(jsonb_object_agg(x.outcome, x.n), '{}'::jsonb) into v_review_counts from (
+    select v.outcome, count(*) as n from private.cleanup_review v group by v.outcome
+  ) x;
+  select coalesce(jsonb_object_agg(x.status, x.n), '{}'::jsonb) into v_claims from (
+    select k.status, count(*) as n from private.storage_cleanup_claims k group by k.status
+  ) x;
+
+  v_registry := private.cleanup_registry_problems();
+  if cardinality(v_registry) > 0 then
+    v_warnings := v_warnings || ('The cleanup registry is incomplete (' || cardinality(v_registry) || ' problem(s)); deletion is blocked.');
+  end if;
+  if coalesce((v_finished.summary -> 'files' ->> 'storage_unreadable')::boolean, false) then
+    v_warnings := v_warnings || 'Storage looked empty while records point at files; every bucket was blocked.'::text;
+  end if;
+  if coalesce((v_claims ->> 'replaced')::integer, 0) > 0 then
+    v_warnings := v_warnings || (coalesce((v_claims ->> 'replaced')::integer, 0) || ' removal(s) took a file replaced at the same path (service role). Review needed.');
+  end if;
+  select count(*) into v_failed_runs from (select r.status from private.cleanup_runs r order by r.id desc limit 14) x
+  where x.status in ('failed', 'abandoned');
+  if v_failed_runs > 0 then
+    v_warnings := v_warnings || (v_failed_runs || ' of the last 14 runs failed or did not finish.');
+  end if;
+  if v_settings.deletion_enabled and v_report_days < v_settings.required_report_runs then
+    v_warnings := v_warnings || 'Deletion is on although fewer daily report runs than required are recorded.'::text;
+  end if;
+
+  return jsonb_build_object(
+    'generated_at', now(),
+    'settings', jsonb_build_object(
+      'deletion_enabled', v_settings.deletion_enabled,
+      'deletion_authorized_at', v_settings.deletion_authorized_at,
+      'backup_recorded', nullif(btrim(coalesce(v_settings.deletion_backup_reference, '')), '') is not null,
+      'required_report_runs', v_settings.required_report_runs,
+      'max_records_per_run', v_settings.max_records_per_run,
+      'max_files_per_run', v_settings.max_files_per_run,
+      'bucket_threshold_percent', v_settings.bucket_threshold_percent,
+      'bucket_threshold_min_files', 100,
+      'min_file_age_hours', (extract(epoch from v_settings.min_file_age) / 3600)::integer,
+      'installed_at', v_settings.installed_at),
+    'report_days', v_report_days,
+    'last_run', case when v_last.id is null then null else jsonb_build_object(
+      'id', v_last.id, 'mode', v_last.mode, 'source', v_last.source, 'status', v_last.status,
+      'started_at', v_last.started_at, 'finished_at', v_last.finished_at, 'error', left(v_last.error, 300)) end,
+    'latest', case when v_finished.id is null then null else jsonb_build_object(
+      'id', v_finished.id, 'mode', v_finished.mode, 'status', v_finished.status,
+      'started_at', v_finished.started_at, 'finished_at', v_finished.finished_at,
+      'records_deleted', v_finished.records_deleted, 'files_deleted', v_finished.files_deleted,
+      'records', (v_finished.summary -> 'records') - 'deleted_groups' - 'too_large' - 'cutoff',
+      'files', v_finished.summary -> 'files') end,
+    'too_large', v_too_large,
+    'review', v_review,
+    'review_counts', v_review_counts,
+    'claims', v_claims,
+    'registry_problems', to_jsonb(v_registry),
+    'warnings', to_jsonb(v_warnings),
+    'history', v_history
+  );
+end;
+$$;
+
+revoke all on function
+  private.is_app_administrator(uuid),
+  private.grant_app_administrator(uuid, text),
+  private.revoke_app_administrator(uuid),
+  public.cleanup_dashboard()
+from public, anon, authenticated, service_role;
+-- Signed-in users may call it; it refuses everyone who is not an administrator.
+grant execute on function public.cleanup_dashboard() to authenticated;

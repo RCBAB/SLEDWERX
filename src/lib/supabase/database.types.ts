@@ -601,6 +601,9 @@ isOneToOne: false
 "cleanup_claim_file":
 { Args: { "p_bucket_id": string,"p_object_path": string,"p_run_id": number }; Returns: Json
                            },
+"cleanup_dashboard":
+{ Args: never; Returns: Json
+                           },
 "cleanup_eligible_files":
 { Args: { "p_run_id": number }; Returns: {
               "bucket_id": string,"object_path": string

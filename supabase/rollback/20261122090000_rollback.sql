@@ -5,7 +5,8 @@
 -- MANUAL USE ONLY. Read supabase/rollback/README.md first.
 --
 -- * Removes everything Migration 8 created: the cleanup settings, runs,
---   candidates, registries, file claims and review view; the cleanup
+--   candidates, registries, file claims and review view; the application
+--   administrators list and the cleanup dashboard function; the cleanup
 --   functions (private and the eight public API functions); the delete-counting triggers on the
 --   purged tables; the claim guard on the three photo-path columns; and the
 --   index on sleds.photo_path, and the two restrictive storage policies that
@@ -59,6 +60,13 @@ begin
     execute format('drop trigger %I on %s', v_t.tgname, v_t.rel);
   end loop;
 end $$;
+
+-- 3a. Administrators and the dashboard.
+drop function if exists public.cleanup_dashboard();
+drop function if exists private.revoke_app_administrator(uuid);
+drop function if exists private.grant_app_administrator(uuid, text);
+drop function if exists private.is_app_administrator(uuid);
+drop table if exists private.app_administrators;
 
 -- 3. The two restrictive storage policies, the review view and the public
 --    API functions.
@@ -184,6 +192,9 @@ begin
      or exists (select 1 from pg_trigger where tgname in ('cleanup_count_deletes', 'storage_claim_guard'))
      or to_regclass('public.sleds_photo_path_idx') is not null
      or exists (select 1 from pg_policies where schemaname = 'storage' and policyname like 'SledWerx cleanup:%')
+     or to_regclass('private.app_administrators') is not null
+     or exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+                where n.nspname = 'private' and p.proname like '%app\_administrator%')
   then
     raise exception 'Rollback verification failed: Migration 8 objects remain. Nothing was changed.';
   end if;

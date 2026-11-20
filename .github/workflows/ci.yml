@@ -243,6 +243,8 @@ jobs:
           eval "$(npx supabase status -o env)"
           export NEXT_PUBLIC_SUPABASE_URL="$API_URL" NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY="${PUBLISHABLE_KEY:-$ANON_KEY}"
           export E2E_SUPABASE=1 MAILPIT_URL="${MAILPIT_URL:-${INBUCKET_URL:-http://127.0.0.1:54324}}"
+          # Administrator setup for the cleanup dashboard tests (throwaway stack only).
+          export E2E_PSQL="docker exec -i supabase_db_sledwerx psql -U postgres"
           npx playwright test
       - if: failure()
         uses: actions/upload-artifact@v4

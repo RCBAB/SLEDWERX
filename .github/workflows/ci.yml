@@ -91,24 +91,8 @@ jobs:
       # Rollback scripts are never applied to any real database by CI.
       # Order: newest first. After each rollback, the tests of the remaining
       # migrations run again on the result; finally Migration 1's rollback.
-      # Migration 8: the cleanup job against the local stack (real users,
-      # uploads, storage policies and Storage API removals).
-      - name: Cleanup job integration test (local stack)
-        run: |
-          eval "$(npx supabase status -o env)"
-          export CLEANUP_IT_URL="$API_URL"
-          export CLEANUP_IT_SECRET_KEY="${SECRET_KEY:-$SERVICE_ROLE_KEY}"
-          export CLEANUP_IT_PUBLISHABLE_KEY="${PUBLISHABLE_KEY:-$ANON_KEY}"
-          npx vitest run src/lib/cleanup/cleanup.integration.test.ts
-        env:
-          THROWAWAY_DATABASE: "yes"
-          CLEANUP_IT_PSQL: docker exec -i supabase_db_sledwerx psql -U postgres
-      # Migration 8: the cleanup's locking, checked with two real sessions.
-      - name: Cleanup concurrency test (local stack)
-        run: scripts/test-cleanup-concurrency.sh
-        env:
-          THROWAWAY_DATABASE: "yes"
-          PSQL: docker exec -i supabase_db_sledwerx psql -U postgres
+      # Migration 9 first (it leaves the database at the Migration 8 state); the
+      # cleanup tests below then run against a clean Migration 8 database.
       - name: Migration 9 rollback test (local stack)
         run: scripts/test-migration-9-rollback.sh
         env:
@@ -130,6 +114,24 @@ jobs:
           supabase/tests/database/011_cleanup.test.sql
           supabase/tests/database/012_cleanup_dashboard.test.sql
           supabase/tests/database/013_cleanup_retention.test.sql
+      # Migration 8: the cleanup job against the local stack (real users,
+      # uploads, storage policies and Storage API removals).
+      - name: Cleanup job integration test (local stack)
+        run: |
+          eval "$(npx supabase status -o env)"
+          export CLEANUP_IT_URL="$API_URL"
+          export CLEANUP_IT_SECRET_KEY="${SECRET_KEY:-$SERVICE_ROLE_KEY}"
+          export CLEANUP_IT_PUBLISHABLE_KEY="${PUBLISHABLE_KEY:-$ANON_KEY}"
+          npx vitest run src/lib/cleanup/cleanup.integration.test.ts
+        env:
+          THROWAWAY_DATABASE: "yes"
+          CLEANUP_IT_PSQL: docker exec -i supabase_db_sledwerx psql -U postgres
+      # Migration 8: the cleanup's locking, checked with two real sessions.
+      - name: Cleanup concurrency test (local stack)
+        run: scripts/test-cleanup-concurrency.sh
+        env:
+          THROWAWAY_DATABASE: "yes"
+          PSQL: docker exec -i supabase_db_sledwerx psql -U postgres
       - name: Migration 8 rollback test (local stack)
         run: scripts/test-migration-8-rollback.sh
         env:

@@ -413,14 +413,14 @@ isOneToOne: false
                   ]
                 },"suspension_feedback": {
                   Row: {
-                    "conditions": string[],"created_at": string,"created_by": string | null,"deleted_at": string | null,"deleted_by": string | null,"high_temp_f": number | null,"id": string,"note": string | null,"rating": string,"revision_id": string,"ridden_on": string,"sled_id": string,"updated_at": string,"updated_by": string | null,"version": number
+                    "conditions": (string)[],"created_at": string,"created_by": string | null,"deleted_at": string | null,"deleted_by": string | null,"high_temp_f": number | null,"id": string,"note": string | null,"rating": string,"revision_id": string,"ridden_on": string,"sled_id": string,"updated_at": string,"updated_by": string | null,"version": number
                   }
                   ComputedFields: never
                   Insert: {
-                    "conditions"?: string[],"created_at"?: string,"created_by"?: string | null,"deleted_at"?: string | null,"deleted_by"?: string | null,"high_temp_f"?: number | null,"id"?: string,"note"?: string | null,"rating": string,"revision_id": string,"ridden_on"?: string,"sled_id": string,"updated_at"?: string,"updated_by"?: string | null,"version"?: number
+                    "conditions"?: (string)[],"created_at"?: string,"created_by"?: string | null,"deleted_at"?: string | null,"deleted_by"?: string | null,"high_temp_f"?: number | null,"id"?: string,"note"?: string | null,"rating": string,"revision_id": string,"ridden_on"?: string,"sled_id": string,"updated_at"?: string,"updated_by"?: string | null,"version"?: number
                   }
                   Update: {
-                    "conditions"?: string[],"created_at"?: string,"created_by"?: string | null,"deleted_at"?: string | null,"deleted_by"?: string | null,"high_temp_f"?: number | null,"id"?: string,"note"?: string | null,"rating"?: string,"revision_id"?: string,"ridden_on"?: string,"sled_id"?: string,"updated_at"?: string,"updated_by"?: string | null,"version"?: number
+                    "conditions"?: (string)[],"created_at"?: string,"created_by"?: string | null,"deleted_at"?: string | null,"deleted_by"?: string | null,"high_temp_f"?: number | null,"id"?: string,"note"?: string | null,"rating"?: string,"revision_id"?: string,"ridden_on"?: string,"sled_id"?: string,"updated_at"?: string,"updated_by"?: string | null,"version"?: number
                   }
                   Relationships: [
                     {

@@ -38,9 +38,80 @@ export const VALUE_TYPE_LABEL: Record<SettingValueType, string> = { number: "Num
 /** Suggestions for the unit field only. Never settings, never values. */
 export const UNIT_SUGGESTIONS = ["Clicks", "Turns", "mm", "in", "PSI"] as const;
 
-export const FEEDBACK_RATINGS = ["improved", "worse", "no_change"] as const;
+/** Ride evaluation ratings (Migration 9). */
+export const RIDE_RATINGS = ["liked", "neutral", "disliked"] as const;
+export type RideRating = (typeof RIDE_RATINGS)[number];
+/** Ratings of feedback saved before Migration 9 (kept and shown as they were). */
+export const LEGACY_RATINGS = ["improved", "worse", "no_change"] as const;
+export const FEEDBACK_RATINGS = [...RIDE_RATINGS, ...LEGACY_RATINGS] as const;
 export type FeedbackRating = (typeof FEEDBACK_RATINGS)[number];
-export const FEEDBACK_LABEL: Record<FeedbackRating, string> = { improved: "Improved", worse: "Worse", no_change: "No change" };
+export const FEEDBACK_LABEL: Record<FeedbackRating, string> = {
+  liked: "Liked",
+  neutral: "Neutral / needs more testing",
+  disliked: "Disliked",
+  improved: "Improved",
+  worse: "Worse",
+  no_change: "No change",
+};
+/** Short labels for badges. */
+export const FEEDBACK_SHORT: Record<FeedbackRating, string> = { ...FEEDBACK_LABEL, neutral: "Neutral" };
+export function isRideRating(value: unknown): value is RideRating {
+  return typeof value === "string" && (RIDE_RATINGS as readonly string[]).includes(value);
+}
+
+export const TRAIL_CONDITIONS = ["loose_snow", "hard_pack", "perfect_groomed", "sloppy", "fresh_snow"] as const;
+export type TrailCondition = (typeof TRAIL_CONDITIONS)[number];
+export const CONDITION_LABEL: Record<TrailCondition, string> = {
+  loose_snow: "Loose Snow",
+  hard_pack: "Hard Pack",
+  perfect_groomed: "Perfect Groomed",
+  sloppy: "Sloppy",
+  fresh_snow: "Fresh Snow",
+};
+export function isTrailCondition(value: unknown): value is TrailCondition {
+  return typeof value === "string" && (TRAIL_CONDITIONS as readonly string[]).includes(value);
+}
+
+/** Skis and carbides (Migration 9). */
+export const SKI_MODELS = ["ca_pro_xpt", "ca_pro_xcs"] as const;
+export type SkiModel = (typeof SKI_MODELS)[number];
+export const SKI_LABEL: Record<SkiModel, string> = { ca_pro_xpt: "C&A Pro XPT", ca_pro_xcs: "C&A Pro XCS" };
+export const SKI_SHORT: Record<SkiModel, string> = { ca_pro_xpt: "XPT", ca_pro_xcs: "XCS" };
+export const CARBIDE_LENGTHS = ["6", "7.5", "9"] as const;
+export type CarbideLength = (typeof CARBIDE_LENGTHS)[number];
+export const carbideLabel = (length: CarbideLength) => `${length}"`;
+export function isSkiModel(value: unknown): value is SkiModel {
+  return typeof value === "string" && (SKI_MODELS as readonly string[]).includes(value);
+}
+export function isCarbideLength(value: unknown): value is CarbideLength {
+  return typeof value === "string" && (CARBIDE_LENGTHS as readonly string[]).includes(value);
+}
+/** Skis and carbides; null = not recorded. */
+export type Equipment = { ski: SkiModel | null; carbide: CarbideLength | null };
+export const NO_EQUIPMENT: Equipment = { ski: null, carbide: null };
+
+/** "C&A Pro XPT · 7.5\" carbides", or what's missing. */
+export function describeEquipment(equipment: Equipment): string {
+  if (!equipment.ski && !equipment.carbide) return "Not recorded";
+  const ski = equipment.ski ? SKI_LABEL[equipment.ski] : "Skis not recorded";
+  const carbide = equipment.carbide ? `${carbideLabel(equipment.carbide)} carbides` : "carbides not recorded";
+  return `${ski} · ${carbide}`;
+}
+
+export function sameEquipment(a: Equipment, b: Equipment): boolean {
+  return a.ski === b.ski && a.carbide === b.carbide;
+}
+
+/**
+ * Whether a configuration needs equipment other than what is installed (only
+ * what it recorded counts: "not recorded" never conflicts).
+ */
+export function equipmentMismatch(required: Equipment, installed: Equipment): boolean {
+  return Boolean((required.ski && required.ski !== installed.ski) || (required.carbide && required.carbide !== installed.carbide));
+}
+
+/** Numbered configurations are shown as "Trail N". */
+export const configName = (number: number) => `Trail ${number}`;
 
 export const MAX_SUSPENSION_PHOTOS = 6;
 export const SUSPENSION_PHOTO_BUCKET = "suspension-photos";
@@ -73,6 +144,9 @@ export type SuspensionFeedback = {
   revisionId: string;
   riddenOn: string;
   rating: FeedbackRating;
+  conditions: TrailCondition[];
+  /** Day's high temperature, degF. */
+  highTempF: number | null;
   note: string | null;
   createdBy: string | null;
   createdByName: string;
@@ -80,10 +154,17 @@ export type SuspensionFeedback = {
   version: number;
 };
 
+/** A numbered configuration ("Trail N"): one saved revision of the sled's suspension. */
 export type SuspensionRevision = {
   id: string;
   setupId: string;
+  /** Revision number within its setup (Migration 7). */
   number: number;
+  /** Sled-wide configuration number: "Trail N". */
+  configNumber: number;
+  equipment: Equipment;
+  /** The configuration this one was made from (if recorded). */
+  basedOnId: string | null;
   values: Snapshot;
   note: string | null;
   odometer: number | null;
@@ -97,14 +178,7 @@ export type SuspensionRevision = {
   photos: SuspensionPhoto[];
 };
 
-export type SuspensionSetup = {
-  id: string;
-  name: string;
-  notes: string | null;
-  isActive: boolean;
-  version: number;
-  createdAt: string;
-};
+export type SuspensionSetup = { id: string; name: string; notes: string | null; isActive: boolean; version: number; createdAt: string };
 
 export type DeletedSuspensionItem = {
   kind: "setup" | "setting" | "feedback";
@@ -122,21 +196,28 @@ export type SuspensionData = {
   sledId: string;
   settings: SuspensionSetting[];
   setups: SuspensionSetup[];
-  /** Every revision on the sled (all setups), newest first. */
+  /** Every configuration on the sled, newest first. */
   revisions: SuspensionRevision[];
+  /** The active configuration (null before the first save). */
+  activeRevisionId: string | null;
+  /** The skis and carbides installed now. */
+  installed: Equipment;
   /** Recently Deleted setups, settings and feedback (owners and editors only), newest first. */
   deleted: DeletedSuspensionItem[];
 };
 
-/** The active setup at a glance (sled page and Garage Board). */
+/** A sled's suspension at a glance (sled page and Garage Board). */
 export type ActiveSuspension = {
-  setupId: string;
-  setupName: string;
-  revisionId: string;
-  revisionNumber: number;
-  changedAt: string;
-  values: Snapshot;
-  latestFeedback: { rating: FeedbackRating; riddenOn: string } | null;
+  /** The active configuration, if one has been saved. */
+  active: {
+    revisionId: string;
+    configNumber: number;
+    changedAt: string;
+    values: Snapshot;
+    equipment: Equipment;
+    latestFeedback: { rating: FeedbackRating; riddenOn: string; conditions: TrailCondition[] } | null;
+  } | null;
+  installed: Equipment;
   settings: SuspensionSetting[];
 };
 

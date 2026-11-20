@@ -29,7 +29,7 @@ import { PhotoPicker, photoOutcome } from "./photos";
 const CONFLICT = "This setup was changed by someone else. Reload it and try again.";
 
 /**
- * Record an adjustment to a setup: every setting of the sled with its current
+ * Record an adjustment (saved as the next Trail configuration): every setting of the sled with its current
  * value filled in; change only what you adjusted. Unchanged values carry
  * forward. Mileage and engine hours are copied from the sled's current
  * readings and can be edited; they never create or change a reading.
@@ -45,8 +45,7 @@ const CONFLICT = "This setup was changed by someone else. Reload it and try agai
  */
 export function AdjustForm({
   sledId,
-  setupId,
-  setupName,
+  configName: currentName,
   baseRevisionId,
   values,
   settings,
@@ -57,9 +56,10 @@ export function AdjustForm({
   onDone,
 }: {
   sledId: string;
-  setupId: string;
-  setupName: string;
-  baseRevisionId: string;
+  /** "Trail 4": the active configuration the changes are made on. */
+  configName: string | null;
+  /** The active configuration (null before the first save). */
+  baseRevisionId: string | null;
   values: Snapshot;
   settings: SuspensionSetting[];
   focusZone?: SuspensionZone | null;
@@ -146,8 +146,8 @@ export function AdjustForm({
 
   return (
     <form action={action} className="space-y-6" noValidate>
-      <input type="hidden" name="setupId" value={setupId} />
-      <input type="hidden" name="baseRevisionId" value={baseRevisionId} />
+      <input type="hidden" name="sledId" value={sledId} />
+      {baseRevisionId ? <input type="hidden" name="baseRevisionId" value={baseRevisionId} /> : null}
       <input type="hidden" name="idempotencyKey" value={key} />
       {state.error && !state.fieldErrors ? (
         <Alert tone="error">
@@ -303,7 +303,8 @@ export function AdjustForm({
           {changes.length ? (
             <>
               <p className="font-semibold">
-                {changes.length} change{changes.length === 1 ? "" : "s"} · saved as a new revision of {setupName}
+                {changes.length} change{changes.length === 1 ? "" : "s"} · saved as the next Trail configuration
+                {currentName ? ` (from ${currentName})` : ""}
               </p>
               <ul className="mt-1 max-h-20 overflow-y-auto text-muted">
                 {changes.map((change) => (

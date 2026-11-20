@@ -9,17 +9,10 @@ import { suspensionPhotoUploadsEnabled } from "@/lib/suspension/photo-flag";
 import { getSled } from "@/lib/sleds/queries";
 import { changedValues } from "@/lib/suspension/diff";
 import { suspensionErrorMessage, type SuspensionSubject } from "@/lib/suspension/errors";
-import { parseSnapshot } from "@/lib/suspension/queries";
-import { MAX_SUSPENSION_PHOTOS, settingsInZone, isZone, type SettingValueType } from "@/lib/suspension/types";
-import {
-  adjustmentSchema,
-  checkSettingValue,
-  feedbackSchema,
-  optionalUuid,
-  settingSchema,
-  setupSchema,
-  uuidSchema,
-} from "@/lib/suspension/validation";
+import { isSchemaMissing, parseSnapshot } from "@/lib/suspension/queries";
+import { SUGGESTED_SETTINGS } from "@/lib/suspension/template";
+import { MAX_SUSPENSION_PHOTOS, isCarbideLength, isSkiModel, isZone, settingsInZone, type SettingValueType } from "@/lib/suspension/types";
+import { adjustmentSchema, checkSettingValue, feedbackSchema, settingSchema, uuidSchema } from "@/lib/suspension/validation";
 import { futureDateError } from "@/lib/sleds/validation";
 import { createClient } from "@/lib/supabase/server";
 import { fieldErrorsOf, formValues } from "@/lib/validation/auth";
@@ -38,8 +31,12 @@ export type SuspensionActionState = {
   id?: string;
   /** Saved, but with something to tell (e.g. a photo couldn't be added). */
   warning?: string;
+  /** The saved or activated configuration's number ("Trail N"). */
+  configNumber?: number;
   savedAt?: number;
 };
+
+const SCHEMA_MISSING = "Suspension Quick Tune needs a database update that hasn't been applied yet.";
 
 type DbError = { code?: string; message?: string } | null | undefined;
 
@@ -97,76 +94,10 @@ async function setDeleted(
 }
 
 // ---------------------------------------------------------------------------
-// Setups
+// Setups (Migration 7). Quick Tune keeps one numbered sequence per sled, so
+// setups are no longer created or managed in the app; one deleted earlier can
+// still be brought back from Recently Deleted.
 // ---------------------------------------------------------------------------
-
-/** Create a setup (blank, or copying a revision of the same sled), or rename one. Owners and editors. */
-export async function saveSetup(_prev: SuspensionActionState, formData: FormData): Promise<SuspensionActionState> {
-  await signedInUser();
-  const raw = formValues(formData, ["name", "notes", "copyFrom"] as const);
-  const parsed = setupSchema.safeParse(raw);
-  if (!parsed.success) return { fieldErrors: fieldErrorsOf(parsed.error), values: raw };
-  const supabase = await createClient();
-  const nameError = (error: DbError) =>
-    error?.code === "23505" ? { fieldErrors: { name: [suspensionErrorMessage(error, "setup")] }, values: raw } : { values: raw };
-
-  const setupId = idFrom(formData, "setupId");
-  if (setupId) {
-    const version = versionFrom(formData);
-    if (!version) return { error: "Reload the page and try again.", values: raw };
-    const { data, error } = await supabase
-      .from("suspension_setups")
-      .update({ name: parsed.data.name, notes: parsed.data.notes ?? null, version })
-      .eq("id", setupId)
-      .select("id")
-      .maybeSingle();
-    if (error || !data) return failed(error, "setup", nameError(error));
-    return done(setupId);
-  }
-
-  const sledId = idFrom(formData, "sledId");
-  if (!sledId) return { error: "Snowmobile not found." };
-  const copyFrom = optionalUuid.safeParse(raw.copyFrom);
-  if (!copyFrom.success) return { fieldErrors: { copyFrom: ["Choose a revision to copy."] }, values: raw };
-  const { data, error } = await supabase.rpc("create_suspension_setup", {
-    p_sled_id: sledId,
-    p_name: parsed.data.name,
-    p_notes: parsed.data.notes,
-    p_copy_from_revision_id: copyFrom.data,
-  });
-  const newId = (data as { setup_id?: string } | null)?.setup_id;
-  if (error || !newId) return failed(error, "setup", nameError(error));
-
-  // Made active only when asked for: a new setup never replaces the active one by itself.
-  if (formData.get("activate") === "on") {
-    const { error: activateError } = await supabase.rpc("activate_suspension_setup", { p_setup_id: newId });
-    if (activateError) {
-      refresh();
-      return {
-        ok: true,
-        id: newId,
-        savedAt: Date.now(),
-        error: "The setup was saved, but it couldn't be made active. Use Set active to try again.",
-      };
-    }
-  }
-  return done(newId);
-}
-
-/** Make this setup the sled's only active one. Owners and editors. */
-export async function activateSetup(setupId: string): Promise<SuspensionActionState> {
-  await signedInUser();
-  if (!uuidSchema.safeParse(setupId).success) return { error: "Setup not found." };
-  const supabase = await createClient();
-  const { error } = await supabase.rpc("activate_suspension_setup", { p_setup_id: setupId });
-  if (error) return failed(error, "setup");
-  return done(setupId);
-}
-
-/** Move a setup (and its history) to Recently Deleted. Refused for the active setup. Owners and editors. */
-export async function deleteSetup(setupId: string, version: number): Promise<SuspensionActionState> {
-  return setDeleted("suspension_setups", setupId, version, true, "setup");
-}
 
 /** Bring a setup and its whole history back from Recently Deleted (within 30 days). Owners and editors. */
 export async function restoreSetup(setupId: string, version: number): Promise<SuspensionActionState> {
@@ -270,6 +201,33 @@ export async function moveSetting(settingId: string, direction: "up" | "down"): 
   return done(settingId);
 }
 
+/**
+ * Start a sled with the one suggested settings list (names, places and units;
+ * no values). Only while the list is empty. Owners and editors.
+ */
+export async function applySuggestedSettings(sledId: string): Promise<SuspensionActionState> {
+  await signedInUser();
+  if (!uuidSchema.safeParse(sledId).success) return { error: "Snowmobile not found." };
+  const supabase = await createClient();
+  const { count, error: countError } = await supabase
+    .from("suspension_settings")
+    .select("id", { count: "exact", head: true })
+    .eq("sled_id", sledId)
+    .is("deleted_at", null);
+  if (countError) return failed(countError, "setting");
+  if (count) return { error: "This snowmobile already has settings. Add or change them in the settings list." };
+  const positions = new Map<string, number>();
+  const rows = SUGGESTED_SETTINGS.map((t) => {
+    const position = positions.get(t.zone) ?? 0;
+    positions.set(t.zone, position + 10);
+    return { sled_id: sledId, name: t.name, zone: t.zone, value_type: t.valueType, unit: t.unit, position };
+  });
+  // One statement: all or nothing.
+  const { error } = await supabase.from("suspension_settings").insert(rows);
+  if (error) return failed(error, "setting");
+  return done();
+}
+
 /** Move a setting (and its reference photos) to Recently Deleted. History keeps its values. Owners and editors. */
 export async function deleteSetting(settingId: string, version: number): Promise<SuspensionActionState> {
   return setDeleted("suspension_settings", settingId, version, true, "setting");
@@ -281,41 +239,146 @@ export async function restoreSetting(settingId: string, version: number): Promis
 }
 
 // ---------------------------------------------------------------------------
-// Adjustments (revisions)
+// Configurations (Migration 9): each save is the next "Trail N" and becomes
+// the active one. Owners, editors and mechanics.
 // ---------------------------------------------------------------------------
 
+export type ConfigurationInput = {
+  sledId: string;
+  /** The active configuration the changes were made on (null before the first save). */
+  baseRevisionId: string | null;
+  /** Setting id -> new value ("" or null clears it). Only changed settings. */
+  changes: Record<string, string | null>;
+  ski?: string | null;
+  carbide?: string | null;
+  note?: string | null;
+  odometer?: string | number | null;
+  engineHours?: string | number | null;
+  idempotencyKey: string;
+};
+
 /**
- * Record an adjustment: only the values that differ from the revision the form
- * was opened on are sent; everything else carries forward in the database.
- * Mileage and hours are copies on the revision and never create a reading.
- * Owners, editors and mechanics.
+ * Save the next numbered configuration. Values are checked here for friendly
+ * messages (per setting), then by the database, which also carries every
+ * unchanged value forward, refuses a save with nothing changed, and refuses a
+ * save from a configuration that is no longer active.
+ */
+async function saveConfigurationCore(input: ConfigurationInput): Promise<SuspensionActionState> {
+  await signedInUser();
+  const sledId = uuidSchema.safeParse(input.sledId);
+  const base = input.baseRevisionId == null ? { success: true as const, data: null } : uuidSchema.safeParse(input.baseRevisionId);
+  if (!sledId.success || !base.success) return { error: "Reload the page and try again." };
+  const meta = adjustmentSchema.safeParse({
+    note: input.note ?? "",
+    odometer: input.odometer == null ? "" : String(input.odometer),
+    engineHours: input.engineHours == null ? "" : String(input.engineHours),
+    idempotencyKey: input.idempotencyKey,
+  });
+  if (!meta.success) return { fieldErrors: fieldErrorsOf(meta.error) };
+  if (input.ski != null && !isSkiModel(input.ski)) return { error: "Choose a ski model." };
+  if (input.carbide != null && !isCarbideLength(input.carbide)) return { error: "Choose a carbide length." };
+
+  const supabase = await createClient();
+  const ids = Object.keys(input.changes ?? {});
+  const changes: Record<string, string | null> = {};
+  const fieldErrors: Record<string, string[]> = {};
+  if (ids.length) {
+    if (ids.length > 200 || !ids.every((id) => uuidSchema.safeParse(id).success)) return { error: "Reload the page and try again." };
+    const { data: rows, error } = await supabase
+      .from("suspension_settings")
+      .select("id, name, value_type")
+      .eq("sled_id", sledId.data)
+      .in("id", ids)
+      .is("deleted_at", null);
+    if (error) return failed(error, "revision");
+    const byId = new Map((rows ?? []).map((r) => [r.id, r]));
+    for (const id of ids) {
+      const setting = byId.get(id);
+      if (!setting) continue; // removed meanwhile: nothing to change
+      const check = checkSettingValue(setting.value_type as SettingValueType, input.changes[id] ?? "", setting.name);
+      if (check.ok) changes[id] = check.value;
+      else fieldErrors[`${VALUE_FIELD}${id}`] = [check.error];
+    }
+  }
+  if (Object.keys(fieldErrors).length) return { fieldErrors, error: Object.values(fieldErrors)[0][0] };
+
+  const { data, error } = await supabase.rpc("save_suspension_configuration", {
+    p_sled_id: sledId.data,
+    ...(base.data ? { p_base_revision_id: base.data } : {}),
+    p_changes: changes,
+    ...(input.ski ? { p_ski_model: input.ski } : {}),
+    ...(input.carbide ? { p_carbide_length: input.carbide } : {}),
+    ...(meta.data.note ? { p_note: meta.data.note } : {}),
+    ...(meta.data.odometer != null ? { p_odometer_mi: meta.data.odometer } : {}),
+    ...(meta.data.engineHours != null ? { p_engine_hours: meta.data.engineHours } : {}),
+    p_idempotency_key: meta.data.idempotencyKey,
+  });
+  const saved = data as { revision_id?: string; config_number?: number } | null;
+  if (error || !saved?.revision_id) {
+    if (isSchemaMissing(error)) return { error: SCHEMA_MISSING };
+    return { error: suspensionErrorMessage(error, "configuration") };
+  }
+  refresh();
+  return { ok: true, id: saved.revision_id, configNumber: saved.config_number, savedAt: Date.now() };
+}
+
+/** Quick Tune: save several changed values at once as the next configuration. */
+export async function saveConfiguration(input: ConfigurationInput): Promise<SuspensionActionState> {
+  return saveConfigurationCore({ ...input, ski: null, carbide: null });
+}
+
+/**
+ * Change the installed skis and/or carbides (after the user confirmed): the
+ * next configuration keeps every suspension value and records the new
+ * equipment; it becomes active. Earlier configurations keep theirs.
+ */
+export async function changeEquipment(input: {
+  sledId: string;
+  baseRevisionId: string | null;
+  ski: string;
+  carbide: string;
+  idempotencyKey: string;
+}): Promise<SuspensionActionState> {
+  if (!isSkiModel(input.ski)) return { error: "Choose a ski model." };
+  if (!isCarbideLength(input.carbide)) return { error: "Choose a carbide length." };
+  return saveConfigurationCore({ ...input, changes: {} });
+}
+
+/**
+ * The Record adjustment form (Suspension Map, snowmobile page, Garage Board):
+ * values typed per setting; only those that differ from the active
+ * configuration are sent.
  */
 export async function saveAdjustment(_prev: SuspensionActionState, formData: FormData): Promise<SuspensionActionState> {
   await signedInUser();
-  const setupId = idFrom(formData, "setupId");
+  const sledId = idFrom(formData, "sledId");
+  if (!sledId) return { error: "Snowmobile not found. Reload the page and try again." };
   const baseRevisionId = idFrom(formData, "baseRevisionId");
-  if (!setupId || !baseRevisionId) return { error: "Setup not found. Reload the page and try again." };
-
   const meta = formValues(formData, ["note", "odometer", "engineHours", "idempotencyKey"] as const);
   const typed: Record<string, string> = {};
   for (const [key, value] of formData.entries()) {
     if (key.startsWith(VALUE_FIELD) && typeof value === "string") typed[key.slice(VALUE_FIELD.length)] = value;
   }
   const values = { ...meta, ...Object.fromEntries(Object.entries(typed).map(([id, v]) => [`${VALUE_FIELD}${id}`, v])) };
-
   const parsed = adjustmentSchema.safeParse(meta);
   if (!parsed.success) return { fieldErrors: fieldErrorsOf(parsed.error), values };
 
   const supabase = await createClient();
-  const [{ data: setup }, { data: base }] = await Promise.all([
-    supabase.from("suspension_setups").select("sled_id").eq("id", setupId).is("deleted_at", null).maybeSingle(),
-    supabase.from("suspension_revisions").select("setting_values").eq("id", baseRevisionId).eq("setup_id", setupId).maybeSingle(),
-  ]);
-  if (!setup || !base) return { error: "Setup not found. Reload the page and try again.", values };
+  let current: ReturnType<typeof parseSnapshot> = {};
+  if (baseRevisionId) {
+    const { data: base } = await supabase
+      .from("suspension_revisions")
+      .select("setting_values")
+      .eq("id", baseRevisionId)
+      .eq("sled_id", sledId)
+      .maybeSingle();
+    if (!base) return { error: "The active configuration was changed by someone else. Reload it and try again.", values };
+    current = parseSnapshot(base.setting_values);
+  }
   const { data: settingRows, error: settingsError } = await supabase
     .from("suspension_settings")
     .select("id, name, value_type")
-    .eq("sled_id", setup.sled_id)
+    .eq("sled_id", sledId)
     .is("deleted_at", null);
   if (settingsError) return failed(settingsError, "revision", { values });
   const settings = new Map((settingRows ?? []).map((s) => [s.id, s]));
@@ -324,93 +387,95 @@ export async function saveAdjustment(_prev: SuspensionActionState, formData: For
   const fieldErrors: Record<string, string[]> = {};
   for (const [id, value] of Object.entries(typed)) {
     const setting = settings.get(id);
-    if (!setting) continue; // removed meanwhile: nothing to change
+    if (!setting) continue;
     const check = checkSettingValue(setting.value_type as SettingValueType, value, setting.name);
     if (check.ok) edited[id] = check.value;
     else fieldErrors[`${VALUE_FIELD}${id}`] = [check.error];
   }
   if (Object.keys(fieldErrors).length) return { fieldErrors, values };
 
-  const changes = changedValues(parseSnapshot(base.setting_values), edited);
+  const changes = changedValues(current, edited);
   if (!Object.keys(changes).length) return { error: "Nothing changed. Change at least one value to save an adjustment.", values };
-
-  const { data, error } = await supabase.rpc("save_suspension_revision", {
-    p_setup_id: setupId,
-    p_base_revision_id: baseRevisionId,
-    p_changes: changes,
-    p_note: parsed.data.note,
-    p_odometer_mi: parsed.data.odometer,
-    p_engine_hours: parsed.data.engineHours,
-    p_idempotency_key: parsed.data.idempotencyKey,
+  const result = await saveConfigurationCore({
+    sledId,
+    baseRevisionId,
+    changes,
+    note: parsed.data.note ?? null,
+    odometer: parsed.data.odometer ?? null,
+    engineHours: parsed.data.engineHours ?? null,
+    idempotencyKey: parsed.data.idempotencyKey,
   });
-  const revisionId = (data as { revision_id?: string } | null)?.revision_id;
-  if (error || !revisionId) {
-    const message = suspensionErrorMessage(error, "setup");
-    const numberField = Object.keys(typed).find((id) => message === `Enter a number for ${settings.get(id)?.name}.`);
-    return { error: message, fieldErrors: numberField ? { [`${VALUE_FIELD}${numberField}`]: [message] } : undefined, values };
-  }
-  return done(revisionId);
+  return result.ok ? result : { ...result, values };
 }
 
-/** Save a new revision with an earlier revision's values. Nothing is erased. Owners, editors and mechanics. */
-export async function restoreRevision(_prev: SuspensionActionState, formData: FormData): Promise<SuspensionActionState> {
+/**
+ * Make an earlier configuration active. Never creates one. If it was saved with
+ * other skis or carbides, `equipmentInstalled` must confirm the user has
+ * fitted them (the installed equipment then follows). Owners, editors and mechanics.
+ */
+export async function activateConfiguration(revisionId: string, equipmentInstalled: boolean): Promise<SuspensionActionState> {
   await signedInUser();
-  const revisionId = idFrom(formData, "revisionId");
-  if (!revisionId) return { error: "Revision not found. Reload the page and try again." };
-  const meta = formValues(formData, ["note", "odometer", "engineHours", "idempotencyKey"] as const);
-  const parsed = adjustmentSchema.safeParse(meta);
-  if (!parsed.success) return { fieldErrors: fieldErrorsOf(parsed.error), values: meta };
+  if (!uuidSchema.safeParse(revisionId).success) return { error: "Configuration not found." };
   const supabase = await createClient();
-  const { data, error } = await supabase.rpc("restore_suspension_revision", {
+  const { data, error } = await supabase.rpc("activate_suspension_configuration", {
     p_revision_id: revisionId,
-    p_note: parsed.data.note,
-    p_odometer_mi: parsed.data.odometer,
-    p_engine_hours: parsed.data.engineHours,
-    p_idempotency_key: parsed.data.idempotencyKey,
+    p_equipment_installed: equipmentInstalled === true,
   });
-  const newId = (data as { revision_id?: string } | null)?.revision_id;
-  if (error || !newId) return failed(error, "revision", { values: meta });
-  return done(newId);
+  if (error) {
+    if (isSchemaMissing(error)) return { error: SCHEMA_MISSING };
+    return { error: suspensionErrorMessage(error, "configuration") };
+  }
+  const result = data as { config_number?: number } | null;
+  refresh();
+  return { ok: true, id: revisionId, configNumber: result?.config_number, savedAt: Date.now() };
 }
 
 // ---------------------------------------------------------------------------
-// Feedback (several per revision)
+// Ride evaluations (several per configuration; never a new configuration)
 // ---------------------------------------------------------------------------
 
-/** Add feedback to a revision, or edit it (owners and editors any, mechanics their own). */
+/** Add a ride evaluation to a configuration, or edit one (owners and editors any, mechanics their own). */
 export async function saveFeedback(_prev: SuspensionActionState, formData: FormData): Promise<SuspensionActionState> {
   await signedInUser();
-  const raw = formValues(formData, ["rating", "riddenOn", "note"] as const);
-  const parsed = feedbackSchema.safeParse(raw);
-  if (!parsed.success) return { fieldErrors: fieldErrorsOf(parsed.error), values: raw };
+  const raw = formValues(formData, ["rating", "riddenOn", "note", "highTemp"] as const);
+  const conditions = formData.getAll("conditions").filter((c): c is string => typeof c === "string");
+  const values = { ...raw, conditions: conditions.join(",") };
+  const parsed = feedbackSchema.safeParse({ ...raw, conditions });
+  if (!parsed.success) return { fieldErrors: fieldErrorsOf(parsed.error), values };
   const dateError = futureDateError(parsed.data.riddenOn, formData.get("timeZone"));
-  if (dateError) return { fieldErrors: { riddenOn: [dateError] }, values: raw };
-  const fields = { rating: parsed.data.rating, ridden_on: parsed.data.riddenOn, note: parsed.data.note ?? null };
+  if (dateError) return { fieldErrors: { riddenOn: [dateError] }, values };
+  const fields = {
+    rating: parsed.data.rating,
+    ridden_on: parsed.data.riddenOn,
+    conditions: parsed.data.conditions,
+    high_temp_f: parsed.data.highTemp ?? null,
+    note: parsed.data.note ?? null,
+  };
   const supabase = await createClient();
 
   const feedbackId = idFrom(formData, "feedbackId");
   if (feedbackId) {
     const version = versionFrom(formData);
-    if (!version) return { error: "Reload the page and try again.", values: raw };
+    if (!version) return { error: "Reload the page and try again.", values };
     const { data, error } = await supabase
       .from("suspension_feedback")
       .update({ ...fields, version })
       .eq("id", feedbackId)
       .select("id")
       .maybeSingle();
-    if (error || !data) return failed(error, "feedback", { values: raw });
+    if (error || !data) return isSchemaMissing(error) ? { error: SCHEMA_MISSING, values } : failed(error, "feedback", { values });
     return done(feedbackId);
   }
 
   const revisionId = idFrom(formData, "revisionId");
   const sledId = idFrom(formData, "sledId");
-  if (!revisionId || !sledId) return { error: "Revision not found. Reload the page and try again." };
+  if (!revisionId || !sledId) return { error: "Configuration not found. Reload the page and try again." };
   const { data, error } = await supabase
     .from("suspension_feedback")
     .insert({ revision_id: revisionId, sled_id: sledId, ...fields })
     .select("id")
     .single();
-  if (error || !data) return failed(error, "feedback", { values: raw });
+  if (error || !data) return isSchemaMissing(error) ? { error: SCHEMA_MISSING, values } : failed(error, "feedback", { values });
   return done(data.id);
 }
 

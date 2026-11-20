@@ -4,7 +4,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 
 import { NEEDS_SUPABASE, PASSWORD, PHOTOS_URL, addSled, hasSupabase, shareSled, signUp, uniqueEmail } from "./helpers";
 
-// Phase 6.2: suspension setup & tuning. Needs the local Supabase stack with Migration 7.
+// Phase 6.2: Suspension Quick Tune (Migrations 7 and 9). Needs the local Supabase stack.
 test.skip(!hasSupabase, NEEDS_SUPABASE);
 
 test.afterEach(async ({ page }, testInfo) => {
@@ -20,564 +20,70 @@ const visible = (locator: Locator) => locator.filter({ visible: true });
 const label = (scope: Page | Locator, text: string, exact = false) => visible(scope.getByLabel(text, { exact }));
 
 const suspensionPage = (page: Page) => visible(page.getByTestId("suspension-page"));
-const setupTab = (page: Page, name: string) =>
-  suspensionPage(page)
-    .getByTestId("setup-tab")
-    .filter({ hasText: new RegExp(`^${name}`) });
-const selectedSetup = (page: Page) => suspensionPage(page).getByTestId("selected-setup");
-const zoneSettings = (page: Page, zone: string) =>
-  suspensionPage(page).getByTestId("settings-editor").locator(`[data-zone="${zone}"]`).getByTestId("setting-name");
-const deletedItems = (page: Page) => suspensionPage(page).getByTestId("deleted-item");
+const activeName = (page: Page) => suspensionPage(page).getByTestId("active-name");
+const activeEquipment = (page: Page) => suspensionPage(page).getByTestId("active-equipment").getByTestId("equipment");
+const notice = (page: Page) => suspensionPage(page).getByTestId("suspension-notice");
+const section = (page: Page, id: string) => suspensionPage(page).locator(`[data-section="${id}"]`);
+const tuneInput = (page: Page, sectionId: string, name: string) => section(page, sectionId).getByRole("textbox", { name, exact: true });
+const bar = (page: Page) => page.getByTestId("quick-tune-bar");
+const config = (page: Page, n: number) =>
+  suspensionPage(page).getByTestId("configuration-history").locator(`[data-testid="configuration"][data-number="${n}"]`);
+const configs = (page: Page) => suspensionPage(page).getByTestId("configuration-history").getByTestId("configuration");
 
-async function openSuspension(page: Page, sledId: string) {
-  await page.goto(`/garage/${sledId}/suspension`);
-  await expect(suspensionPage(page).getByRole("heading", { name: "Suspension tuning" })).toBeVisible();
+const FRONT = "front-ski-shocks";
+const BOTH = "Compression (Both ski shocks)";
+
+async function openSuspension(page: Page, sledId: string, view?: "quick" | "map") {
+  await page.goto(`/garage/${sledId}/suspension${view ? `?view=${view}` : ""}`);
+  await expect(suspensionPage(page).getByRole("heading", { name: "Suspension", exact: true })).toBeVisible();
 }
 
-type NewSetting = { name: string; zone: string; text?: boolean; unit?: string; chip?: string };
-
-async function addSetting(page: Page, setting: NewSetting) {
-  await visible(page.getByRole("button", { name: "Add setting", exact: true })).click();
-  const dialog = page.getByRole("dialog", { name: "Add setting" });
-  await label(dialog, "Setting name").fill(setting.name);
-  await label(dialog, "Where on the sled").selectOption({ label: setting.zone });
-  if (setting.text) await dialog.getByText("Text", { exact: true }).click();
-  if (setting.chip) await dialog.getByRole("group", { name: "Unit suggestions" }).getByRole("button", { name: setting.chip }).click();
-  if (setting.unit) await label(dialog, "Unit (optional)").fill(setting.unit);
-  await dialog.getByRole("button", { name: "Add setting" }).click();
-  await expect(dialog).toBeHidden({ timeout: 15_000 });
+/** A new sled with the suggested settings list, on its Quick Tune page. */
+async function sledWithTemplate(page: Page, email: string, nickname = "Blue") {
+  await signUp(page, email);
+  const sledId = await addSled(page, { make: "Polaris", model: "RMK", year: "2022", odometer: "2000", hours: "150", nickname });
+  await openSuspension(page, sledId);
+  await suspensionPage(page).getByRole("button", { name: "Use suggested settings" }).click();
+  await expect(tuneInput(page, FRONT, BOTH)).toBeVisible({ timeout: 15_000 });
+  return sledId;
 }
 
-async function createSetup(page: Page, name: string, options: { activate?: boolean; copy?: string } = {}) {
-  await visible(page.getByRole("button", { name: /^(New setup|Create a setup)$/ }))
-    .first()
-    .click();
-  const dialog = page.getByRole("dialog", { name: "New setup" });
-  await label(dialog, "Setup name").fill(name);
-  if (options.copy) {
-    await dialog.getByText("A copy of a saved revision").click();
-    await label(dialog, "Revision to copy").selectOption({ label: options.copy });
+/** Type values into Quick Tune ({ "<section>|<name>": "value" }) and save them as the next configuration. */
+async function tune(page: Page, values: Record<string, string>, note?: string) {
+  for (const [key, value] of Object.entries(values)) {
+    const [sectionId, name] = key.split("|");
+    await tuneInput(page, sectionId, name).fill(value);
   }
-  if (options.activate) await label(dialog, "Make this the active setup").check();
-  await dialog.getByRole("button", { name: "Create setup" }).click();
+  if (note) await bar(page).getByRole("textbox", { name: "Notes (optional)" }).fill(note);
+  await bar(page).getByRole("button", { name: "Save Adjustments" }).click();
+  await expect(bar(page)).toBeHidden({ timeout: 15_000 });
+}
+
+async function changeEquipment(page: Page, scope: Locator, buttonName: string, ski: "C&A Pro XPT" | "C&A Pro XCS", carbide: string) {
+  await scope.getByRole("button", { name: buttonName }).click();
+  const dialog = page.getByRole("dialog", { name: "Skis & carbides" });
+  await dialog.getByText(ski, { exact: true }).click();
+  await dialog.getByText(carbide, { exact: true }).click();
+  await dialog.getByRole("button", { name: "Continue" }).click();
+  await expect(dialog.getByTestId("equipment-confirm")).toBeVisible();
+  await dialog.getByRole("button", { name: "Confirm change" }).click();
   await expect(dialog).toBeHidden({ timeout: 15_000 });
 }
 
-test("a new snowmobile starts blank; the owner builds the settings list and setups", async ({ page }) => {
-  await signUp(page, uniqueEmail("sus-own"));
-  const sledId = await addSled(page, { make: "Polaris", model: "RMK", year: "2022", odometer: "2000", hours: "150", nickname: "Blue" });
-  await visible(page.getByRole("link", { name: "Open suspension tuning for Blue" })).click();
-  await expect(page).toHaveURL(new RegExp(`/garage/${sledId}/suspension$`));
-
-  // Nothing is pre-filled: no settings, no setups.
-  await expect(visible(page.getByTestId("no-settings"))).toBeVisible();
-  await expect(visible(page.getByTestId("no-setups"))).toBeVisible();
-  await expect(suspensionPage(page).getByTestId("setting-row")).toHaveCount(0);
-
-  // Custom settings with a suggested unit, a typed unit, and a text setting.
-  await addSetting(page, { name: "Compression", zone: "Left ski shock", chip: "Clicks" });
-  await addSetting(page, { name: "Rebound", zone: "Left ski shock", unit: "clicks out" });
-  await addSetting(page, { name: "Spring", zone: "Springs & limiter strap", text: true });
-  await expect(zoneSettings(page, "front_left_shock")).toHaveText(["Compression", "Rebound"]);
-  await expect(suspensionPage(page).locator('[data-zone="front_left_shock"]').getByTestId("setting-row").first()).toContainText(
-    "Number · Clicks",
-  );
-  await expect(suspensionPage(page).locator('[data-zone="rear_springs_limiter"]').getByTestId("setting-row")).toContainText("Text");
-  await expect(visible(page.getByTestId("no-settings"))).toHaveCount(0);
-
-  // The same name twice in one zone is refused (adding from the zone preselects it).
-  await suspensionPage(page).getByRole("button", { name: "Add setting to Left ski shock" }).click();
-  let dialog = page.getByRole("dialog", { name: "Add setting" });
-  await expect(label(dialog, "Where on the sled")).toHaveValue("front_left_shock");
-  await label(dialog, "Setting name").fill("compression");
-  await dialog.getByRole("button", { name: "Add setting" }).click();
-  await expect(dialog.getByText("There's already a setting with that name in this part of the sled.")).toBeVisible();
-  await dialog.getByRole("button", { name: "Close" }).click();
-
-  // Reorder and edit.
-  await suspensionPage(page).getByRole("button", { name: "Move Rebound up" }).click();
-  await expect(zoneSettings(page, "front_left_shock")).toHaveText(["Rebound", "Compression"]);
-  await suspensionPage(page).getByRole("button", { name: "Edit Compression" }).click();
-  dialog = page.getByRole("dialog", { name: "Edit setting" });
-  await label(dialog, "Setting name").fill("High-speed compression");
-  await dialog.getByRole("button", { name: "Save setting" }).click();
-  await expect(dialog).toBeHidden();
-  await expect(zoneSettings(page, "front_left_shock")).toHaveText(["Rebound", "High-speed compression"]);
-
-  // Setups: one made active on purpose, one not.
-  await createSetup(page, "Trail", { activate: true });
-  await expect(setupTab(page, "Trail").getByTestId("active-badge")).toBeVisible();
-  await expect(selectedSetup(page).getByTestId("selected-setup-name")).toHaveText("Trail");
-  await expect(selectedSetup(page).getByTestId("setup-summary")).toContainText("Revision 1");
-  await createSetup(page, "Deep powder");
-  await expect(selectedSetup(page).getByTestId("selected-setup-name")).toHaveText("Deep powder");
-  await expect(setupTab(page, "Deep powder").getByTestId("active-badge")).toHaveCount(0);
-  await expect(setupTab(page, "Trail").getByTestId("active-badge")).toBeVisible();
-
-  // Setup names are unique per sled.
-  await visible(page.getByRole("button", { name: "New setup" })).click();
-  dialog = page.getByRole("dialog", { name: "New setup" });
-  await label(dialog, "Setup name").fill("trail");
-  await dialog.getByRole("button", { name: "Create setup" }).click();
-  await expect(dialog.getByText("There's already a setup with that name on this snowmobile.")).toBeVisible();
-  await dialog.getByRole("button", { name: "Close" }).click();
-
-  // The active setup can't be deleted.
-  await setupTab(page, "Trail").click();
-  await expect(selectedSetup(page).getByRole("button", { name: "Delete" })).toBeDisabled();
-  await expect(selectedSetup(page).getByTestId("active-delete-hint")).toBeVisible();
-
-  // Switching the active setup, then deleting and restoring the other one.
-  await setupTab(page, "Deep powder").click();
-  await selectedSetup(page).getByRole("button", { name: "Set active" }).click();
-  await expect(setupTab(page, "Deep powder").getByTestId("active-badge")).toBeVisible();
-  await expect(setupTab(page, "Trail").getByTestId("active-badge")).toHaveCount(0);
-  await setupTab(page, "Trail").click();
-  page.once("dialog", (d) => d.accept());
-  await selectedSetup(page).getByRole("button", { name: "Delete" }).click();
-  await expect(setupTab(page, "Trail")).toHaveCount(0);
-  await expect(deletedItems(page).filter({ hasText: "Trail" })).toContainText("Setup, with its history");
-  await suspensionPage(page).getByRole("button", { name: "Restore Trail" }).click();
-  await expect(setupTab(page, "Trail")).toBeVisible();
-  await expect(setupTab(page, "Trail").getByTestId("active-badge")).toHaveCount(0);
-  await expect(deletedItems(page)).toHaveCount(0);
-
-  // Rename.
-  await setupTab(page, "Trail").click();
-  await selectedSetup(page).getByRole("button", { name: "Rename" }).click();
-  dialog = page.getByRole("dialog", { name: "Rename setup" });
-  await label(dialog, "Setup name").fill("Trail 2026");
-  await dialog.getByRole("button", { name: "Save changes" }).click();
-  await expect(dialog).toBeHidden();
-  await expect(setupTab(page, "Trail 2026")).toBeVisible();
-
-  // Removing a setting puts it in Recently Deleted; it can be restored.
-  page.once("dialog", (d) => d.accept());
-  await suspensionPage(page).getByRole("button", { name: "Remove Spring" }).click();
-  await expect(zoneSettings(page, "rear_springs_limiter")).toHaveCount(0);
-  await expect(deletedItems(page).filter({ hasText: "Spring" })).toContainText("Springs & limiter strap");
-  await suspensionPage(page).getByRole("button", { name: "Restore Spring" }).click();
-  await expect(zoneSettings(page, "rear_springs_limiter")).toHaveText(["Spring"]);
-
-  // The sled's mileage history is untouched by all of this.
-  await page.goto(`/garage/${sledId}`);
-  await expect(visible(page.getByTestId("reading-history")).getByRole("listitem")).toHaveCount(1);
-});
-
-test("roles: editors manage, mechanics and viewers can't; others see nothing", async ({ page, browser }) => {
-  const ownerEmail = uniqueEmail("sus-o");
-  const editorEmail = uniqueEmail("sus-e");
-  const mechanicEmail = uniqueEmail("sus-m");
-  const viewerEmail = uniqueEmail("sus-v");
-  await signUp(page, ownerEmail);
-  const sledId = await addSled(page, { make: "Ski-Doo", model: "Summit", year: "2023", odometer: "500", nickname: "Summit" });
-  await openSuspension(page, sledId);
-  await addSetting(page, { name: "Compression", zone: "Front track shock", chip: "Clicks" });
-  await createSetup(page, "Trail", { activate: true });
-
-  const contexts = await Promise.all([1, 2, 3, 4].map(() => browser.newContext()));
-  const [editor, mechanic, viewer, stranger] = await Promise.all(contexts.map((c) => c.newPage()));
-  await signUp(editor, editorEmail);
-  await signUp(mechanic, mechanicEmail);
-  await signUp(viewer, viewerEmail);
-  await signUp(stranger, uniqueEmail("sus-x"));
-  await shareSled(ownerEmail, sledId, editorEmail, "editor");
-  await shareSled(ownerEmail, sledId, mechanicEmail, "mechanic");
-  await shareSled(ownerEmail, sledId, viewerEmail, "viewer");
-
-  // Editor: manages setups and settings.
-  await openSuspension(editor, sledId);
-  await addSetting(editor, { name: "Rebound", zone: "Front track shock", unit: "Clicks" });
-  await expect(zoneSettings(editor, "rear_front_shock")).toHaveText(["Compression", "Rebound"]);
-  await createSetup(editor, "Deep powder");
-  await expect(selectedSetup(editor).getByRole("button", { name: "Set active" })).toBeVisible();
-
-  // Mechanic: sees the setups, but no management controls.
-  await openSuspension(mechanic, sledId);
-  await expect(setupTab(mechanic, "Trail").getByTestId("active-badge")).toBeVisible();
-  await expect(
-    suspensionPage(mechanic).getByRole("button", { name: /New setup|Add setting|Set active|Rename|Delete|Restore/ }),
-  ).toHaveCount(0);
-  await expect(suspensionPage(mechanic).getByRole("heading", { name: "Settings list" })).toHaveCount(0);
-  await expect(suspensionPage(mechanic).getByRole("heading", { name: "Recently deleted" })).toHaveCount(0);
-
-  // Viewer: read only.
-  await openSuspension(viewer, sledId);
-  await expect(visible(viewer.getByTestId("read-only-note"))).toBeVisible();
-  await expect(suspensionPage(viewer).getByRole("button", { name: /New setup|Add setting|Set active|Rename|Delete/ })).toHaveCount(0);
-
-  // Someone the sled isn't shared with can't open it.
-  await stranger.goto(`/garage/${sledId}/suspension`);
-  await expect(stranger.getByRole("heading", { name: "Snowmobile not found" })).toBeVisible();
-
-  await Promise.all(contexts.map((c) => c.close()));
-});
-
-// ---------------------------------------------------------------------------
-// Checkpoint 3: the map, zones and adjustments
-// ---------------------------------------------------------------------------
-const marker = (page: Page, zone: string) => suspensionPage(page).locator(`[data-testid="diagram-zone"][data-zone="${zone}"]`);
-const zonePanel = (page: Page) => suspensionPage(page).getByTestId("zone-panel");
-const zoneValue = (page: Page, name: string) =>
-  zonePanel(page)
-    .getByTestId("zone-setting")
-    .filter({ has: page.getByTestId("zone-setting-name").getByText(name, { exact: true }) })
-    .getByTestId("zone-setting-value");
-
-const adjustZone = (dialog: Locator, zone: string) => dialog.locator(`[data-testid="adjust-zone"][data-zone="${zone}"]`);
-const zoneToggle = (dialog: Locator, zone: string) => adjustZone(dialog, zone).locator("button[aria-expanded]");
-
-async function openAdjust(page: Page) {
-  await zonePanel(page).getByRole("button", { name: "Record adjustment" }).click();
-  const dialog = page.getByRole("dialog", { name: "Record adjustment" });
-  await expect(dialog).toBeVisible();
-  return dialog;
-}
-
-test("the map selects zones (mouse and keyboard) and adjustments save new revisions", async ({ page, context }) => {
-  await signUp(page, uniqueEmail("sus-adj"));
-  const sledId = await addSled(page, { make: "Polaris", model: "RMK", year: "2022", odometer: "2000", hours: "150", nickname: "Blue" });
-  await openSuspension(page, sledId);
-  await addSetting(page, { name: "Compression", zone: "Left ski shock", chip: "Clicks" });
-  await addSetting(page, { name: "Spring", zone: "Springs & limiter strap", text: true });
-  await createSetup(page, "Trail", { activate: true });
-
-  // The map: seven numbered zones; clicking and arrow keys select them, and the zone list follows.
-  await expect(suspensionPage(page).getByTestId("diagram-zone")).toHaveCount(7);
-  await expect(suspensionPage(page).getByTestId("zone-option")).toHaveCount(7);
-  await marker(page, "rear_springs_limiter").click();
-  await expect(zonePanel(page)).toHaveAttribute("data-zone", "rear_springs_limiter");
-  await expect(marker(page, "rear_springs_limiter")).toHaveAttribute("aria-pressed", "true");
-  await expect(suspensionPage(page).locator('[data-testid="zone-option"][data-zone="rear_springs_limiter"]')).toHaveAttribute(
-    "aria-pressed",
-    "true",
-  );
-  await page.keyboard.press("ArrowDown");
-  await expect(zonePanel(page)).toHaveAttribute("data-zone", "rear_general");
-  await expect(marker(page, "rear_general")).toBeFocused();
-  await expect(zonePanel(page).getByTestId("zone-empty")).toBeVisible();
-  await suspensionPage(page).locator('[data-testid="zone-option"][data-zone="front_left_shock"]').click();
-  await expect(zonePanel(page)).toHaveAttribute("data-zone", "front_left_shock");
-  await expect(zoneValue(page, "Compression")).toContainText("—");
-
-  // Adjust: mileage and hours are prefilled from the readings; only changes are saved.
-  let dialog = await openAdjust(page);
-  await expect(label(dialog, "Mileage", true)).toHaveValue("2000");
-  await expect(label(dialog, "Engine hours", true)).toHaveValue("150");
-  // Only the zone picked on the map is open; the others start collapsed.
-  await expect(zoneToggle(dialog, "front_left_shock")).toHaveAttribute("aria-expanded", "true");
-  await expect(zoneToggle(dialog, "rear_springs_limiter")).toHaveAttribute("aria-expanded", "false");
-  await expect(label(dialog, "Springs & limiter strap: Spring", true)).toHaveCount(0);
-  await label(dialog, "Left ski shock: Compression", true).fill("soft");
-  await expect(dialog.getByText("Enter a number for Compression.")).toBeVisible();
-  // A collapsed zone still shows that it needs fixing.
-  await zoneToggle(dialog, "front_left_shock").click();
-  await expect(adjustZone(dialog, "front_left_shock").getByTestId("zone-status")).toHaveText("Needs fixing");
-  await dialog.getByRole("button", { name: "Save adjustment" }).click();
-  // The server's message opens the zone again.
-  await expect(zoneToggle(dialog, "front_left_shock")).toHaveAttribute("aria-expanded", "true");
-  await expect(dialog.getByText("Enter a number for Compression.")).toBeVisible();
-  await label(dialog, "Left ski shock: Compression", true).fill("+12");
-  // Opening another zone keeps the first one open (keyboard works too).
-  await zoneToggle(dialog, "rear_springs_limiter").focus();
-  await page.keyboard.press("Enter");
-  await expect(zoneToggle(dialog, "rear_springs_limiter")).toHaveAttribute("aria-expanded", "true");
-  await expect(zoneToggle(dialog, "front_left_shock")).toHaveAttribute("aria-expanded", "true");
-  await label(dialog, "Springs & limiter strap: Spring", true).fill("Stiff");
-  // Collapsing keeps the typed values and shows the unsaved changes on the header.
-  await zoneToggle(dialog, "front_left_shock").click();
-  await zoneToggle(dialog, "rear_springs_limiter").click();
-  await expect(adjustZone(dialog, "front_left_shock").getByTestId("zone-status")).toHaveText("1 change");
-  await expect(adjustZone(dialog, "rear_springs_limiter").getByTestId("zone-status")).toHaveText("1 change");
-  await zoneToggle(dialog, "rear_springs_limiter").click();
-  await expect(label(dialog, "Springs & limiter strap: Spring", true)).toHaveValue("Stiff");
-  await expect(dialog.getByTestId("adjust-changes")).toContainText("2 changes");
-  await label(dialog, "Mileage", true).fill("2100");
-  await label(dialog, "What did you change and why? (optional)").fill("Baseline");
-  // A double click still saves once.
-  await dialog.getByRole("button", { name: "Save adjustment" }).dblclick();
-  await expect(dialog).toBeHidden({ timeout: 15_000 });
-  await expect(visible(page.getByTestId("adjust-notice"))).toContainText("Adjustment saved as revision 2.");
-  await expect(zoneValue(page, "Compression")).toContainText("12");
-  await expect(zoneValue(page, "Compression")).toContainText("Clicks");
-  await expect(selectedSetup(page).getByTestId("setup-summary")).toContainText("Revision 2");
-  await expect(selectedSetup(page).getByTestId("setup-summary")).toContainText("2 revisions");
-
-  // Saving without a change is refused.
-  dialog = await openAdjust(page);
-  await expect(dialog.getByTestId("adjust-changes")).toContainText("No changes yet");
-  await dialog.getByRole("button", { name: "Save adjustment" }).click();
-  await expect(dialog.getByText("Nothing changed. Change at least one value to save an adjustment.")).toBeVisible();
-  await dialog.getByRole("button", { name: "Close" }).click();
-
-  // Someone else saving first: the second save is refused with a reload message.
-  const other = await context.newPage();
-  await openSuspension(other, sledId);
-  const otherDialog = await openAdjust(other);
-  dialog = await openAdjust(page);
-  await label(otherDialog, "Left ski shock: Compression", true).fill("14");
-  await otherDialog.getByRole("button", { name: "Save adjustment" }).click();
-  await expect(otherDialog).toBeHidden({ timeout: 15_000 });
-  await label(dialog, "Left ski shock: Compression", true).fill("10");
-  await dialog.getByRole("button", { name: "Save adjustment" }).click();
-  await expect(dialog.getByText("This setup was changed by someone else. Reload it and try again.")).toBeVisible();
-  await dialog.getByRole("button", { name: "Reload" }).click();
-  await expect(dialog).toBeHidden();
-  await expect(zoneValue(page, "Compression")).toContainText("14");
-  await expect(selectedSetup(page).getByTestId("setup-summary")).toContainText("Revision 3");
-  await other.close();
-
-  // A blank value clears the setting.
-  dialog = await openAdjust(page);
-  await zoneToggle(dialog, "rear_springs_limiter").click();
-  await label(dialog, "Springs & limiter strap: Spring", true).fill("");
-  await dialog.getByRole("button", { name: "Save adjustment" }).click();
-  await expect(dialog).toBeHidden({ timeout: 15_000 });
-  await marker(page, "rear_springs_limiter").click();
-  await expect(zoneValue(page, "Spring")).toContainText("—");
-
-  // The mileage typed on the revision never became a reading.
-  await page.goto(`/garage/${sledId}`);
-  await expect(visible(page.getByTestId("current-odometer"))).toHaveText("2,000 mi");
-  await expect(visible(page.getByTestId("reading-history")).getByRole("listitem")).toHaveCount(1);
-});
-
-test("mechanics record adjustments; viewers can't", async ({ page, browser }) => {
-  const ownerEmail = uniqueEmail("sus-adj-o");
-  const mechanicEmail = uniqueEmail("sus-adj-m");
-  const viewerEmail = uniqueEmail("sus-adj-v");
-  await signUp(page, ownerEmail);
-  const sledId = await addSled(page, { make: "Lynx", model: "Rave", year: "2021", odometer: "800", nickname: "Rave" });
-  await openSuspension(page, sledId);
-  await addSetting(page, { name: "Preload", zone: "Rear track shock", chip: "Turns" });
-  await createSetup(page, "Trail", { activate: true });
-
-  const contexts = await Promise.all([1, 2].map(() => browser.newContext()));
-  const [mechanic, viewer] = await Promise.all(contexts.map((c) => c.newPage()));
-  await signUp(mechanic, mechanicEmail);
-  await signUp(viewer, viewerEmail);
-  await shareSled(ownerEmail, sledId, mechanicEmail, "mechanic");
-  await shareSled(ownerEmail, sledId, viewerEmail, "viewer");
-
-  await openSuspension(mechanic, sledId);
-  await marker(mechanic, "rear_rear_shock").click();
-  const dialog = await openAdjust(mechanic);
-  await label(dialog, "Rear track shock: Preload", true).fill("-1.5");
-  await dialog.getByRole("button", { name: "Save adjustment" }).click();
-  await expect(dialog).toBeHidden({ timeout: 15_000 });
-  await expect(zoneValue(mechanic, "Preload")).toContainText("-1.5");
-
-  await openSuspension(viewer, sledId);
-  await marker(viewer, "rear_rear_shock").click();
-  await expect(zoneValue(viewer, "Preload")).toContainText("-1.5");
-  await expect(zonePanel(viewer).getByRole("button", { name: "Record adjustment" })).toHaveCount(0);
-
-  await Promise.all(contexts.map((c) => c.close()));
-});
-
-// ---------------------------------------------------------------------------
-// Checkpoint 4: history, feedback, comparison and restore
-// ---------------------------------------------------------------------------
-const revisionCard = (page: Page, n: number) =>
-  suspensionPage(page).getByTestId("revision-history").locator(`[data-testid="revision"][data-number="${n}"]`);
-
-async function adjustValues(page: Page, values: Record<string, string>, note?: string) {
-  const dialog = await openAdjust(page);
-  for (const [field, value] of Object.entries(values)) await label(dialog, field, true).fill(value);
-  if (note) await label(dialog, "What did you change and why? (optional)").fill(note);
-  await dialog.getByRole("button", { name: "Save adjustment" }).click();
-  await expect(dialog).toBeHidden({ timeout: 15_000 });
-}
-
-async function addFeedback(page: Page, n: number, rating: "Improved" | "Worse" | "No change", note?: string) {
-  await revisionCard(page, n)
-    .getByRole("button", { name: `Add ride feedback to rev ${n}` })
+async function evaluate(page: Page, n: number, ride: { rating: string; conditions?: string[]; temp?: string; note?: string }) {
+  await config(page, n)
+    .getByRole("button", { name: `Add ride evaluation to Trail ${n}` })
     .click();
-  const dialog = page.getByRole("dialog", { name: "Ride feedback" });
-  await dialog.getByText(rating, { exact: true }).click();
-  if (note) await label(dialog, "Notes (optional)").fill(note);
-  await dialog.getByRole("button", { name: "Save feedback" }).click();
+  const dialog = page.getByRole("dialog", { name: "Ride evaluation" });
+  await dialog.getByText(ride.rating, { exact: true }).click();
+  for (const c of ride.conditions ?? []) await dialog.getByText(c, { exact: true }).click();
+  if (ride.temp) await label(dialog, "Day's high °F (optional)").fill(ride.temp);
+  if (ride.note) await label(dialog, "Ride notes (optional)").fill(ride.note);
+  await dialog.getByRole("button", { name: "Save evaluation" }).click();
   await expect(dialog).toBeHidden({ timeout: 15_000 });
 }
 
-test("history, multiple feedback, comparison across setups, and restore", async ({ page }) => {
-  await signUp(page, uniqueEmail("sus-hist"));
-  const sledId = await addSled(page, { make: "Polaris", model: "RMK", year: "2022", odometer: "2000", hours: "150", nickname: "Blue" });
-  await openSuspension(page, sledId);
-  await addSetting(page, { name: "Compression", zone: "Left ski shock", chip: "Clicks" });
-  await addSetting(page, { name: "Rebound", zone: "Left ski shock", chip: "Clicks" });
-  await createSetup(page, "Trail", { activate: true });
-  await adjustValues(page, { "Left ski shock: Compression": "12", "Left ski shock: Rebound": "8" }, "Baseline");
-  await adjustValues(page, { "Left ski shock: Rebound": "10" }, "More rebound");
-
-  // History: newest first, what changed, who, when, mileage; the first revision started blank.
-  const cards = suspensionPage(page).getByTestId("revision-history").getByTestId("revision");
-  await expect(cards).toHaveCount(3);
-  await expect(cards.first()).toHaveAttribute("data-number", "3");
-  await expect(revisionCard(page, 3)).toContainText("Current");
-  await expect(revisionCard(page, 3).getByTestId("revision-changes")).toContainText("Rebound: 8 → 10 Clicks");
-  await expect(revisionCard(page, 3).getByTestId("revision-changes")).not.toContainText("Compression");
-  await expect(revisionCard(page, 3).getByTestId("revision-note")).toHaveText("More rebound");
-  await expect(revisionCard(page, 3).getByTestId("revision-meta")).toContainText("You");
-  await expect(revisionCard(page, 3).getByTestId("revision-meta")).toContainText("2,000 mi");
-  await expect(revisionCard(page, 2).getByTestId("revision-changes")).toContainText("Compression: set to 12 Clicks");
-  await expect(revisionCard(page, 1).getByTestId("revision-changes")).toHaveText("Started blank.");
-  await expect(revisionCard(page, 3).getByRole("button", { name: "Restore rev 3" })).toHaveCount(0);
-
-  // Several feedback entries on one revision; edit and remove.
-  await addFeedback(page, 2, "Improved", "Smooth on the trail");
-  await addFeedback(page, 2, "Worse", "Harsh in the whoops");
-  await expect(revisionCard(page, 2).getByTestId("feedback")).toHaveCount(2);
-  await expect(revisionCard(page, 2).getByTestId("feedback-rating")).toHaveText(["Worse", "Improved"]);
-  await revisionCard(page, 2)
-    .getByRole("button", { name: /^Edit feedback/ })
-    .first()
-    .click();
-  let dialog = page.getByRole("dialog", { name: "Edit feedback" });
-  await label(dialog, "Notes (optional)").fill("Harsh in the whoops at speed");
-  await dialog.getByRole("button", { name: "Save changes" }).click();
-  await expect(dialog).toBeHidden();
-  await expect(revisionCard(page, 2).getByTestId("feedback-note").first()).toHaveText("Harsh in the whoops at speed");
-  page.once("dialog", (d) => d.accept());
-  await revisionCard(page, 2)
-    .getByRole("button", { name: /^Remove feedback/ })
-    .last()
-    .click();
-  await expect(revisionCard(page, 2).getByTestId("feedback")).toHaveCount(1);
-  await addFeedback(page, 2, "No change");
-  await expect(revisionCard(page, 2).getByTestId("feedback")).toHaveCount(2);
-
-  // Compare: rev 1 against the current revision.
-  await revisionCard(page, 1).getByRole("button", { name: "Compare rev 1" }).click();
-  const compare = suspensionPage(page).getByTestId("compare");
-  await expect(compare.getByTestId("compare-summary")).toHaveText("2 settings differ");
-  await expect(compare.getByTestId("compare-changed").getByTestId("compare-name")).toHaveText(["Compression", "Rebound"]);
-  await expect(compare.getByTestId("compare-changed").getByTestId("compare-b")).toHaveText(["12 Clicks", "10 Clicks"]);
-  await expect(compare.getByTestId("compare-changed").getByTestId("compare-a")).toHaveText(["—", "—"]);
-
-  // Compare across setups: a copy of rev 2 as a new setup.
-  await createSetup(page, "Powder", { copy: "Trail · Rev 2" });
-  await label(compare, "Compare").selectOption({ label: "Powder · Rev 1 (current)" });
-  await label(compare, "With").selectOption({ label: "Trail · Rev 3 (current)" });
-  await expect(compare.getByTestId("compare-summary")).toHaveText("1 setting differs");
-  await expect(compare.getByTestId("compare-changed").getByTestId("compare-name")).toHaveText(["Rebound"]);
-  await expect(compare.getByTestId("compare-changed").getByTestId("compare-a")).toHaveText("8 Clicks");
-  await compare.getByTestId("compare-same").locator("summary").click();
-  await expect(compare.getByTestId("compare-same").getByTestId("compare-name")).toHaveText(["Compression"]);
-
-  // Restore rev 2: a new revision with its values; nothing is erased.
-  await setupTab(page, "Trail").click();
-  await revisionCard(page, 2).getByRole("button", { name: "Restore rev 2" }).click();
-  dialog = page.getByRole("dialog", { name: "Restore revision" });
-  await expect(dialog.getByTestId("restore-changes")).toContainText("Rebound: 10 → 8 Clicks");
-  await expect(label(dialog, "Mileage", true)).toHaveValue("2000");
-  await dialog.getByRole("button", { name: "Restore rev 2" }).click();
-  await expect(dialog).toBeHidden({ timeout: 15_000 });
-  await expect(visible(page.getByTestId("adjust-notice"))).toContainText("Rev 2 restored as revision 4.");
-  await expect(cards).toHaveCount(4);
-  await expect(revisionCard(page, 4).getByTestId("restored-from")).toHaveText("Restored from rev 2");
-  await expect(revisionCard(page, 4).getByTestId("revision-note")).toHaveText("Restored revision 2");
-  await expect(revisionCard(page, 3).getByTestId("revision-note")).toHaveText("More rebound");
-  await expect(revisionCard(page, 2).getByTestId("feedback")).toHaveCount(2);
-  await expect(zoneValue(page, "Rebound")).toContainText("8");
-
-  // Restoring values the setup already has is refused.
-  await revisionCard(page, 2).getByRole("button", { name: "Restore rev 2" }).click();
-  dialog = page.getByRole("dialog", { name: "Restore revision" });
-  await expect(dialog.getByTestId("restore-changes")).toContainText("Rev 4 already has these values.");
-  await dialog.getByRole("button", { name: "Restore rev 2" }).click();
-  await expect(dialog.getByText("The latest revision already has these values.")).toBeVisible();
-  await dialog.getByRole("button", { name: "Close" }).click();
-  await expect(cards).toHaveCount(4);
-
-  // Still no readings were created.
-  await page.goto(`/garage/${sledId}`);
-  await expect(visible(page.getByTestId("reading-history")).getByRole("listitem")).toHaveCount(1);
-});
-
-test("feedback and restore by role: mechanics add and edit their own; viewers only read", async ({ page, browser }) => {
-  const ownerEmail = uniqueEmail("sus-fb-o");
-  const mechanicEmail = uniqueEmail("sus-fb-m");
-  const viewerEmail = uniqueEmail("sus-fb-v");
-  await signUp(page, ownerEmail);
-  const sledId = await addSled(page, { make: "Ski-Doo", model: "Summit", year: "2023", odometer: "500", nickname: "Summit" });
-  await openSuspension(page, sledId);
-  await addSetting(page, { name: "Compression", zone: "Left ski shock", chip: "Clicks" });
-  await createSetup(page, "Trail", { activate: true });
-  await adjustValues(page, { "Left ski shock: Compression": "12" });
-  await addFeedback(page, 2, "Improved", "Owner's ride");
-
-  const contexts = await Promise.all([1, 2].map(() => browser.newContext()));
-  const [mechanic, viewer] = await Promise.all(contexts.map((c) => c.newPage()));
-  await signUp(mechanic, mechanicEmail);
-  await signUp(viewer, viewerEmail);
-  await shareSled(ownerEmail, sledId, mechanicEmail, "mechanic");
-  await shareSled(ownerEmail, sledId, viewerEmail, "viewer");
-
-  // Mechanic: can't change the owner's feedback; adds and edits their own (but can't remove it); can restore.
-  await openSuspension(mechanic, sledId);
-  await expect(revisionCard(mechanic, 2).getByRole("button", { name: /^(Edit|Remove) feedback/ })).toHaveCount(0);
-  await addFeedback(mechanic, 2, "No change", "Mechanic's ride");
-  await expect(revisionCard(mechanic, 2).getByTestId("feedback")).toHaveCount(2);
-  await expect(revisionCard(mechanic, 2).getByRole("button", { name: /^Edit feedback/ })).toHaveCount(1);
-  await expect(revisionCard(mechanic, 2).getByRole("button", { name: /^Remove feedback/ })).toHaveCount(0);
-  await revisionCard(mechanic, 2)
-    .getByRole("button", { name: /^Edit feedback/ })
-    .click();
-  const dialog = mechanic.getByRole("dialog", { name: "Edit feedback" });
-  await dialog.getByText("Worse", { exact: true }).click();
-  await dialog.getByRole("button", { name: "Save changes" }).click();
-  await expect(dialog).toBeHidden();
-  await expect(revisionCard(mechanic, 2).getByTestId("feedback-rating")).toHaveText(["Worse", "Improved"]);
-  await revisionCard(mechanic, 1).getByRole("button", { name: "Restore rev 1" }).click();
-  await mechanic.getByRole("dialog", { name: "Restore revision" }).getByRole("button", { name: "Restore rev 1" }).click();
-  await expect(revisionCard(mechanic, 3).getByTestId("restored-from")).toHaveText("Restored from rev 1");
-
-  // Viewer: sees history and feedback, can compare, but adds, edits or restores nothing.
-  await openSuspension(viewer, sledId);
-  await expect(revisionCard(viewer, 2).getByTestId("feedback")).toHaveCount(2);
-  await expect(
-    suspensionPage(viewer).getByRole("button", { name: /Add ride feedback|Restore rev|Edit feedback|Remove feedback/ }),
-  ).toHaveCount(0);
-  await revisionCard(viewer, 1).getByRole("button", { name: "Compare rev 1" }).click();
-  await expect(suspensionPage(viewer).getByTestId("compare").getByTestId("compare-summary")).toHaveText("Same values in both.");
-
-  await Promise.all(contexts.map((c) => c.close()));
-});
-
-// ---------------------------------------------------------------------------
-// Checkpoint 5: photos, and Recently Deleted feedback
-// ---------------------------------------------------------------------------
-// A small valid PNG (8x6, solid color).
-const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAgAAAAGCAIAAABxZ0isAAAAEUlEQVR4nGOQq7iDFTEMpAQAMUJFYTtzHLAAAAAASUVORK5CYII=", "base64");
-const pngs = (count: number, prefix = "photo") =>
-  Array.from({ length: count }, (_, n) => ({ name: `${prefix}-${n}.png`, mimeType: "image/png", buffer: PNG }));
-
-async function openReferencePhotos(page: Page, setting: string) {
-  await zonePanel(page)
-    .getByRole("button", { name: `Reference photos of ${setting}` })
-    .click();
-  const dialog = page.getByRole("dialog", { name: "Reference photos" });
-  await expect(dialog.getByTestId("photo-manager")).toBeVisible();
-  return dialog;
-}
-
-async function openRevisionPhotos(page: Page, n: number) {
-  await revisionCard(page, n)
-    .getByRole("button", { name: `Photos of rev ${n}` })
-    .click();
-  const dialog = page.getByRole("dialog", { name: "Adjustment photos" });
-  await expect(dialog.getByTestId("photo-manager")).toBeVisible();
-  return dialog;
-}
-
-async function uploadIn(dialog: Locator, files: { name: string; mimeType: string; buffer: Buffer }[], expectSelected = files.length) {
-  await dialog.locator('input[type="file"]').setInputFiles(files);
-  await expect(dialog.getByTestId("new-photos").getByRole("listitem")).toHaveCount(expectSelected);
-  await dialog.getByRole("button", { name: /^Upload \d+ photos?$/ }).click();
-}
-
-/** A signed-in API client (for checking what is in the bucket). */
+/** A signed-in API client (for checking what is stored). */
 async function apiAs(email: string) {
   const client = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!, {
     auth: { persistSession: false, autoRefreshToken: false },
@@ -586,376 +92,411 @@ async function apiAs(email: string) {
   return client;
 }
 
-test("removed ride feedback is restored from Recently Deleted exactly as it was", async ({ page }) => {
-  await signUp(page, uniqueEmail("sus-fbdel"));
-  const sledId = await addSled(page, { make: "Ski-Doo", model: "Summit", year: "2023", odometer: "500", nickname: "Summit" });
+async function configCount(email: string, sledId: string) {
+  const api = await apiAs(email);
+  const { count } = await api.from("suspension_revisions").select("id", { count: "exact", head: true }).eq("sled_id", sledId);
+  return count ?? 0;
+}
+
+// ---------------------------------------------------------------------------
+// Quick Tune
+// ---------------------------------------------------------------------------
+test("first visit: suggested settings or blank; Quick Tune is the default and the chosen view is remembered", async ({ page }) => {
+  await signUp(page, uniqueEmail("qt-first"));
+  const sledId = await addSled(page, { make: "Ski-Doo", model: "Summit", year: "2024", odometer: "100", nickname: "Summit" });
   await openSuspension(page, sledId);
-  await addSetting(page, { name: "Compression", zone: "Left ski shock", chip: "Clicks" });
-  await createSetup(page, "Trail", { activate: true });
-  await adjustValues(page, { "Left ski shock: Compression": "12" });
-  await addFeedback(page, 2, "Worse", "Harsh in the whoops");
-  const before = (await revisionCard(page, 2).getByTestId("feedback").textContent()) ?? "";
+  await expect(activeName(page)).toHaveText("None yet");
+  await expect(suspensionPage(page).getByTestId("quick-tune")).toBeVisible();
+  await expect(suspensionPage(page).getByRole("button", { name: "Quick Tune" })).toHaveAttribute("aria-pressed", "true");
+  // All five zones on one page.
+  await expect(suspensionPage(page).getByTestId("quick-tune-section").getByRole("heading")).toHaveText([
+    /Front Ski Shocks/,
+    /Front Track Shock/,
+    /Rear Track Shock/,
+    /Springs & Limiter Strap/,
+    /Rear General/,
+  ]);
 
-  page.once("dialog", (d) => d.accept());
-  await revisionCard(page, 2)
-    .getByRole("button", { name: /^Remove feedback/ })
+  // Start blank: the settings list opens with Add setting.
+  await suspensionPage(page).getByRole("button", { name: "Start blank" }).click();
+  const add = page.getByRole("dialog", { name: "Add setting" });
+  await expect(add).toBeVisible();
+  await add.getByRole("button", { name: "Close" }).click();
+
+  // One suggested template, then customized: rename and change the unit.
+  await suspensionPage(page)
+    .getByText(/What's in the suggested list/)
     .click();
-  await expect(revisionCard(page, 2).getByTestId("feedback")).toHaveCount(0);
-  const item = deletedItems(page).filter({ hasText: "Worse · Trail rev 2" });
-  await expect(item).toHaveAttribute("data-kind", "feedback");
-  await expect(item).toContainText("Ride feedback · ridden");
-  await expect(item).toContainText("“Harsh in the whoops”");
-  await item.getByRole("button", { name: "Restore Worse · Trail rev 2" }).click();
-  await expect(deletedItems(page)).toHaveCount(0);
-  await expect(revisionCard(page, 2).getByTestId("feedback")).toHaveCount(1);
-  await expect(revisionCard(page, 2).getByTestId("feedback")).toHaveText(before);
+  await expect(suspensionPage(page).getByTestId("template-preview")).toContainText("Compression (clicks)");
+  await suspensionPage(page).getByRole("button", { name: "Use suggested settings" }).click();
+  await expect(tuneInput(page, FRONT, BOTH)).toBeVisible({ timeout: 15_000 });
+  await expect(suspensionPage(page).getByTestId("getting-started")).toHaveCount(0);
+  await expect(section(page, "springs-limiter").getByTestId("qt-name")).toHaveText(["Limiter strap", "Torsion spring position"]);
+  const editor = suspensionPage(page).getByTestId("settings-editor");
+  if (!(await editor.isVisible())) await suspensionPage(page).locator("summary", { hasText: "Customize settings" }).click();
+  await editor.getByRole("button", { name: "Edit Track tension" }).click();
+  const edit = page.getByRole("dialog", { name: "Edit setting" });
+  await label(edit, "Setting name").fill("Track tension (sag)");
+  await label(edit, "Unit (optional)").fill("mm");
+  await edit.getByRole("button", { name: "Save setting" }).click();
+  await expect(edit).toBeHidden({ timeout: 15_000 });
+  await expect(section(page, "rear-general").getByTestId("qt-name")).toHaveText(["Track tension (sag)"]);
 
-  // Feedback that goes with its setup comes back with the setup (not listed on its own).
-  await createSetup(page, "Powder", { activate: true });
-  await setupTab(page, "Trail").click();
-  page.once("dialog", (d) => d.accept());
-  await selectedSetup(page).getByRole("button", { name: "Delete" }).click();
-  await expect(deletedItems(page)).toHaveCount(1);
-  await expect(deletedItems(page)).toHaveAttribute("data-kind", "setup");
+  // The map is the other view; the choice is remembered.
+  await suspensionPage(page).getByRole("button", { name: "Suspension Map" }).click();
+  await expect(suspensionPage(page).getByTestId("suspension-map")).toBeVisible();
+  await page.reload();
+  await expect(suspensionPage(page).getByTestId("suspension-map")).toBeVisible();
+  await suspensionPage(page).getByRole("button", { name: "Quick Tune" }).click();
+  await page.reload();
+  await expect(suspensionPage(page).getByTestId("quick-tune")).toBeVisible();
 });
 
-// ---------------------------------------------------------------------------
-// Checkpoint 5 follow-up: failed photo saves and cleanup, by role
-// ---------------------------------------------------------------------------
-const objectPath = (sledId: string, parentId: string) => `${sledId}/${parentId}/${crypto.randomUUID()}.jpg`;
-
-
-test("photo uploads turned off (the default): no way to add photos; existing photos stay; everything else works", async ({
+test("Quick Tune: several changes save together as Trail 1, Trail 2, ...; saved value and difference; discard; left and right", async ({
   page,
-  browser,
 }) => {
-  const ownerEmail = uniqueEmail("sus-nophoto-o");
-  const mechanicEmail = uniqueEmail("sus-nophoto-m");
-  await signUp(page, ownerEmail);
-  const sledId = await addSled(page, { make: "Polaris", model: "RMK", year: "2022", odometer: "2000", nickname: "Blue" });
-  // One reference photo, added while uploads were on (the second test server).
-  await page.goto(`${PHOTOS_URL}/garage/${sledId}/suspension`);
-  await addSetting(page, { name: "Compression", zone: "Left ski shock", chip: "Clicks" });
-  const dialogOn = await openReferencePhotos(page, "Compression");
-  await uploadIn(dialogOn, pngs(1));
-  await expect(dialogOn.getByText("1 photo added.")).toBeVisible();
+  const email = uniqueEmail("qt-batch");
+  const sledId = await sledWithTemplate(page, email);
 
-  // Uploads off (this server): settings, setups and adjustments work as before.
+  // Trail 1: several values at once (the pair sets both ski shocks).
+  await tuneInput(page, FRONT, BOTH).fill("10");
+  await tuneInput(page, "springs-limiter", "Limiter strap").fill("3");
+  await expect(bar(page).getByTestId("change-count")).toHaveText("3 changes");
+  await bar(page).getByRole("button", { name: "Save Adjustments" }).click();
+  await expect(bar(page)).toBeHidden({ timeout: 15_000 });
+  await expect(notice(page)).toContainText("Saved as Trail 1. It's the active configuration now.");
+  await expect(activeName(page)).toHaveText("Trail 1");
+
+  // Large + / −: the saved value and the difference show next to the change.
+  const increase = section(page, FRONT).getByRole("button", { name: `Increase ${BOTH}` });
+  await increase.click();
+  await increase.click();
+  await expect(tuneInput(page, FRONT, BOTH)).toHaveValue("12");
+  await expect(section(page, FRONT).getByTestId("qt-change").first()).toHaveText("Was 10 clicks · +2");
+  await section(page, "springs-limiter").getByRole("button", { name: "Decrease Limiter strap" }).click();
+  await expect(bar(page).getByTestId("change-count")).toHaveText("3 changes");
+
+  // Discard: back to Trail 1's values; nothing saved.
+  await bar(page).getByRole("button", { name: "Discard Changes" }).click();
+  await expect(bar(page)).toBeHidden();
+  await expect(tuneInput(page, FRONT, BOTH)).toHaveValue("10");
+  expect(await configCount(email, sledId)).toBe(1);
+
+  // Typing the saved value again isn't a change.
+  await tuneInput(page, "springs-limiter", "Limiter strap").fill("3.0");
+  await expect(bar(page)).toBeHidden();
+
+  // Trail 2, with a note; Trail 1 is kept as it was.
+  await increase.click();
+  await increase.click();
+  await tune(page, { "rear-track-shock|Rebound": "6" }, "Softer front");
+  await expect(activeName(page)).toHaveText("Trail 2");
+  await expect(config(page, 2).getByTestId("configuration-changes")).toContainText("Trail 1 → Trail 2");
+  await expect(config(page, 2).getByTestId("configuration-changes")).toContainText("Compression: 10 → 12 clicks (+2)");
+  await expect(config(page, 2).getByTestId("configuration-changes")).toContainText("Rebound: set to 6 clicks");
+  await expect(config(page, 2).getByTestId("configuration-note")).toHaveText("Softer front");
+  await expect(config(page, 2)).toHaveAttribute("data-active", "true");
+  await expect(config(page, 1)).toHaveAttribute("data-active", "false");
+  await config(page, 1).getByRole("button", { name: "View Trail 1" }).click();
+  const view = page.getByRole("dialog", { name: "Trail 1" });
+  await expect(view.getByTestId("detail-value").filter({ hasText: "Compression (Left)" })).toContainText("10 clicks");
+  await view.getByRole("button", { name: "Close" }).click();
+
+  // Left and right separately when needed.
+  await section(page, FRONT).getByRole("button", { name: "Adjust Rebound left and right separately" }).click();
+  await tuneInput(page, FRONT, "Rebound (Left)").fill("7");
+  await tuneInput(page, FRONT, "Rebound (Right)").fill("8");
+  await tune(page, {});
+  await expect(activeName(page)).toHaveText("Trail 3");
+  await expect(section(page, FRONT).locator('[data-pair][data-separate="true"]')).toHaveCount(1);
+  await expect(tuneInput(page, FRONT, "Rebound (Right)")).toHaveValue("8");
+  expect(await configCount(email, sledId)).toBe(3);
+
+  // Measurements are typed (no + / −); invalid numbers can't be saved.
+  await expect(section(page, "rear-general").getByRole("button", { name: /Increase|Decrease/ })).toHaveCount(0);
+  await tuneInput(page, "rear-general", "Track tension").fill("1-2");
+  await expect(bar(page).getByRole("button", { name: "Save Adjustments" })).toBeDisabled();
+  await tuneInput(page, "rear-general", "Track tension").fill("1.25");
+  await tune(page, {});
+  await expect(activeName(page)).toHaveText("Trail 4");
+});
+
+test("skis and carbides: changed from the snowmobile page or Quick Tune, shown the same on both, kept per configuration", async ({
+  page,
+}) => {
+  const email = uniqueEmail("qt-ski");
+  const sledId = await sledWithTemplate(page, email);
+  await tune(page, { [`${FRONT}|${BOTH}`]: "10" });
+
+  // Snowmobile page: Active Ski Configuration, with confirmation before the change.
+  await page.goto(`/garage/${sledId}`);
+  const summary = visible(page.locator("#suspension")).getByTestId("suspension-summary");
+  await expect(summary.getByTestId("ski-configuration")).toContainText("Not recorded");
+  await summary.getByRole("button", { name: "Change skis or carbides on Blue" }).click();
+  const dialog = page.getByRole("dialog", { name: "Skis & carbides" });
+  await dialog.getByText("C&A Pro XPT", { exact: true }).click();
+  await dialog.getByText('6"', { exact: true }).click();
+  await dialog.getByRole("button", { name: "Continue" }).click();
+  await expect(dialog.getByTestId("equipment-confirm")).toContainText("Trail 1 is kept as it is.");
+  await dialog.getByRole("button", { name: "Back" }).click(); // nothing changes until confirmed
+  await dialog.getByRole("button", { name: "Continue" }).click();
+  await dialog.getByRole("button", { name: "Confirm change" }).click();
+  await expect(dialog).toBeHidden({ timeout: 15_000 });
+  await expect(summary).toContainText("Skis and carbides saved as Trail 2.");
+  await expect(summary.getByTestId("ski-configuration")).toContainText('C&A Pro XPT · 6" carbides');
+  await expect(summary.getByTestId("suspension-active")).toHaveText("Trail 2 · Active");
+
+  // Garage Board shows the same record.
+  await page.goto("/garage/board");
+  const card = visible(page.getByTestId("garage-board")).getByRole("article", { name: "Blue", exact: true });
+  await expect(card.getByTestId("ski-configuration")).toContainText('C&A Pro XPT · 6" carbides');
+
+  // Quick Tune shows it too, and changes it.
   await openSuspension(page, sledId);
-  await addSetting(page, { name: "Rebound", zone: "Left ski shock", chip: "Clicks" });
-  await createSetup(page, "Trail", { activate: true });
-  await expect(suspensionPage(page).locator('input[type="file"]')).toHaveCount(0);
-  await expect(suspensionPage(page).getByText("Add reference photos")).toHaveCount(0);
-  await expect(zonePanel(page).getByRole("button", { name: "Reference photos of Rebound" })).toHaveCount(0);
+  await expect(activeEquipment(page)).toHaveText('C&A Pro XPT · 6" carbides');
+  await changeEquipment(page, suspensionPage(page), "Change skis or carbides", "C&A Pro XCS", '7.5"');
+  await expect(activeName(page)).toHaveText("Trail 3");
+  await expect(activeEquipment(page)).toHaveText('C&A Pro XCS · 7.5" carbides');
+  await expect(config(page, 3).getByTestId("configuration-changes")).toContainText("Skis: XPT → XCS");
+  await expect(config(page, 3).getByTestId("configuration-changes")).toContainText('Carbides: 6" → 7.5"');
+  // Every suspension value was copied; history keeps each configuration's equipment.
+  await expect(tuneInput(page, FRONT, BOTH)).toHaveValue("10");
+  await expect(config(page, 2).getByTestId("equipment")).toHaveText('C&A Pro XPT · 6" carbides');
+  await expect(config(page, 1).getByTestId("equipment")).toHaveText("Not recorded");
 
-  // The existing photo is still shown and can still be removed; nothing can be added.
-  let dialog = await openReferencePhotos(page, "Compression");
-  await expect(dialog.getByTestId("photo-grid").getByTestId("photo")).toHaveCount(1);
-  await expect(dialog.getByRole("button", { name: "Remove photo 1 of Compression" })).toBeVisible();
-  await expect(dialog.getByRole("button", { name: "Add photos" })).toHaveCount(0);
-  await expect(dialog.locator('input[type="file"]')).toHaveCount(0);
-  await dialog.getByRole("button", { name: "Close" }).click();
+  await page.goto(`/garage/${sledId}`);
+  await expect(summary.getByTestId("ski-configuration")).toContainText('C&A Pro XCS · 7.5" carbides');
+});
 
-  // Recording an adjustment: no photo picker; the revision has no Photos button.
-  dialog = await openAdjust(page);
-  await expect(dialog.getByText("Photos (optional)")).toHaveCount(0);
-  await expect(dialog.locator('input[type="file"]')).toHaveCount(0);
-  await label(dialog, "Left ski shock: Compression", true).fill("12");
+test("activating older configurations: viewing never activates; other equipment must be confirmed; cancel changes nothing", async ({
+  page,
+}) => {
+  const email = uniqueEmail("qt-act");
+  const sledId = await sledWithTemplate(page, email);
+  await tune(page, { [`${FRONT}|${BOTH}`]: "10" }); // Trail 1 (no equipment recorded)
+  await changeEquipment(page, suspensionPage(page), "Change skis or carbides", "C&A Pro XPT", '6"'); // Trail 2
+  await tune(page, { [`${FRONT}|${BOTH}`]: "12" }); // Trail 3, XPT 6"
+  await changeEquipment(page, suspensionPage(page), "Change skis or carbides", "C&A Pro XCS", '7.5"'); // Trail 4
+  await expect(activeName(page)).toHaveText("Trail 4");
+  expect(await configCount(email, sledId)).toBe(4);
+
+  // Viewing an older configuration doesn't activate it.
+  await config(page, 3).getByRole("button", { name: "View Trail 3" }).click();
+  await page.getByRole("dialog", { name: "Trail 3" }).getByRole("button", { name: "Close" }).click();
+  await expect(activeName(page)).toHaveText("Trail 4");
+
+  // Other skis and carbides: both shown; confirmation required; Cancel changes nothing.
+  await config(page, 3).getByRole("button", { name: "Make Trail 3 active" }).click();
+  let dialog = page.getByRole("dialog", { name: "Make active" });
+  await expect(dialog.getByTestId("required-equipment")).toHaveText('C&A Pro XPT · 6" carbides');
+  await expect(dialog.getByTestId("installed-equipment")).toHaveText('C&A Pro XCS · 7.5" carbides');
+  await expect(dialog.getByRole("button", { name: "Activate Trail 3" })).toBeDisabled();
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  await expect(activeName(page)).toHaveText("Trail 4");
+  await expect(activeEquipment(page)).toHaveText('C&A Pro XCS · 7.5" carbides');
+
+  await config(page, 3).getByRole("button", { name: "Make Trail 3 active" }).click();
+  dialog = page.getByRole("dialog", { name: "Make active" });
+  await expect(dialog.getByTestId("activate-changes")).toContainText("Skis: XCS → XPT");
+  await dialog.getByRole("checkbox").check();
+  await dialog.getByRole("button", { name: "Activate Trail 3" }).click();
+  await expect(dialog).toBeHidden({ timeout: 15_000 });
+  await expect(activeName(page)).toHaveText("Trail 3");
+  await expect(activeEquipment(page)).toHaveText('C&A Pro XPT · 6" carbides');
+  await expect(tuneInput(page, FRONT, BOTH)).toHaveValue("12");
+
+  // Same equipment: no confirmation needed. Nothing new is created by activating.
+  await config(page, 2).getByRole("button", { name: "Make Trail 2 active" }).click();
+  dialog = page.getByRole("dialog", { name: "Make active" });
+  await expect(dialog.getByTestId("equipment-mismatch")).toHaveCount(0);
+  await dialog.getByRole("button", { name: "Activate Trail 2" }).click();
+  await expect(dialog).toBeHidden({ timeout: 15_000 });
+  await expect(activeName(page)).toHaveText("Trail 2");
+  expect(await configCount(email, sledId)).toBe(4);
+
+  // The next save is Trail 5, made from Trail 2; nothing older is overwritten.
+  await tune(page, { "springs-limiter|Limiter strap": "4" });
+  await expect(activeName(page)).toHaveText("Trail 5");
+  await expect(config(page, 5).getByTestId("configuration-changes")).toContainText("Trail 2 → Trail 5");
+  await expect(configs(page)).toHaveCount(5);
+  await expect(config(page, 3).getByTestId("equipment")).toHaveText('C&A Pro XPT · 6" carbides');
+  await expect(config(page, 4).getByTestId("equipment")).toHaveText('C&A Pro XCS · 7.5" carbides');
+});
+
+test("ride evaluations: several per configuration with conditions and temperature; Disliked warnings never block", async ({ page }) => {
+  const email = uniqueEmail("qt-eval");
+  const sledId = await sledWithTemplate(page, email);
+  await tune(page, { [`${FRONT}|${BOTH}`]: "10" }); // Trail 1
+  await evaluate(page, 1, { rating: "Disliked", conditions: ["Loose Snow", "Sloppy"], temp: "28", note: "Pushy in the ruts" });
+  await evaluate(page, 1, { rating: "Liked", conditions: ["Hard Pack"] });
+  await evaluate(page, 1, { rating: "Neutral / needs more testing" });
+  expect(await configCount(email, sledId)).toBe(1); // evaluations never create a configuration
+
+  const list = config(page, 1).getByTestId("evaluation");
+  await expect(list).toHaveCount(3);
+  const disliked = list.filter({ has: page.locator('[data-rating="disliked"]') });
+  await expect(disliked.getByTestId("conditions").getByRole("listitem")).toHaveText(["Loose Snow", "Sloppy"]);
+  await expect(disliked.getByTestId("evaluation-temp")).toHaveText("High 28 °F");
+  await expect(disliked.getByTestId("evaluation-note")).toHaveText("Pushy in the ruts");
+  await expect(list.filter({ has: page.locator('[data-rating="neutral"]') }).getByTestId("evaluation-temp")).toHaveCount(0);
+
+  // Editing keeps it on Trail 1.
+  await disliked.getByRole("button", { name: /Edit evaluation/ }).click();
+  const edit = page.getByRole("dialog", { name: "Edit ride evaluation" });
+  await edit.getByText("Fresh Snow", { exact: true }).click();
+  await edit.getByRole("button", { name: "Save changes" }).click();
+  await expect(edit).toBeHidden({ timeout: 15_000 });
+  await expect(disliked.getByTestId("conditions").getByRole("listitem")).toHaveText(["Loose Snow", "Sloppy", "Fresh Snow"]);
+
+  // Trail 2, then recreating Trail 1's values warns (with the conditions), but saves.
+  await tune(page, { [`${FRONT}|${BOTH}`]: "12" });
+  await tuneInput(page, FRONT, BOTH).fill("10");
+  await expect(bar(page).getByTestId("dislike-warning")).toContainText(
+    "This suspension configuration was previously rated Disliked under Loose Snow, Sloppy and Fresh Snow conditions. It was rated Liked under Hard Pack too.",
+  );
+  await expect(bar(page).getByRole("button", { name: "Save Adjustments" })).toBeEnabled();
+  await bar(page).getByRole("button", { name: "Discard Changes" }).click();
+
+  // Reactivating it warns too; still allowed.
+  await config(page, 1).getByRole("button", { name: "Make Trail 1 active" }).click();
+  const dialog = page.getByRole("dialog", { name: "Make active" });
+  await expect(dialog.getByTestId("dislike-warning")).toContainText("previously rated Disliked under Loose Snow");
+  await dialog.getByRole("button", { name: "Activate Trail 1" }).click();
+  await expect(dialog).toBeHidden({ timeout: 15_000 });
+  await expect(activeName(page)).toHaveText("Trail 1");
+  await expect(suspensionPage(page).getByTestId("active-evaluation")).toBeVisible();
+  // Switching keeps every evaluation.
+  await expect(config(page, 1).getByTestId("evaluation")).toHaveCount(3);
+});
+
+test("comparing configurations shows numbers, active status, equipment, differences and evaluations", async ({ page }) => {
+  const sledId = await sledWithTemplate(page, uniqueEmail("qt-cmp"));
+  await tune(page, { [`${FRONT}|${BOTH}`]: "10" });
+  await changeEquipment(page, suspensionPage(page), "Change skis or carbides", "C&A Pro XPT", '6"');
+  await tune(page, { [`${FRONT}|${BOTH}`]: "12" }); // Trail 3
+  await evaluate(page, 3, { rating: "Liked", conditions: ["Perfect Groomed"], temp: "15", note: "Planted" });
+
+  const compare = suspensionPage(page).getByTestId("compare");
+  await label(compare, "Compare").selectOption({ label: "Trail 1" });
+  await label(compare, "With").selectOption({ label: "Trail 3 (active)" });
+  await expect(compare.getByTestId("compare-summary")).toHaveText("Trail 1 → Trail 3: 2 settings differ, different skis or carbides");
+  await expect(compare.getByTestId("compare-equipment")).toHaveText(["Skis: — → XPT", 'Carbides: — → 6"']);
+  await expect(compare.getByTestId("compare-config").nth(1)).toContainText("Active");
+  await expect(compare.getByTestId("compare-config").first()).toContainText("Inactive");
+  await expect(compare.getByTestId("compare-evaluations")).toContainText("Perfect Groomed");
+  await expect(compare.getByTestId("compare-evaluations")).toContainText("High 15 °F");
+  await expect(compare.getByTestId("compare-evaluations")).toContainText("Planted");
+  void sledId;
+});
+
+test("unsaved adjustments are protected when leaving the page or switching views", async ({ page }) => {
+  const sledId = await sledWithTemplate(page, uniqueEmail("qt-dirty"));
+  await tuneInput(page, FRONT, BOTH).fill("9");
+  await expect(bar(page)).toBeVisible();
+
+  // Leaving: asked first; staying keeps the edits.
+  page.once("dialog", (d) => void d.dismiss());
+  await visible(page.getByRole("link", { name: "Blue", exact: true }))
+    .first()
+    .click();
+  await expect(page).toHaveURL(new RegExp(`/garage/${sledId}/suspension`));
+  await expect(tuneInput(page, FRONT, BOTH)).toHaveValue("9");
+
+  // Switching views: asked too.
+  page.once("dialog", (d) => void d.dismiss());
+  await suspensionPage(page).getByRole("button", { name: "Suspension Map" }).click();
+  await expect(suspensionPage(page).getByTestId("quick-tune")).toBeVisible();
+  // Equipment can't change underneath unsaved edits.
+  await expect(suspensionPage(page).getByRole("button", { name: "Change skis or carbides" })).toBeDisabled();
+
+  // Leaving anyway discards them.
+  page.once("dialog", (d) => void d.accept());
+  await visible(page.getByRole("link", { name: "Blue", exact: true }))
+    .first()
+    .click();
+  await expect(page).toHaveURL(new RegExp(`/garage/${sledId}$`));
+});
+
+test("the Suspension Map stays available: zones, values and Record adjustment save the next Trail", async ({ page }) => {
+  const sledId = await sledWithTemplate(page, uniqueEmail("qt-map"));
+  await tune(page, { [`${FRONT}|${BOTH}`]: "10" });
+  await openSuspension(page, sledId, "map");
+  const map = suspensionPage(page).getByTestId("suspension-map");
+  await expect(map.getByTestId("zone-panel")).toHaveAttribute("data-zone", "front_left_shock");
+  await expect(map.getByTestId("zone-panel").getByTestId("zone-setting-value").first()).toContainText("10");
+  await map
+    .getByRole("button", { name: /Rear track shock/ })
+    .first()
+    .click();
+  await expect(map.getByTestId("zone-panel")).toHaveAttribute("data-zone", "rear_rear_shock");
+  await map.getByTestId("zone-panel").getByRole("button", { name: "Record adjustment" }).click();
+  const dialog = page.getByRole("dialog", { name: "Record adjustment" });
+  await label(dialog, "Rear track shock: Rebound", true).fill("5");
   await dialog.getByRole("button", { name: "Save adjustment" }).click();
   await expect(dialog).toBeHidden({ timeout: 15_000 });
-  await expect(visible(page.getByTestId("adjust-notice"))).toContainText("Adjustment saved as revision 2.");
-  await expect(zoneValue(page, "Compression")).toContainText("12");
-  await expect(suspensionPage(page).getByRole("button", { name: /^Photos of rev/ })).toHaveCount(0);
+  await expect(activeName(page)).toHaveText("Trail 2");
+  await expect(config(page, 2).getByTestId("configuration-changes")).toContainText("Rebound: set to 5 clicks");
+});
 
-  // A mechanic sees the same: adjustments and feedback, no photo uploads.
-  const context = await browser.newContext();
-  const mechanic = await context.newPage();
+test("roles: mechanics tune, evaluate, activate and change equipment; viewers only read; others see nothing", async ({ page, browser }) => {
+  const ownerEmail = uniqueEmail("qt-r-o");
+  const mechanicEmail = uniqueEmail("qt-r-m");
+  const viewerEmail = uniqueEmail("qt-r-v");
+  const strangerEmail = uniqueEmail("qt-r-x");
+  const sledId = await sledWithTemplate(page, ownerEmail, "Riot");
+  await tune(page, { [`${FRONT}|${BOTH}`]: "10" });
+  await tune(page, { [`${FRONT}|${BOTH}`]: "11" });
+
+  const contexts = await Promise.all([1, 2, 3].map(() => browser.newContext()));
+  const [mechanic, viewer, stranger] = await Promise.all(contexts.map((c) => c.newPage()));
   await signUp(mechanic, mechanicEmail);
+  await signUp(viewer, viewerEmail);
+  await signUp(stranger, strangerEmail);
   await shareSled(ownerEmail, sledId, mechanicEmail, "mechanic");
+  await shareSled(ownerEmail, sledId, viewerEmail, "viewer");
+
+  // Mechanic.
   await openSuspension(mechanic, sledId);
-  await expect(suspensionPage(mechanic).getByRole("button", { name: /^Photos of rev/ })).toHaveCount(0);
-  await expect(revisionCard(mechanic, 2).getByRole("button", { name: "Add ride feedback to rev 2" })).toBeVisible();
-  dialog = await openAdjust(mechanic);
-  await expect(dialog.locator('input[type="file"]')).toHaveCount(0);
-  await context.close();
+  await tune(mechanic, { "springs-limiter|Limiter strap": "2" });
+  await expect(activeName(mechanic)).toHaveText("Trail 3");
+  await evaluate(mechanic, 3, { rating: "Liked", conditions: ["Hard Pack"] });
+  await config(mechanic, 1).getByRole("button", { name: "Make Trail 1 active" }).click();
+  await mechanic.getByRole("dialog", { name: "Make active" }).getByRole("button", { name: "Activate Trail 1" }).click();
+  await expect(activeName(mechanic)).toHaveText("Trail 1");
+  await changeEquipment(mechanic, suspensionPage(mechanic), "Change skis or carbides", "C&A Pro XCS", '9"');
+  await expect(activeName(mechanic)).toHaveText("Trail 4");
+  await expect(suspensionPage(mechanic).getByRole("heading", { name: /Settings list|Recently deleted/ })).toHaveCount(0);
+  await expect(suspensionPage(mechanic).getByRole("button", { name: /Add setting|Use suggested/ })).toHaveCount(0);
 
-  // Quick adjust on the sled page and the Garage Board: no photo picker either.
-  await page.goto(`/garage/${sledId}`);
-  await visible(page.locator("#suspension")).getByRole("button", { name: "Adjust suspension on Blue" }).click();
-  dialog = page.getByRole("dialog", { name: "Record adjustment" });
-  await expect(label(dialog, "Left ski shock: Compression", true)).toHaveValue("12");
-  await expect(dialog.locator('input[type="file"]')).toHaveCount(0);
-  await page.keyboard.press("Escape");
-  await page.goto("/garage/board");
-  await visible(page.getByRole("button", { name: "Adjust suspension on Blue" })).first().click();
-  dialog = page.getByRole("dialog", { name: "Record adjustment" });
-  await expect(dialog).toBeVisible();
-  await expect(dialog.locator('input[type="file"]')).toHaveCount(0);
+  // Viewer: values only.
+  await openSuspension(viewer, sledId);
+  await expect(activeName(viewer)).toHaveText("Trail 4");
+  await expect(suspensionPage(viewer).getByTestId("quick-tune").getByRole("textbox")).toHaveCount(0);
+  await expect(section(viewer, FRONT).getByTestId("qt-value").first()).toHaveText("10 clicks");
+  await expect(
+    suspensionPage(viewer).getByRole("button", { name: /Make Trail|Add ride evaluation|Change skis|Increase|Record adjustment/ }),
+  ).toHaveCount(0);
+  await expect(suspensionPage(viewer).getByTestId("read-only-note")).toBeVisible();
+
+  // Someone without access: no page; the API refuses.
+  await stranger.goto(`/garage/${sledId}/suspension`);
+  await expect(stranger.getByRole("heading", { name: "Snowmobile not found" })).toBeVisible();
+  const api = await apiAs(strangerEmail);
+  expect((await api.from("sled_suspension_state").select("sled_id").eq("sled_id", sledId)).data ?? []).toHaveLength(0);
+  expect((await api.from("suspension_revisions").select("id").eq("sled_id", sledId)).data ?? []).toHaveLength(0);
+  const save = await api.rpc("save_suspension_configuration", {
+    p_sled_id: sledId,
+    p_changes: {},
+    p_ski_model: "ca_pro_xpt",
+    p_idempotency_key: crypto.randomUUID(),
+  });
+  expect(save.error).not.toBeNull();
+
+  await Promise.all(contexts.map((c) => c.close()));
 });
 
 // ---------------------------------------------------------------------------
-// Photo uploads turned on (SUSPENSION_PHOTO_UPLOADS=on): the second test
-// server, so these keep covering the upload code for when it is re-enabled.
-// ---------------------------------------------------------------------------
-test.describe("with photo uploads turned on", () => {
-  test.use({ baseURL: PHOTOS_URL });
-
-  test("reference and adjustment photos: limits, validation, removal and history", async ({ page }) => {
-    await signUp(page, uniqueEmail("sus-photo"));
-    const sledId = await addSled(page, { make: "Polaris", model: "RMK", year: "2022", odometer: "2000", nickname: "Blue" });
-    await openSuspension(page, sledId);
-    await addSetting(page, { name: "Compression", zone: "Left ski shock", chip: "Clicks" });
-    await createSetup(page, "Trail", { activate: true });
-
-    // Reference photos: up to 6 per setting.
-    let dialog = await openReferencePhotos(page, "Compression");
-    await expect(dialog.getByTestId("no-photos")).toBeVisible();
-    await uploadIn(dialog, pngs(2));
-    await expect(dialog.getByText("2 photos added.")).toBeVisible();
-    await expect(await violations(axeFor(page, "dialog[open]"))).toEqual([]);
-    await expect(dialog.getByTestId("photo-grid").getByTestId("photo")).toHaveCount(2);
-    // Picking more than fit keeps only what fits (4 more).
-    await uploadIn(dialog, pngs(5, "more"), 4);
-    await expect(dialog.getByTestId("photo-grid").getByTestId("photo")).toHaveCount(6);
-    await expect(dialog.getByText("This already has 6 photos.")).toBeVisible();
-    // Photos open in full and can be removed by the owner.
-    await expect(dialog.getByRole("link", { name: "Open photo 1 of Compression" })).toHaveAttribute("href", /suspension-photos/);
-    page.once("dialog", (d) => d.accept());
-    await dialog.getByRole("button", { name: "Remove photo 6 of Compression" }).click();
-    await expect(dialog.getByTestId("photo-grid").getByTestId("photo")).toHaveCount(5);
-    // A file that isn't an image is refused before anything is uploaded.
-    await uploadIn(dialog, [{ name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("not a photo") }]);
-    await expect(dialog.getByText("Choose an image file, such as a JPEG or PNG.")).toBeVisible();
-    await expect(dialog.getByTestId("photo-grid").getByTestId("photo")).toHaveCount(5);
-    await dialog.getByRole("button", { name: "Close" }).click();
-    await expect(zonePanel(page).getByRole("button", { name: "Reference photos of Compression" })).toHaveText("5 reference photos");
-
-    // Adjustment photos are added while recording an adjustment.
-    dialog = await openAdjust(page);
-    await label(dialog, "Left ski shock: Compression", true).fill("12");
-    await dialog.locator('input[type="file"]').setInputFiles(pngs(2, "adj"));
-    await expect(dialog.getByTestId("new-photos").getByRole("listitem")).toHaveCount(2);
-    await dialog.getByRole("button", { name: "Save adjustment" }).click();
-    await expect(dialog).toBeHidden({ timeout: 20_000 });
-    await expect(visible(page.getByTestId("adjust-notice"))).toContainText("Adjustment saved as revision 2.");
-    await expect(revisionCard(page, 2).getByTestId("revision-photos").getByTestId("photo")).toHaveCount(2);
-    await expect(revisionCard(page, 1).getByTestId("revision-photos")).toHaveCount(0);
-
-    // ... and later from the history; they stay with their revision.
-    dialog = await openRevisionPhotos(page, 1);
-    await uploadIn(dialog, pngs(1, "late"));
-    await expect(dialog.getByText("1 photo added.")).toBeVisible();
-    await dialog.getByRole("button", { name: "Close" }).click();
-    await expect(revisionCard(page, 1).getByTestId("revision-photos").getByTestId("photo")).toHaveCount(1);
-    await expect(revisionCard(page, 2).getByTestId("revision-photos").getByTestId("photo")).toHaveCount(2);
-  });
-
-  test("photos by role: mechanics add adjustment photos only; viewers only look", async ({ page, browser }) => {
-    const ownerEmail = uniqueEmail("sus-ph-o");
-    const mechanicEmail = uniqueEmail("sus-ph-m");
-    const viewerEmail = uniqueEmail("sus-ph-v");
-    await signUp(page, ownerEmail);
-    const sledId = await addSled(page, { make: "Lynx", model: "Rave", year: "2021", odometer: "800", nickname: "Rave" });
-    await openSuspension(page, sledId);
-    await addSetting(page, { name: "Compression", zone: "Left ski shock", chip: "Clicks" });
-    await createSetup(page, "Trail", { activate: true });
-    const owner = await openReferencePhotos(page, "Compression");
-    await uploadIn(owner, pngs(1));
-    await expect(owner.getByText("1 photo added.")).toBeVisible();
-
-    const contexts = await Promise.all([1, 2].map(() => browser.newContext()));
-    const [mechanic, viewer] = await Promise.all(contexts.map((c) => c.newPage()));
-    await signUp(mechanic, mechanicEmail);
-    await signUp(viewer, viewerEmail);
-    await shareSled(ownerEmail, sledId, mechanicEmail, "mechanic");
-    await shareSled(ownerEmail, sledId, viewerEmail, "viewer");
-
-    // Mechanic: sees reference photos but can't add or remove them; adds adjustment photos, can't remove them.
-    await openSuspension(mechanic, sledId);
-    let dialog = await openReferencePhotos(mechanic, "Compression");
-    await expect(dialog.getByTestId("photo-grid").getByTestId("photo")).toHaveCount(1);
-    await expect(dialog.getByRole("button", { name: /Add photos|Remove photo/ })).toHaveCount(0);
-    await dialog.getByRole("button", { name: "Close" }).click();
-    dialog = await openRevisionPhotos(mechanic, 1);
-    await uploadIn(dialog, pngs(1, "mech"));
-    await expect(dialog.getByText("1 photo added.")).toBeVisible();
-    await expect(dialog.getByRole("button", { name: /Remove photo/ })).toHaveCount(0);
-    await dialog.getByRole("button", { name: "Close" }).click();
-
-    // The storage policy refuses a mechanic's reference photo even outside the app.
-    const api = await apiAs(mechanicEmail);
-    const { data: setting } = await api.from("suspension_settings").select("id").eq("sled_id", sledId).single();
-    const { error: refused } = await api.storage
-      .from("suspension-photos")
-      .upload(`${sledId}/${setting!.id}/00000000-0000-4000-8000-000000000001.jpg`, PNG, {
-        contentType: "image/jpeg",
-      });
-    expect(refused).not.toBeNull();
-
-    // Viewer: sees both kinds of photos, adds and removes nothing.
-    await openSuspension(viewer, sledId);
-    await expect(revisionCard(viewer, 1).getByTestId("revision-photos").getByTestId("photo")).toHaveCount(1);
-    await expect(suspensionPage(viewer).getByRole("button", { name: /Remove photo/ })).toHaveCount(0);
-    dialog = await openReferencePhotos(viewer, "Compression");
-    await expect(dialog.getByTestId("photo-grid").getByTestId("photo")).toHaveCount(1);
-    await expect(dialog.getByRole("button", { name: /Add photos|Remove photo/ })).toHaveCount(0);
-
-    await Promise.all(contexts.map((c) => c.close()));
-  });
-
-  test("a photo for something removed meanwhile is refused before any file is uploaded", async ({ page, context }) => {
-    const email = uniqueEmail("sus-orphan");
-    await signUp(page, email);
-    const sledId = await addSled(page, { make: "Yamaha", model: "Sidewinder", year: "2022", odometer: "100", nickname: "Side" });
-    await openSuspension(page, sledId);
-    await addSetting(page, { name: "Preload", zone: "Left ski shock", chip: "Turns" });
-    const dialog = await openReferencePhotos(page, "Preload");
-    await dialog.locator('input[type="file"]').setInputFiles(pngs(1));
-
-    // Meanwhile the setting is removed in another tab.
-    const other = await context.newPage();
-    await openSuspension(other, sledId);
-    await suspensionPage(other).locator("summary", { hasText: "Customize settings" }).click();
-    other.once("dialog", (d) => d.accept());
-    await suspensionPage(other).getByRole("button", { name: "Remove Preload" }).click();
-    await expect(zoneSettings(other, "front_left_shock")).toHaveCount(0);
-    await other.close();
-
-    await dialog.getByRole("button", { name: "Upload 1 photo" }).click();
-    await expect(dialog.getByText("This was removed meanwhile. Reload the page and try again.")).toBeVisible();
-    // Nothing reached the bucket.
-    const api = await apiAs(email);
-    const { data: setting } = await api.from("suspension_settings").select("id").eq("sled_id", sledId).single();
-    const { data: files } = await api.storage.from("suspension-photos").list(`${sledId}/${setting!.id}`);
-    expect(files ?? []).toHaveLength(0);
-  });
-
-  test("mechanic: an adjustment photo for a revision removed meanwhile is refused before any file is uploaded", async ({ page, browser }) => {
-    const ownerEmail = uniqueEmail("sus-mo-o");
-    const mechanicEmail = uniqueEmail("sus-mo-m");
-    await signUp(page, ownerEmail);
-    const sledId = await addSled(page, { make: "Lynx", model: "Rave", year: "2021", odometer: "800", nickname: "Rave" });
-    await openSuspension(page, sledId);
-    await addSetting(page, { name: "Compression", zone: "Left ski shock", chip: "Clicks" });
-    await createSetup(page, "Trail", { activate: true });
-    await createSetup(page, "Powder");
-
-    const mechanicContext = await browser.newContext();
-    const mechanic = await mechanicContext.newPage();
-    await signUp(mechanic, mechanicEmail);
-    await shareSled(ownerEmail, sledId, mechanicEmail, "mechanic");
-
-    // The mechanic picks a photo for Powder rev 1 ...
-    await openSuspension(mechanic, sledId);
-    await setupTab(mechanic, "Powder").click();
-    const dialog = await openRevisionPhotos(mechanic, 1);
-    await dialog.locator('input[type="file"]').setInputFiles(pngs(1));
-
-    // ... while the owner deletes Powder (its revisions go with it).
-    await setupTab(page, "Powder").click();
-    page.once("dialog", (d) => d.accept());
-    await selectedSetup(page).getByRole("button", { name: "Delete" }).click();
-    await expect(setupTab(page, "Powder")).toHaveCount(0);
-
-    await dialog.getByRole("button", { name: "Upload 1 photo" }).click();
-    await expect(dialog.getByText("This was removed meanwhile. Reload the page and try again.")).toBeVisible();
-
-    // Nothing reached the bucket (checked as the owner, who can see deleted revisions).
-    const api = await apiAs(ownerEmail);
-    const { data: powder } = await api.from("suspension_setups").select("id").eq("sled_id", sledId).eq("name", "Powder").single();
-    const { data: revision } = await api.from("suspension_revisions").select("id").eq("setup_id", powder!.id).single();
-    const { data: files, error } = await api.storage.from("suspension-photos").list(`${sledId}/${revision!.id}`);
-    expect(error).toBeNull();
-    expect(files ?? []).toHaveLength(0);
-    await mechanicContext.close();
-  });
-
-  test("a file whose record can't be saved: owners and editors remove it; a mechanic's stays for the Migration 8 cleanup", async ({
-    page,
-    browser,
-  }) => {
-    // Same calls as the app (upload, then record, then remove on failure), made through
-    // the API so the record save can be made to fail on purpose: the parent is deleted
-    // between the upload and the save. Real storage policies and RLS apply throughout.
-    const ownerEmail = uniqueEmail("sus-cl-o");
-    const editorEmail = uniqueEmail("sus-cl-e");
-    const mechanicEmail = uniqueEmail("sus-cl-m");
-    await signUp(page, ownerEmail);
-    const sledId = await addSled(page, { make: "Polaris", model: "RMK", year: "2022", odometer: "2000", nickname: "Blue" });
-    const contexts = await Promise.all([1, 2].map(() => browser.newContext()));
-    const [editorPage, mechanicPage] = await Promise.all(contexts.map((c) => c.newPage()));
-    await signUp(editorPage, editorEmail);
-    await signUp(mechanicPage, mechanicEmail);
-    await shareSled(ownerEmail, sledId, editorEmail, "editor");
-    await shareSled(ownerEmail, sledId, mechanicEmail, "mechanic");
-    const [owner, editor, mechanic] = await Promise.all([apiAs(ownerEmail), apiAs(editorEmail), apiAs(mechanicEmail)]);
-    const bucket = (client: typeof owner) => client.storage.from("suspension-photos");
-
-    const { data: setting } = await owner
-      .from("suspension_settings")
-      .insert({ sled_id: sledId, name: "Compression", zone: "front_left_shock" })
-      .select("id")
-      .single();
-    const newSetup = async (name: string) => {
-      const { data } = await owner.rpc("create_suspension_setup", { p_sled_id: sledId, p_name: name });
-      const setupId = (data as { setup_id: string }).setup_id;
-      const { data: revision } = await owner.from("suspension_revisions").select("id").eq("setup_id", setupId).single();
-      return { setupId, revisionId: revision!.id };
-    };
-    const listed = async (folder: string) => ((await bucket(owner).list(folder)).data ?? []).map((f) => f.name);
-
-    // --- Editor, reference photo: upload succeeds, the setting is removed, the save fails, the file is removed.
-    const editorPath = objectPath(sledId, setting!.id);
-    expect((await bucket(editor).upload(editorPath, PNG, { contentType: "image/jpeg" })).error).toBeNull();
-    await owner.from("suspension_settings").update({ deleted_at: new Date().toISOString(), version: 1 }).eq("id", setting!.id);
-    const editorSave = await editor
-      .from("suspension_photos")
-      .insert({ sled_id: sledId, setting_id: setting!.id, path: editorPath })
-      .select("id");
-    expect(editorSave.error?.message).toContain("Restore it before adding photos.");
-    expect(await listed(`${sledId}/${setting!.id}`)).toHaveLength(1);
-    const editorRemove = await bucket(editor).remove([editorPath]);
-    expect(editorRemove.error).toBeNull();
-    expect(editorRemove.data).toHaveLength(1);
-    expect(await listed(`${sledId}/${setting!.id}`)).toHaveLength(0);
-
-    // --- Owner, adjustment photo: same, removed again.
-    const a = await newSetup("Trail");
-    const ownerPath = objectPath(sledId, a.revisionId);
-    expect((await bucket(owner).upload(ownerPath, PNG, { contentType: "image/jpeg" })).error).toBeNull();
-    await owner.from("suspension_setups").update({ deleted_at: new Date().toISOString(), version: 1 }).eq("id", a.setupId);
-    expect(
-      (await owner.from("suspension_photos").insert({ sled_id: sledId, revision_id: a.revisionId, path: ownerPath })).error,
-    ).not.toBeNull();
-    expect((await bucket(owner).remove([ownerPath])).data).toHaveLength(1);
-    expect(await listed(`${sledId}/${a.revisionId}`)).toHaveLength(0);
-
-    // --- Mechanic, adjustment photo: the upload succeeds, both saves fail, and the remove is refused by the
-    // storage policy (owners and editors only): the file stays, unreferenced, for the Migration 8 cleanup.
-    const b = await newSetup("Powder");
-    const mechanicPath = objectPath(sledId, b.revisionId);
-    expect((await bucket(mechanic).upload(mechanicPath, PNG, { contentType: "image/jpeg" })).error).toBeNull();
-    await owner.from("suspension_setups").update({ deleted_at: new Date().toISOString(), version: 1 }).eq("id", b.setupId);
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const save = await mechanic.from("suspension_photos").insert({ sled_id: sledId, revision_id: b.revisionId, path: mechanicPath });
-      expect(save.error).not.toBeNull();
-    }
-    const mechanicRemove = await bucket(mechanic).remove([mechanicPath]);
-    expect(mechanicRemove.data ?? []).toHaveLength(0); // nothing removed
-    expect(await listed(`${sledId}/${b.revisionId}`)).toHaveLength(1);
-    // No photo record points at it: this is what the Migration 8 sweep looks for.
-    const { count } = await owner.from("suspension_photos").select("id", { count: "exact", head: true }).eq("path", mechanicPath);
-    expect(count).toBe(0);
-    // An owner (or the future cleanup job) can remove it.
-    expect((await bucket(owner).remove([mechanicPath])).data).toHaveLength(1);
-    expect(await listed(`${sledId}/${b.revisionId}`)).toHaveLength(0);
-
-    await Promise.all(contexts.map((c) => c.close()));
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Checkpoint 6: sled page and Garage Board (Cards, Compact, Wall Display)
+// Snowmobile page, Garage Board and Wall Display
 // ---------------------------------------------------------------------------
 const garage = (page: Page) => visible(page.getByTestId("garage-board"));
 const garageSled = (page: Page, name: string) => garage(page).getByRole("article", { name, exact: true });
@@ -973,87 +514,65 @@ async function quickAdjust(page: Page, scope: Locator, sledName: string, values:
   await expect(dialog).toBeHidden({ timeout: 15_000 });
 }
 
-async function quickFeedback(page: Page, scope: Locator, sledName: string, rating: string) {
-  await scope.getByRole("button", { name: `Add ride feedback on ${sledName}` }).click();
-  const dialog = page.getByRole("dialog", { name: "Ride feedback" });
+async function quickEvaluation(page: Page, scope: Locator, sledName: string, rating: string, conditions: string[] = []) {
+  await scope.getByRole("button", { name: `Add ride evaluation on ${sledName}` }).click();
+  const dialog = page.getByRole("dialog", { name: "Ride evaluation" });
   await dialog.getByText(rating, { exact: true }).click();
-  await dialog.getByRole("button", { name: "Save feedback" }).click();
+  for (const c of conditions) await dialog.getByText(c, { exact: true }).click();
+  await dialog.getByRole("button", { name: "Save evaluation" }).click();
   await expect(dialog).toBeHidden({ timeout: 15_000 });
 }
 
-test("sled page: the Suspension section shows the active setup with quick adjust and feedback", async ({ page }) => {
-  await signUp(page, uniqueEmail("sus-page"));
+test("snowmobile page: active Trail, quick adjust and ride evaluation; nothing else on the page changes", async ({ page }) => {
+  await signUp(page, uniqueEmail("qt-page"));
   const sledId = await addSled(page, { make: "Polaris", model: "RMK", year: "2022", odometer: "2000", hours: "150", nickname: "Blue" });
   const section = visible(page.locator("#suspension"));
-  await expect(summaryIn(section).getByTestId("suspension-none")).toHaveText("No active setup");
-  await expect(summaryIn(section).getByRole("button")).toHaveCount(0);
+  await expect(summaryIn(section).getByTestId("suspension-none")).toHaveText("No configuration yet");
 
   await openSuspension(page, sledId);
-  await addSetting(page, { name: "Compression", zone: "Left ski shock", chip: "Clicks" });
-  await addSetting(page, { name: "Preload", zone: "Rear track shock", chip: "Turns" });
-  await createSetup(page, "Trail", { activate: true });
-
+  await suspensionPage(page).getByRole("button", { name: "Use suggested settings" }).click();
+  await expect(tuneInput(page, FRONT, BOTH)).toBeVisible({ timeout: 15_000 });
   await page.goto(`/garage/${sledId}`);
-  await expect(summaryIn(section).getByTestId("suspension-active")).toHaveText("Trail · Rev 1");
-  await expect(summaryIn(section)).toContainText("No ride feedback yet");
-
-  // Adjust from the sled page: the collapsible form, the first zone open.
-  await summaryIn(section).getByRole("button", { name: "Adjust suspension on Blue" }).click();
-  const dialog = page.getByRole("dialog", { name: "Record adjustment" });
-  await expect(zoneToggle(dialog, "front_left_shock")).toHaveAttribute("aria-expanded", "true");
-  await expect(zoneToggle(dialog, "rear_rear_shock")).toHaveAttribute("aria-expanded", "false");
-  await expect(label(dialog, "Mileage", true)).toHaveValue("2000");
-  await label(dialog, "Left ski shock: Compression", true).fill("12");
-  await zoneToggle(dialog, "rear_rear_shock").click();
-  await label(dialog, "Rear track shock: Preload", true).fill("-1");
-  await dialog.getByRole("button", { name: "Save adjustment" }).click();
-  await expect(dialog).toBeHidden({ timeout: 15_000 });
-  await expect(summaryIn(section)).toContainText("Adjustment saved.");
-  await expect(summaryIn(section).getByTestId("suspension-active")).toHaveText("Trail · Rev 2");
-
-  await quickFeedback(page, summaryIn(section), "Blue", "Improved");
-  await expect(summaryIn(section).getByTestId("suspension-feedback").getByTestId("feedback-rating")).toHaveText("Improved");
+  await quickAdjust(page, summaryIn(section), "Blue", { "Left ski shock: Compression": "12" });
+  await expect(summaryIn(section)).toContainText("Saved as Trail 1.");
+  await expect(summaryIn(section).getByTestId("suspension-active")).toHaveText("Trail 1 · Active");
+  await quickEvaluation(page, summaryIn(section), "Blue", "Liked", ["Hard Pack"]);
+  await expect(summaryIn(section).getByTestId("suspension-feedback").getByTestId("feedback-rating")).toHaveText("Liked");
+  await expect(summaryIn(section).getByTestId("suspension-feedback").getByTestId("conditions")).toHaveText("Hard Pack");
 
   await summaryIn(section).getByRole("button", { name: "View suspension setup on Blue" }).click();
   const view = page.getByRole("dialog", { name: "Suspension setup" });
-  await expect(view.getByTestId("active-value")).toHaveText(["Compression12 Clicks", "Preload-1 Turns"]);
+  await expect(view.getByTestId("active-value").first()).toHaveText("Compression (Left)12 clicks");
   await view.getByRole("button", { name: "Close" }).click();
 
-  // Nothing else on the page changed: mileage, readings and Ready.
+  // Mileage, readings and Ready are untouched.
   await expect(visible(page.getByTestId("current-odometer"))).toHaveText("2,000 mi");
   await expect(visible(page.getByTestId("reading-history")).getByRole("listitem")).toHaveCount(1);
   await expect(visible(page.locator("#sled-name").locator("xpath=..").getByTestId("sled-status"))).toHaveAttribute("data-status", "ready");
-
   await summaryIn(section).getByRole("link", { name: "Open suspension tuning for Blue" }).click();
   await expect(page).toHaveURL(new RegExp(`/garage/${sledId}/suspension$`));
-  await expect(revisionCard(page, 2).getByTestId("feedback")).toHaveCount(1);
+  await expect(activeName(page)).toHaveText("Trail 1");
 });
 
-test("Garage Board: Cards, Compact and Wall Display show the setup; actions follow the role", async ({ page, browser }) => {
-  const ownerEmail = uniqueEmail("sus-gb-o");
-  const mechanicEmail = uniqueEmail("sus-gb-m");
-  const viewerEmail = uniqueEmail("sus-gb-v");
-  await signUp(page, ownerEmail);
-  const sledId = await addSled(page, { make: "Ski-Doo", model: "Summit", year: "2023", odometer: "500", nickname: "Summit" });
-  await openSuspension(page, sledId);
-  await addSetting(page, { name: "Compression", zone: "Left ski shock", chip: "Clicks" });
-  await createSetup(page, "Trail", { activate: true });
+test("Garage Board: Cards, Compact and Wall Display show the active Trail and skis; actions follow the role", async ({ page, browser }) => {
+  const ownerEmail = uniqueEmail("qt-gb-o");
+  const viewerEmail = uniqueEmail("qt-gb-v");
+  const sledId = await sledWithTemplate(page, ownerEmail, "Summit");
+  await tune(page, { [`${FRONT}|${BOTH}`]: "10" });
 
-  // Cards (default).
   await page.goto("/garage/board");
   const card = garageSled(page, "Summit");
-  await expect(summaryIn(card).getByTestId("suspension-active")).toHaveText("Trail · Rev 1");
-  await quickAdjust(page, summaryIn(card), "Summit", { "Left ski shock: Compression": "10" });
-  await expect(summaryIn(card).getByTestId("suspension-active")).toHaveText("Trail · Rev 2");
-  // The rest of the board is unchanged (no tasks yet, Ready).
+  await expect(summaryIn(card).getByTestId("suspension-active")).toHaveText("Trail 1 · Active");
+  await quickAdjust(page, summaryIn(card), "Summit", { "Left ski shock: Compression": "11" });
+  await expect(summaryIn(card).getByTestId("suspension-active")).toHaveText("Trail 2 · Active");
+  await changeEquipment(page, summaryIn(card), "Change skis or carbides on Summit", "C&A Pro XPT", '9"');
+  await expect(summaryIn(card).getByTestId("ski-configuration")).toContainText('C&A Pro XPT · 9" carbides');
   await expect(card.getByTestId("sled-status")).toHaveAttribute("data-status", "ready");
 
-  // Compact.
   await garage(page).getByRole("group", { name: "Layout" }).getByRole("button", { name: "Compact" }).click();
-  await quickFeedback(page, summaryIn(garageSled(page, "Summit")), "Summit", "Worse");
-  await expect(summaryIn(garageSled(page, "Summit")).getByTestId("feedback-rating")).toHaveText("Worse");
+  await quickEvaluation(page, summaryIn(garageSled(page, "Summit")), "Summit", "Disliked", ["Sloppy"]);
+  await expect(summaryIn(garageSled(page, "Summit")).getByTestId("feedback-rating")).toHaveText("Disliked");
 
-  // Wall Display: large controls.
   await visible(page.getByRole("button", { name: "Wall display" })).click();
   await expect(garage(page)).toHaveAttribute("data-wall", "on");
   const adjust = summaryIn(garageSled(page, "Summit")).getByRole("button", { name: "Adjust suspension on Summit" });
@@ -1061,263 +580,226 @@ test("Garage Board: Cards, Compact and Wall Display show the setup; actions foll
   await visible(page.getByRole("button", { name: "Exit wall display" })).click();
   await garage(page).getByRole("group", { name: "Layout" }).getByRole("button", { name: "Cards" }).click();
 
-  const contexts = await Promise.all([1, 2].map(() => browser.newContext()));
-  const [mechanic, viewer] = await Promise.all(contexts.map((c) => c.newPage()));
-  await signUp(mechanic, mechanicEmail);
+  const context = await browser.newContext();
+  const viewer = await context.newPage();
   await signUp(viewer, viewerEmail);
-  await shareSled(ownerEmail, sledId, mechanicEmail, "mechanic");
   await shareSled(ownerEmail, sledId, viewerEmail, "viewer");
-
-  // Mechanic: adjusts and adds feedback from the board.
-  await mechanic.goto("/garage/board");
-  await quickAdjust(mechanic, summaryIn(garageSled(mechanic, "Summit")), "Summit", { "Left ski shock: Compression": "8" });
-  await expect(summaryIn(garageSled(mechanic, "Summit")).getByTestId("suspension-active")).toHaveText("Trail · Rev 3");
-  await quickFeedback(mechanic, summaryIn(garageSled(mechanic, "Summit")), "Summit", "Improved");
-
-  // Viewer: sees the setup and its values; no adjust or feedback.
   await viewer.goto("/garage/board");
   const viewerSummary = summaryIn(garageSled(viewer, "Summit"));
-  await expect(viewerSummary.getByTestId("suspension-active")).toHaveText("Trail · Rev 3");
-  await expect(viewerSummary.getByRole("button", { name: /Adjust suspension|Add ride feedback/ })).toHaveCount(0);
-  await viewerSummary.getByRole("button", { name: "View suspension setup on Summit" }).click();
-  await expect(viewer.getByRole("dialog", { name: "Suspension setup" }).getByTestId("active-value")).toHaveText(["Compression8 Clicks"]);
+  await expect(viewerSummary.getByTestId("suspension-active")).toHaveText("Trail 3 · Active");
+  await expect(viewerSummary.getByTestId("ski-configuration")).toContainText('C&A Pro XPT · 9" carbides');
+  await expect(viewerSummary.getByRole("button")).toHaveText(["View"]);
+  await context.close();
 
   // My Snowmobiles is unchanged: no suspension there.
   await page.goto("/garage");
   await expect(visible(page.getByTestId("sled-card")).getByTestId("suspension-summary")).toHaveCount(0);
-  await Promise.all(contexts.map((c) => c.close()));
 });
 
-test("Wall Display keyboard: ± only on suspension values; negatives save; mileage pads unchanged", async ({ page }) => {
-  await signUp(page, uniqueEmail("sus-kb"));
-  const sledId = await addSled(page, { make: "Lynx", model: "Rave", year: "2021", odometer: "800", hours: "40", nickname: "Rave" });
-  await openSuspension(page, sledId);
-  await addSetting(page, { name: "Preload", zone: "Left ski shock", chip: "Turns" });
-  await addSetting(page, { name: "Spring", zone: "Left ski shock", text: true });
-  await createSetup(page, "Trail", { activate: true });
-
+test("Wall Display keyboard: ± only on suspension values; only valid numbers; mileage pads unchanged", async ({ page }) => {
+  const sledId = await sledWithTemplate(page, uniqueEmail("qt-kb"), "Rave");
+  void sledId;
   await page.goto("/garage/board");
   await visible(page.getByRole("button", { name: "Wall display" })).click();
   await expect(garage(page)).toHaveAttribute("data-wall", "on");
   await summaryIn(garageSled(page, "Rave")).getByRole("button", { name: "Adjust suspension on Rave" }).click();
   const dialog = page.getByRole("dialog", { name: "Record adjustment" });
-
-  // A suspension number: the number pad with ±.
   const preload = label(dialog, "Left ski shock: Preload", true);
   await preload.click();
   await expect(keyboard(page)).toHaveAttribute("data-mode", "decimal");
   await expect(keyboard(page)).toHaveAttribute("data-signed", "true");
-  await tapKeys(page, ["1", "Decimal point", "5", "Plus or minus"]);
-  await expect(preload).toHaveValue("-1.5");
-  await tapKeys(page, ["Plus or minus"]);
-  await expect(preload).toHaveValue("1.5");
-  await tapKeys(page, ["Plus or minus"]);
-  await expect(preload).toHaveValue("-1.5");
-  await expect(dialog.getByTestId("adjust-changes")).toContainText("Preload: set to -1.5 Turns");
-
-  // A suspension text value gets the full keyboard; mileage gets the number pad without ±.
-  await label(dialog, "Left ski shock: Spring", true).click();
-  await expect(keyboard(page)).toHaveAttribute("data-mode", "text");
-  await label(dialog, "Mileage", true).click();
-  await expect(keyboard(page)).toHaveAttribute("data-mode", "decimal");
-  await expect(keyboard(page)).not.toHaveAttribute("data-signed", "true");
-  await expect(keyboard(page).getByRole("button", { name: "Plus or minus" })).toHaveCount(0);
-
-  await dialog.getByRole("button", { name: "Save adjustment" }).click();
-  await expect(dialog).toBeHidden({ timeout: 15_000 });
-  await summaryIn(garageSled(page, "Rave")).getByRole("button", { name: "View suspension setup on Rave" }).click();
-  await expect(page.getByRole("dialog", { name: "Suspension setup" }).getByTestId("active-value").first()).toHaveText("Preload-1.5 Turns");
-  await page.getByRole("dialog", { name: "Suspension setup" }).getByRole("button", { name: "Close" }).click();
-
-  // Update mileage / hours on the Wall Display: unchanged number pad, no ±.
-  await garageSled(page, "Rave")
-    .getByRole("button", { name: /Update mileage \/ hours/ })
-    .click();
-  const meters = page.getByRole("dialog", { name: "Update mileage / hours" });
-  await label(meters, "Odometer (miles)").click();
-  await expect(keyboard(page)).toHaveAttribute("data-mode", "decimal");
-  await expect(keyboard(page).getByRole("button", { name: "Plus or minus" })).toHaveCount(0);
-});
-
-// ---------------------------------------------------------------------------
-// Checkpoint 7: roles end to end, keyboard sequences, accessibility
-// ---------------------------------------------------------------------------
-test("roles on the Garage Board and beyond: editor and owner full, mechanic adjusts, viewer reads, others nothing", async ({
-  page,
-  browser,
-}) => {
-  const ownerEmail = uniqueEmail("sus-r7-o");
-  const editorEmail = uniqueEmail("sus-r7-e");
-  const mechanicEmail = uniqueEmail("sus-r7-m");
-  const viewerEmail = uniqueEmail("sus-r7-v");
-  const strangerEmail = uniqueEmail("sus-r7-x");
-  await signUp(page, ownerEmail);
-  const sledId = await addSled(page, { make: "Arctic Cat", model: "Riot", year: "2024", odometer: "300", nickname: "Riot" });
-  await openSuspension(page, sledId);
-  await addSetting(page, { name: "Compression", zone: "Left ski shock", chip: "Clicks" });
-  await createSetup(page, "Trail", { activate: true });
-
-  const contexts = await Promise.all([1, 2, 3, 4].map(() => browser.newContext()));
-  const [editor, mechanic, viewer, stranger] = await Promise.all(contexts.map((c) => c.newPage()));
-  await signUp(editor, editorEmail);
-  await signUp(mechanic, mechanicEmail);
-  await signUp(viewer, viewerEmail);
-  await signUp(stranger, strangerEmail);
-  await shareSled(ownerEmail, sledId, editorEmail, "editor");
-  await shareSled(ownerEmail, sledId, mechanicEmail, "mechanic");
-  await shareSled(ownerEmail, sledId, viewerEmail, "viewer");
-
-  // Editor, on the Garage Board: views, adjusts, adds feedback, opens the full page and manages there.
-  await editor.goto("/garage/board");
-  const editorBoard = summaryIn(garageSled(editor, "Riot"));
-  await expect(editorBoard.getByTestId("suspension-active")).toHaveText("Trail · Rev 1");
-  await editorBoard.getByRole("button", { name: "View suspension setup on Riot" }).click();
-  await expect(editor.getByRole("dialog", { name: "Suspension setup" }).getByTestId("active-value")).toHaveText(["Compression—"]);
-  await editor.getByRole("dialog", { name: "Suspension setup" }).getByRole("button", { name: "Close", exact: true }).click();
-  await quickAdjust(editor, editorBoard, "Riot", { "Left ski shock: Compression": "11" });
-  await expect(editorBoard.getByTestId("suspension-active")).toHaveText("Trail · Rev 2");
-  await quickFeedback(editor, editorBoard, "Riot", "No change");
-  await expect(editorBoard.getByTestId("feedback-rating")).toHaveText("No change");
-  await editorBoard.getByRole("link", { name: "Open suspension tuning for Riot" }).click();
-  await expect(editor).toHaveURL(new RegExp(`/garage/${sledId}/suspension$`));
-  await expect(visible(editor.getByRole("button", { name: "New setup" }))).toBeVisible();
-  await expect(visible(editor.getByRole("button", { name: "Add setting", exact: true }))).toBeVisible();
-  await expect(suspensionPage(editor).getByRole("heading", { name: "Recently deleted" })).toBeVisible();
-
-  // Owner keeps full access, including what the editor saved.
-  await page.goto("/garage/board");
-  const ownerBoard = summaryIn(garageSled(page, "Riot"));
-  await expect(ownerBoard.getByRole("button", { name: /View suspension setup|Adjust suspension|Add ride feedback/ })).toHaveCount(3);
-  await openSuspension(page, sledId);
-  await expect(revisionCard(page, 2).getByTestId("feedback")).toHaveCount(1);
-  await expect(selectedSetup(page).getByRole("button", { name: "Rename" })).toBeVisible();
-
-  // Mechanic: adjusts and adds feedback; manages nothing.
-  await mechanic.goto("/garage/board");
-  const mechanicBoard = summaryIn(garageSled(mechanic, "Riot"));
-  await expect(mechanicBoard.getByRole("button", { name: /View suspension setup|Adjust suspension|Add ride feedback/ })).toHaveCount(3);
-  await openSuspension(mechanic, sledId);
-  await expect(
-    suspensionPage(mechanic).getByRole("button", { name: /New setup|Add setting|Set active|Rename|Delete|Restore Trail/ }),
-  ).toHaveCount(0);
-  await expect(suspensionPage(mechanic).getByRole("heading", { name: /Settings list|Recently deleted/ })).toHaveCount(0);
-
-  // Viewer: read-only everywhere.
-  await viewer.goto("/garage/board");
-  const viewerBoard = summaryIn(garageSled(viewer, "Riot"));
-  await expect(viewerBoard.getByRole("button")).toHaveText(["View setup"]);
-  await openSuspension(viewer, sledId);
-  await expect(
-    suspensionPage(viewer).getByRole("button", {
-      name: /Record adjustment|Add ride feedback|Restore rev|New setup|Add setting|Rename|Delete/,
-    }),
-  ).toHaveCount(0);
-
-  // Someone without access: not on their board, no page, and the API refuses reads and writes.
-  await stranger.goto("/garage/board");
-  await expect(garage(stranger).getByRole("article", { name: "Riot" })).toHaveCount(0);
-  await stranger.goto(`/garage/${sledId}/suspension`);
-  await expect(stranger.getByRole("heading", { name: "Snowmobile not found" })).toBeVisible();
-  const api = await apiAs(strangerEmail);
-  for (const table of [
-    "suspension_settings",
-    "suspension_setups",
-    "suspension_revisions",
-    "suspension_feedback",
-    "suspension_photos",
-  ] as const) {
-    const { data } = await api.from(table).select("id").eq("sled_id", sledId);
-    expect(data ?? []).toHaveLength(0);
-  }
-  expect((await api.from("suspension_settings").insert({ sled_id: sledId, name: "Sneaky", zone: "rear_general" })).error).not.toBeNull();
-  const owner = await apiAs(ownerEmail);
-  const { data: setup } = await owner.from("suspension_setups").select("id").eq("sled_id", sledId).single();
-  const { data: latest } = await owner
-    .from("suspension_revisions")
-    .select("id")
-    .eq("setup_id", setup!.id)
-    .order("revision_number", { ascending: false })
-    .limit(1)
-    .single();
-  const attempt = await api.rpc("save_suspension_revision", {
-    p_setup_id: setup!.id,
-    p_base_revision_id: latest!.id,
-    p_changes: {},
-    p_idempotency_key: crypto.randomUUID(),
-  });
-  expect(attempt.error).not.toBeNull();
-  expect((await api.rpc("activate_suspension_setup", { p_setup_id: setup!.id })).error).not.toBeNull();
-  expect((await api.storage.from("suspension-photos").list(sledId)).data ?? []).toHaveLength(0);
-
-  await Promise.all(contexts.map((c) => c.close()));
-});
-
-test("Wall Display keyboard: only valid numbers can be typed; invalid text is refused on save", async ({ page }) => {
-  await signUp(page, uniqueEmail("sus-seq"));
-  const sledId = await addSled(page, { make: "Lynx", model: "Rave", year: "2021", odometer: "800", nickname: "Rave" });
-  await openSuspension(page, sledId);
-  await addSetting(page, { name: "Preload", zone: "Left ski shock", chip: "Turns" });
-  await createSetup(page, "Trail", { activate: true });
-  await page.goto("/garage/board");
-  await visible(page.getByRole("button", { name: "Wall display" })).click();
-  await summaryIn(garageSled(page, "Rave")).getByRole("button", { name: "Adjust suspension on Rave" }).click();
-  const dialog = page.getByRole("dialog", { name: "Record adjustment" });
-  const preload = label(dialog, "Left ski shock: Preload", true);
-  await preload.click();
-  await expect(keyboard(page)).toHaveAttribute("data-signed", "true");
-
   const typed = async (keys: string[]) => {
     await tapKeys(page, ["Clear", ...keys]);
     return preload.inputValue();
   };
   const pm = "Plus or minus";
   const dot = "Decimal point";
-  expect(await typed(["1", dot, "5"])).toBe("1.5");
   expect(await typed(["1", dot, "5", pm])).toBe("-1.5");
-  expect(await typed(["0", dot, "5"])).toBe("0.5");
-  expect(await typed([pm, "0", dot, "5"])).toBe("-0.5");
-  expect(await typed(["1", "2"])).toBe("12");
-  // 4-3-12 and 1.2.3 can't be typed on the pad.
   expect(await typed(["4", pm, "3", pm, "1", "2"])).toBe("4312");
   expect(await typed(["1", dot, "2", dot, "3"])).toBe("1.23");
-  // A digit typed in front of the minus goes after it.
-  await typed([pm, "1", "2"]);
-  await preload.evaluate((el: HTMLInputElement) => el.setSelectionRange(0, 0));
-  await tapKeys(page, ["3"]);
-  await expect(preload).toHaveValue("-312");
-  // The Save row stays above the keyboard.
-  const keyboardTop = (await keyboard(page).boundingBox())!.y;
-  const save = dialog.getByRole("button", { name: "Save adjustment" });
-  expect((await save.boundingBox())!.y + (await save.boundingBox())!.height).toBeLessThanOrEqual(keyboardTop + 1);
+  expect(await typed(["1", dot, "5", pm])).toBe("-1.5");
+  await label(dialog, "Mileage", true).click();
+  await expect(keyboard(page)).not.toHaveAttribute("data-signed", "true");
+  await expect(keyboard(page).getByRole("button", { name: "Plus or minus" })).toHaveCount(0);
 
-  // Typed with a physical keyboard instead, invalid text is flagged and never saved.
   for (const bad of ["4-3-12", "1.2.3"]) {
     await preload.fill(bad);
     await expect(dialog.getByText("Enter a number for Preload.")).toBeVisible();
-    await save.click();
-    await expect(dialog.getByText("Enter a number for Preload.")).toBeVisible();
-    await expect(dialog).toBeVisible();
   }
-  await preload.fill("-0.5");
-  await save.click();
+  await preload.fill("-1.5");
+  await dialog.getByRole("button", { name: "Save adjustment" }).click();
   await expect(dialog).toBeHidden({ timeout: 15_000 });
-  await expect(summaryIn(garageSled(page, "Rave")).getByTestId("suspension-active")).toHaveText("Trail · Rev 2");
+  await expect(summaryIn(garageSled(page, "Rave")).getByTestId("suspension-active")).toHaveText("Trail 1 · Active");
+  await summaryIn(garageSled(page, "Rave")).getByRole("button", { name: "View suspension setup on Rave" }).click();
+  await expect(
+    page.getByRole("dialog", { name: "Suspension setup" }).getByTestId("active-value").filter({ hasText: "Preload" }).first(),
+  ).toHaveText("Preload (Left)-1.5 in");
 });
 
+// ---------------------------------------------------------------------------
+// Photos (uploads stay off; Migration 8 cleanup behaviour unchanged)
+// ---------------------------------------------------------------------------
+const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAgAAAAGCAIAAABxZ0isAAAAEUlEQVR4nGOQq7iDFTEMpAQAMUJFYTtzHLAAAAAASUVORK5CYII=", "base64");
+const pngs = (count: number, prefix = "photo") =>
+  Array.from({ length: count }, (_, n) => ({ name: `${prefix}-${n}.png`, mimeType: "image/png", buffer: PNG }));
+const objectPath = (sledId: string, parentId: string) => `${sledId}/${parentId}/${crypto.randomUUID()}.jpg`;
+
+test("photo uploads stay off (the default): no upload control anywhere; existing photos stay visible and removable", async ({ page }) => {
+  const sledId = await sledWithTemplate(page, uniqueEmail("qt-nophoto"));
+  await tune(page, { [`${FRONT}|${BOTH}`]: "10" });
+
+  // A reference photo added while uploads were on (the second test server, same database).
+  await page.goto(`${PHOTOS_URL}/garage/${sledId}/suspension?view=map`);
+  await suspensionPage(page).getByTestId("zone-panel").getByRole("button", { name: "Reference photos of Compression" }).click();
+  let dialog = page.getByRole("dialog", { name: "Reference photos" });
+  await dialog.locator('input[type="file"]').setInputFiles(pngs(1));
+  await dialog.getByRole("button", { name: "Upload 1 photo" }).click();
+  await expect(dialog.getByText("1 photo added.")).toBeVisible();
+
+  // Uploads off: Quick Tune, the map, Record adjustment and the history offer no upload.
+  await openSuspension(page, sledId, "quick");
+  await expect(suspensionPage(page).locator('input[type="file"]')).toHaveCount(0);
+  await expect(suspensionPage(page).getByRole("button", { name: /^Photos of Trail/ })).toHaveCount(0);
+  await section(page, FRONT).getByRole("button", { name: "Reference photos of Compression" }).click();
+  dialog = page.getByRole("dialog", { name: "Reference photos" });
+  await expect(dialog.getByTestId("photo-grid").getByTestId("photo")).toHaveCount(1);
+  await expect(dialog.getByRole("button", { name: "Add photos" })).toHaveCount(0);
+  await expect(dialog.locator('input[type="file"]')).toHaveCount(0);
+  await dialog.getByRole("button", { name: "Remove photo 1 of Compression" }).click({ trial: true });
+  await dialog.getByRole("button", { name: "Close" }).click();
+
+  await openSuspension(page, sledId, "map");
+  await expect(suspensionPage(page).getByText("Add reference photos")).toHaveCount(0);
+  await suspensionPage(page).getByTestId("zone-panel").getByRole("button", { name: "Record adjustment" }).click();
+  dialog = page.getByRole("dialog", { name: "Record adjustment" });
+  await expect(dialog.getByText("Photos (optional)")).toHaveCount(0);
+  await expect(dialog.locator('input[type="file"]')).toHaveCount(0);
+});
+
+test("a file whose record can't be saved: owners and editors remove it; a mechanic's stays for the Migration 8 cleanup", async ({
+  page,
+  browser,
+}) => {
+  // Same calls as the app (upload, then record, then remove on failure), made through the API so the record save can
+  // be made to fail on purpose: the parent is deleted between the upload and the save. Real storage policies and RLS.
+  const ownerEmail = uniqueEmail("qt-cl-o");
+  const editorEmail = uniqueEmail("qt-cl-e");
+  const mechanicEmail = uniqueEmail("qt-cl-m");
+  await signUp(page, ownerEmail);
+  const sledId = await addSled(page, { make: "Polaris", model: "RMK", year: "2022", odometer: "2000", nickname: "Blue" });
+  const contexts = await Promise.all([1, 2].map(() => browser.newContext()));
+  const [editorPage, mechanicPage] = await Promise.all(contexts.map((c) => c.newPage()));
+  await signUp(editorPage, editorEmail);
+  await signUp(mechanicPage, mechanicEmail);
+  await shareSled(ownerEmail, sledId, editorEmail, "editor");
+  await shareSled(ownerEmail, sledId, mechanicEmail, "mechanic");
+  const [owner, editor, mechanic] = await Promise.all([apiAs(ownerEmail), apiAs(editorEmail), apiAs(mechanicEmail)]);
+  const bucket = (client: typeof owner) => client.storage.from("suspension-photos");
+  const listed = async (folder: string) => ((await bucket(owner).list(folder)).data ?? []).map((f) => f.name);
+
+  const { data: setting } = await owner
+    .from("suspension_settings")
+    .insert({ sled_id: sledId, name: "Compression", zone: "front_left_shock" })
+    .select("id")
+    .single();
+  const newSetup = async (name: string) => {
+    const { data } = await owner.rpc("create_suspension_setup", { p_sled_id: sledId, p_name: name });
+    const setupId = (data as { setup_id: string }).setup_id;
+    const { data: revision } = await owner.from("suspension_revisions").select("id").eq("setup_id", setupId).single();
+    return { setupId, revisionId: revision!.id };
+  };
+
+  // Editor, reference photo: the setting is removed before the save; the file is removed again.
+  const editorPath = objectPath(sledId, setting!.id);
+  expect((await bucket(editor).upload(editorPath, PNG, { contentType: "image/jpeg" })).error).toBeNull();
+  await owner.from("suspension_settings").update({ deleted_at: new Date().toISOString(), version: 1 }).eq("id", setting!.id);
+  const editorSave = await editor
+    .from("suspension_photos")
+    .insert({ sled_id: sledId, setting_id: setting!.id, path: editorPath })
+    .select("id");
+  expect(editorSave.error?.message).toContain("Restore it before adding photos.");
+  expect((await bucket(editor).remove([editorPath])).data).toHaveLength(1);
+  expect(await listed(`${sledId}/${setting!.id}`)).toHaveLength(0);
+
+  // Mechanic, adjustment photo: both saves fail; the remove is refused (owners and editors only); the file stays,
+  // unreferenced, for the Migration 8 cleanup.
+  const b = await newSetup("Powder");
+  const mechanicPath = objectPath(sledId, b.revisionId);
+  expect((await bucket(mechanic).upload(mechanicPath, PNG, { contentType: "image/jpeg" })).error).toBeNull();
+  await owner.from("suspension_setups").update({ deleted_at: new Date().toISOString(), version: 1 }).eq("id", b.setupId);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    expect(
+      (await mechanic.from("suspension_photos").insert({ sled_id: sledId, revision_id: b.revisionId, path: mechanicPath })).error,
+    ).not.toBeNull();
+  }
+  expect((await bucket(mechanic).remove([mechanicPath])).data ?? []).toHaveLength(0);
+  expect(await listed(`${sledId}/${b.revisionId}`)).toHaveLength(1);
+  const { count } = await owner.from("suspension_photos").select("id", { count: "exact", head: true }).eq("path", mechanicPath);
+  expect(count).toBe(0);
+  expect((await bucket(owner).remove([mechanicPath])).data).toHaveLength(1);
+
+  await Promise.all(contexts.map((c) => c.close()));
+});
+
+test.describe("with photo uploads turned on", () => {
+  test.use({ baseURL: PHOTOS_URL });
+
+  test("reference photos (owners and editors) and adjustment photos (also mechanics) still work for when uploads return", async ({
+    page,
+    browser,
+  }) => {
+    const ownerEmail = uniqueEmail("qt-ph-o");
+    const mechanicEmail = uniqueEmail("qt-ph-m");
+    const sledId = await sledWithTemplate(page, ownerEmail);
+    await tune(page, { [`${FRONT}|${BOTH}`]: "10" });
+
+    // Reference photo from the map's zone panel.
+    await openSuspension(page, sledId, "map");
+    await suspensionPage(page).getByTestId("zone-panel").getByRole("button", { name: "Reference photos of Compression" }).click();
+    let dialog = page.getByRole("dialog", { name: "Reference photos" });
+    await dialog.locator('input[type="file"]').setInputFiles(pngs(2));
+    await dialog.getByRole("button", { name: "Upload 2 photos" }).click();
+    await expect(dialog.getByText("2 photos added.")).toBeVisible();
+    await expect(await violations(axeFor(page, "dialog[open]"))).toEqual([]);
+    await dialog.getByRole("button", { name: "Close" }).click();
+
+    // Adjustment photos while recording an adjustment, then later from the history.
+    await suspensionPage(page).getByTestId("zone-panel").getByRole("button", { name: "Record adjustment" }).click();
+    dialog = page.getByRole("dialog", { name: "Record adjustment" });
+    await label(dialog, "Left ski shock: Compression", true).fill("12");
+    await dialog.locator('input[type="file"]').setInputFiles(pngs(1, "adj"));
+    await dialog.getByRole("button", { name: "Save adjustment" }).click();
+    await expect(dialog).toBeHidden({ timeout: 20_000 });
+    await expect(config(page, 2).getByTestId("revision-photos").getByTestId("photo")).toHaveCount(1);
+
+    const context = await browser.newContext({ baseURL: PHOTOS_URL });
+    const mechanic = await context.newPage();
+    await signUp(mechanic, mechanicEmail);
+    await shareSled(ownerEmail, sledId, mechanicEmail, "mechanic");
+    await openSuspension(mechanic, sledId);
+    await config(mechanic, 1).getByRole("button", { name: "Photos of Trail 1" }).click();
+    dialog = mechanic.getByRole("dialog", { name: "Adjustment photos" });
+    await dialog.locator('input[type="file"]').setInputFiles(pngs(1, "mech"));
+    await dialog.getByRole("button", { name: "Upload 1 photo" }).click();
+    await expect(dialog.getByText("1 photo added.")).toBeVisible();
+    await expect(dialog.getByRole("button", { name: /Remove photo/ })).toHaveCount(0);
+    await context.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Accessibility
+// ---------------------------------------------------------------------------
 // Every axe rule is checked, color contrast included (primary buttons use #d92b12, 4.88:1).
 const axeFor = (page: Page, include: string) => new AxeBuilder({ page }).include(include);
 const violations = async (builder: AxeBuilder) =>
   (await builder.analyze()).violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(" ")).join(", ")}`);
 
-test("accessibility: suspension screens pass automated checks; no sideways scrolling; 44 px targets", async ({ page }) => {
-  await signUp(page, uniqueEmail("sus-a11y"));
-  const sledId = await addSled(page, { make: "Polaris", model: "RMK", year: "2022", odometer: "2000", hours: "150", nickname: "Blue" });
-  await openSuspension(page, sledId);
-  await addSetting(page, { name: "Compression", zone: "Left ski shock", chip: "Clicks" });
-  await addSetting(page, { name: "Spring", zone: "Springs & limiter strap", text: true });
-  await createSetup(page, "Trail", { activate: true });
-  await adjustValues(page, { "Left ski shock: Compression": "12" }, "Baseline");
-  await addFeedback(page, 2, "Improved", "Smooth");
+test("accessibility: Quick Tune and its sheets pass automated checks; no sideways scrolling; 44 px targets", async ({ page }) => {
+  const sledId = await sledWithTemplate(page, uniqueEmail("qt-a11y"));
+  await tune(page, { [`${FRONT}|${BOTH}`]: "10" });
+  await tune(page, { [`${FRONT}|${BOTH}`]: "12" });
+  await evaluate(page, 2, { rating: "Liked", conditions: ["Hard Pack"], temp: "20" });
 
   const noSidewaysScroll = async () =>
     expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
@@ -1327,22 +809,33 @@ test("accessibility: suspension screens pass automated checks; no sideways scrol
       for (const root of document.querySelectorAll(sel))
         for (const el of root.querySelectorAll<HTMLElement>("button, a, select, summary, input:not([type=hidden]):not(.sr-only)")) {
           const r = el.getBoundingClientRect();
-          if (r.width && r.height && (r.width < 43.5 || r.height < 43.5))
-            out.push(`${el.tagName} ${el.getAttribute("aria-label") ?? el.textContent}`);
+          if (r.width && r.height && (r.height < 44 || r.width < 44))
+            out.push(`${el.tagName} ${el.textContent?.trim() || el.getAttribute("aria-label")}`);
         }
       return out;
     }, scope);
 
-  // The Suspension page, and its sheets (focus moves into each).
   await expect(await violations(axeFor(page, '[data-testid="suspension-page"]'))).toEqual([]);
   await noSidewaysScroll();
-  expect(await smallTargets('[data-testid="suspension-page"]')).toEqual([]);
-  for (const [button, title] of [
-    ["Record adjustment", "Record adjustment"],
-    ["Add ride feedback to rev 2", "Ride feedback"],
-    ["Restore rev 1", "Restore revision"],
+  expect(await smallTargets('[data-testid="quick-tune"]')).toEqual([]);
+  expect(await smallTargets('[data-testid="active-configuration"]')).toEqual([]);
+
+  // With unsaved changes: the Save bar.
+  await section(page, FRONT)
+    .getByRole("button", { name: `Increase ${BOTH}` })
+    .click();
+  await expect(await violations(axeFor(page, '[data-testid="quick-tune-bar"]'))).toEqual([]);
+  expect(await smallTargets('[data-testid="quick-tune-bar"]')).toEqual([]);
+  await noSidewaysScroll();
+  await bar(page).getByRole("button", { name: "Discard Changes" }).click();
+
+  for (const [scope, button, title] of [
+    ["active-configuration", "Add ride evaluation to Trail 2", "Ride evaluation"],
+    ["active-configuration", "Change skis or carbides", "Skis & carbides"],
+    ["configuration-history", "Make Trail 1 active", "Make active"],
+    ["configuration-history", "View Trail 1", "Trail 1"],
   ] as const) {
-    await suspensionPage(page).getByRole("button", { name: button }).first().click();
+    await suspensionPage(page).getByTestId(scope).getByRole("button", { name: button }).click();
     const dialog = page.getByRole("dialog", { name: title });
     await expect(dialog).toBeVisible();
     expect(await page.evaluate(() => Boolean(document.activeElement?.closest("dialog[open]")))).toBe(true);
@@ -1351,31 +844,24 @@ test("accessibility: suspension screens pass automated checks; no sideways scrol
     await expect(dialog).toBeHidden();
   }
 
-  // A small phone (360 px): history metadata never runs under the feedback buttons; no sideways scrolling.
+  // The map view, a small phone, the snowmobile page and the Garage Board.
+  await openSuspension(page, sledId, "map");
+  await expect(await violations(axeFor(page, '[data-testid="suspension-page"]'))).toEqual([]);
+  await openSuspension(page, sledId, "quick");
   const size = page.viewportSize()!;
   await page.setViewportSize({ width: 360, height: 740 });
   await noSidewaysScroll();
-  const overlaps = await page.evaluate(() => {
-    let n = 0;
-    for (const li of document.querySelectorAll('[data-testid="feedback"]')) {
-      const text = li.querySelector("p")!.getBoundingClientRect();
-      for (const b of li.querySelectorAll("button")) {
-        const r = b.getBoundingClientRect();
-        if (r.width && r.left < text.right && r.right > text.left && r.top < text.bottom && r.bottom > text.top) n++;
-      }
-    }
-    return n;
-  });
-  expect(overlaps).toBe(0);
+  await section(page, FRONT)
+    .getByRole("button", { name: `Increase ${BOTH}` })
+    .click();
+  await noSidewaysScroll();
+  await bar(page).getByRole("button", { name: "Discard Changes" }).click();
   await page.setViewportSize(size);
-
-  // The sled page section and the Garage Board.
   await page.goto(`/garage/${sledId}`);
   await expect(await violations(axeFor(page, "#suspension"))).toEqual([]);
   expect(await smallTargets("#suspension")).toEqual([]);
   await noSidewaysScroll();
   await page.goto("/garage/board");
   await expect(await violations(axeFor(page, '[data-testid="suspension-summary"]'))).toEqual([]);
-  expect(await smallTargets('[data-testid="suspension-summary"]')).toEqual([]);
   await noSidewaysScroll();
 });

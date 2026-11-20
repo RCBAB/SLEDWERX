@@ -1,5 +1,9 @@
+import { numberDelta } from "./quick-tune";
 import {
+  SKI_SHORT,
   SUSPENSION_ZONES,
+  carbideLabel,
+  type Equipment,
   type FeedbackRating,
   type Snapshot,
   type SnapshotEntry,
@@ -68,13 +72,24 @@ export function revisionChanges(
   return changes.sort(byDiagram(settings));
 }
 
-/** "Rebound: 8 → 10 clicks", "Spring: set to Stiff", "Preload: cleared (was 3 turns)". */
+/** "Rebound: 8 → 10 clicks (+2)", "Spring: set to Stiff", "Preload: cleared (was 3 turns)". */
 export function describeChange(change: ValueChange): string {
   const unit = change.type === "text" ? null : change.unit;
   if (change.kind === "added") return `${change.name}: set to ${formatValue(change.after, unit)}`;
   if (change.kind === "cleared") return `${change.name}: cleared (was ${formatValue(change.before, unit)})`;
   const before = unit && change.before != null ? change.before : formatValue(change.before, null);
-  return `${change.name}: ${before} → ${formatValue(change.after, unit)}`;
+  const delta = change.type === "number" ? numberDelta(change.before, change.after) : null;
+  return `${change.name}: ${before} → ${formatValue(change.after, unit)}${delta ? ` (${delta})` : ""}`;
+}
+
+/** "Skis: XPT → XCS", "Carbides: 6\" → 7.5\"" (only what changed; "not recorded" shown as —). */
+export function equipmentChanges(before: Equipment | null | undefined, after: Equipment): string[] {
+  const lines: string[] = [];
+  const a = before ?? { ski: null, carbide: null };
+  if (a.ski !== after.ski) lines.push(`Skis: ${a.ski ? SKI_SHORT[a.ski] : "—"} → ${after.ski ? SKI_SHORT[after.ski] : "—"}`);
+  if (a.carbide !== after.carbide)
+    lines.push(`Carbides: ${a.carbide ? carbideLabel(a.carbide) : "—"} → ${after.carbide ? carbideLabel(after.carbide) : "—"}`);
+  return lines;
 }
 
 export type ComparisonRow = {
@@ -125,6 +140,9 @@ export function latestFeedback<T extends Pick<SuspensionFeedback, "riddenOn" | "
 }
 
 export const RATING_TONE: Record<FeedbackRating, "good" | "bad" | "neutral"> = {
+  liked: "good",
+  neutral: "neutral",
+  disliked: "bad",
   improved: "good",
   worse: "bad",
   no_change: "neutral",

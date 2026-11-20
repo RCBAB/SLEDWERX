@@ -1,8 +1,8 @@
 import { z } from "zod";
 
-import { blankToUndefined, optionalText, pastOrToday, requiredText, toNumber } from "@/lib/sleds/validation";
+import { optionalText, pastOrToday, requiredText, toNumber } from "@/lib/sleds/validation";
 
-import { FEEDBACK_RATINGS, MAX_SETTING_VALUE, SUSPENSION_ZONES, VALUE_TYPES, type SettingValueType } from "./types";
+import { MAX_SETTING_VALUE, RIDE_RATINGS, SUSPENSION_ZONES, TRAIL_CONDITIONS, VALUE_TYPES, type SettingValueType } from "./types";
 
 /** What the database accepts for a number setting (Migration 7). */
 export const NUMBER_VALUE = /^-?[0-9]+(\.[0-9]+)?$/;
@@ -45,11 +45,6 @@ export function checkSettingValue(type: SettingValueType, raw: unknown, settingN
   return { ok: true, value: text };
 }
 
-export const setupSchema = z.object({
-  name: requiredText(80, "Name"),
-  notes: optionalText(2000, "Notes"),
-});
-
 export const settingSchema = z.object({
   name: requiredText(80, "Name"),
   zone: z.enum(SUSPENSION_ZONES, { error: "Choose where it is on the sled." }),
@@ -58,10 +53,24 @@ export const settingSchema = z.object({
   notes: optionalText(2000, "Notes"),
 });
 
+/** A ride evaluation: rating, any trail conditions, ride date, optional day's high (degF) and notes. */
 export const feedbackSchema = z.object({
-  rating: z.enum(FEEDBACK_RATINGS, { error: "Choose how it felt." }),
+  rating: z.enum(RIDE_RATINGS, { error: "Choose how it rode." }),
+  conditions: z
+    .array(z.enum(TRAIL_CONDITIONS, { error: "Choose trail conditions from the list." }))
+    .max(TRAIL_CONDITIONS.length)
+    .transform((list) => TRAIL_CONDITIONS.filter((c) => list.includes(c))),
   riddenOn: pastOrToday,
-  note: optionalText(2000, "Note"),
+  highTemp: z.preprocess(
+    toNumber,
+    z
+      .number({ error: "Enter the temperature as a whole number of °F." })
+      .int({ error: "Enter the temperature as a whole number of °F." })
+      .min(-60, { error: "That's colder than SledWerx can store (−60 °F)." })
+      .max(120, { error: "That's warmer than SledWerx can store (120 °F)." })
+      .optional(),
+  ),
+  note: optionalText(2000, "Notes"),
 });
 
 const meter = (label: string, max: number) =>
@@ -85,4 +94,3 @@ export const adjustmentSchema = z.object({
 });
 
 export const uuidSchema = z.uuid();
-export const optionalUuid = z.preprocess(blankToUndefined, z.uuid().optional());

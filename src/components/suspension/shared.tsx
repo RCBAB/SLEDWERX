@@ -4,7 +4,14 @@ import { useState, useSyncExternalStore, type ReactNode } from "react";
 
 import type { SuspensionActionState } from "@/app/garage/suspension-actions";
 import { cn } from "@/components/ui/cn";
-import { FEEDBACK_LABEL, type FeedbackRating } from "@/lib/suspension/types";
+import {
+  CONDITION_LABEL,
+  FEEDBACK_SHORT,
+  describeEquipment,
+  type Equipment,
+  type FeedbackRating,
+  type TrailCondition,
+} from "@/lib/suspension/types";
 
 const subscribe = () => () => {};
 
@@ -64,6 +71,9 @@ export function Panel({ children, className, ...props }: { children: ReactNode; 
 }
 
 const RATING_STYLE: Record<FeedbackRating, string> = {
+  liked: "bg-emerald-500/15 text-emerald-200 ring-emerald-500/40",
+  neutral: "bg-amber-400/10 text-amber-100 ring-amber-300/40",
+  disliked: "bg-red-500/15 text-red-200 ring-red-500/40",
   improved: "bg-emerald-500/15 text-emerald-200 ring-emerald-500/40",
   worse: "bg-red-500/15 text-red-200 ring-red-500/40",
   no_change: "bg-white/5 text-muted ring-white/15",
@@ -80,7 +90,34 @@ export function RatingBadge({ rating, className }: { rating: FeedbackRating; cla
         className,
       )}
     >
-      {FEEDBACK_LABEL[rating]}
+      {FEEDBACK_SHORT[rating]}
+    </span>
+  );
+}
+
+/** Trail conditions as small chips. */
+export function ConditionChips({ conditions, className }: { conditions: TrailCondition[]; className?: string }) {
+  if (!conditions.length) return null;
+  return (
+    <ul className={cn("flex flex-wrap gap-1.5", className)} data-testid="conditions" aria-label="Trail conditions">
+      {conditions.map((c) => (
+        <li
+          key={c}
+          className="rounded-full bg-sky-400/10 px-2 py-0.5 text-xs font-semibold text-sky-100 ring-1 ring-sky-300/30"
+          data-condition={c}
+        >
+          {CONDITION_LABEL[c]}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** "C&A Pro XPT · 7.5" carbides" with a ski icon-free label, for configuration cards. */
+export function EquipmentText({ equipment, className }: { equipment: Equipment; className?: string }) {
+  return (
+    <span className={cn(!equipment.ski && !equipment.carbide && "text-muted", className)} data-testid="equipment">
+      {describeEquipment(equipment)}
     </span>
   );
 }

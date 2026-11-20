@@ -23,14 +23,24 @@ const SUSPENSION_MESSAGES = [
   "Nothing changed.",
   "The latest revision already has these values.",
   "That revision can't be copied to this snowmobile.",
+  // Migration 9 (Quick Tune)
+  "The active configuration was changed by someone else. Reload it and try again.",
+  "This setup holds the active configuration.",
+  "Choose a ski model.",
+  "Choose a carbide length.",
+  "You do not have permission to change this snowmobile's suspension.",
+  "Configuration not found.",
 ];
 
-export type SuspensionSubject = "setup" | "setting" | "revision" | "feedback" | "photo";
+/** "Trail 4 uses different skis or carbides than the ones installed. ..." */
+const EQUIPMENT_MISMATCH = /^Trail \d+ uses different skis or carbides than the ones installed\./;
+
+export type SuspensionSubject = "setup" | "setting" | "revision" | "configuration" | "feedback" | "photo";
 
 /** Friendly messages for suspension changes. Never echoes raw SQL errors. */
 export function suspensionErrorMessage(error: DbError, subject: SuspensionSubject): string {
   const message = error?.message ?? "";
-  if (SUSPENSION_MESSAGES.some((known) => message.startsWith(known))) return message;
+  if (SUSPENSION_MESSAGES.some((known) => message.startsWith(known)) || EQUIPMENT_MISMATCH.test(message)) return message;
   if (error?.code === "23505") {
     return subject === "setting"
       ? "There's already a setting with that name in this part of the sled."

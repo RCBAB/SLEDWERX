@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
 
@@ -10,9 +11,10 @@ import { sledDescription, sledName } from "@/lib/sleds/format";
 import { suspensionCapabilities } from "@/lib/sleds/permissions";
 import { getSled } from "@/lib/sleds/queries";
 import { suspensionPhotoUploadsEnabled } from "@/lib/suspension/photo-flag";
-import { getSuspensionData } from "@/lib/suspension/queries";
+import { QuickTuneSchemaMissing, getSuspensionData } from "@/lib/suspension/queries";
+import { VIEW_COOKIE, parseViewMode } from "@/lib/suspension/quick-tune";
 
-export const metadata: Metadata = { title: "Suspension tuning" };
+export const metadata: Metadata = { title: "Suspension" };
 
 export default function SuspensionPage({ params, searchParams }: PageProps<"/garage/[sledId]/suspension">) {
   return (
@@ -32,9 +34,27 @@ async function Suspension({ params, searchParams }: Pick<PageProps<"/garage/[sle
   if (!sled) notFound();
 
   const can = suspensionCapabilities(sled.role);
-  const data = await getSuspensionData(sled.id, user.id, can.canManage);
   const name = sledName(sled);
-  const requested = typeof query.setup === "string" ? query.setup : undefined;
+  // ?view=quick|map wins (links); otherwise the view last chosen in this browser.
+  const view = parseViewMode(query.view === "map" || query.view === "quick" ? query.view : (await cookies()).get(VIEW_COOKIE)?.value);
+  let data;
+  try {
+    data = await getSuspensionData(sled.id, user.id, can.canManage);
+  } catch (error) {
+    if (!(error instanceof QuickTuneSchemaMissing)) throw error;
+    return (
+      <>
+        <BackLink href={`/garage/${sled.id}`}>{name}</BackLink>
+        <div className="mt-6 rounded-2xl border border-accent/40 bg-surface/70 p-5" data-testid="schema-missing">
+          <h1 className="font-display text-3xl font-extrabold uppercase italic">Suspension</h1>
+          <p className="mt-2 text-foreground/90">
+            Suspension Quick Tune needs a database update (Migration 9) that hasn&apos;t been applied to this database yet. Nothing has been
+            changed; your existing suspension data is safe.
+          </p>
+        </div>
+      </>
+    );
+  }
 
   return (
     <>
@@ -51,7 +71,7 @@ async function Suspension({ params, searchParams }: Pick<PageProps<"/garage/[sle
         role={sled.role}
         photoUploads={suspensionPhotoUploadsEnabled()}
         userId={user.id}
-        initialSetupId={requested}
+        initialView={view}
       />
     </>
   );

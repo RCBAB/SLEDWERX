@@ -1,20 +1,22 @@
 "use client";
 
-import { ChevronDown, Plus, Settings2 } from "lucide-react";
-import { useLayoutEffect, useState } from "react";
+import { ChevronDown, Eye, ListChecks, Map as MapIcon, MessageSquarePlus, Settings2, SlidersHorizontal, Wrench } from "lucide-react";
+import { useCallback, useLayoutEffect, useState } from "react";
 
-import type { SuspensionActionState } from "@/app/garage/suspension-actions";
-
+import { applySuggestedSettings, type SuspensionActionState } from "@/app/garage/suspension-actions";
 import { Sheet } from "@/components/board/sheet";
 import { useRefreshOnReturn } from "@/components/board/use-refresh-on-return";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/components/ui/cn";
 import type { SledRole } from "@/lib/sleds/constants";
 import { ROLE_LABELS, suspensionCapabilities } from "@/lib/sleds/permissions";
+import { VIEW_COOKIE, baseOf, byNumberDesc, type SuspensionViewMode } from "@/lib/suspension/quick-tune";
+import { SUGGESTED_SETTINGS } from "@/lib/suspension/template";
 import {
   SUSPENSION_ZONES,
-  latestRevision,
-  previousRevision,
+  ZONE_LABEL,
+  configName,
   type SuspensionData,
   type SuspensionFeedback,
   type SuspensionRevision,
@@ -22,36 +24,50 @@ import {
   type SuspensionZone,
 } from "@/lib/suspension/types";
 
+import { ActivateForm } from "./activate-form";
 import { AdjustForm } from "./adjust-form";
-import { CompareRevisions } from "./compare";
+import { CompareConfigurations } from "./compare";
+import { ConfigurationDetails, ConfigurationHistory } from "./configurations";
 import { DeletedItems } from "./deleted-items";
+import { EquipmentForm } from "./equipment";
+import { EvaluationForm } from "./evaluation-form";
 import { PhotoManager } from "./photos";
-import { FeedbackForm, RevisionHistory } from "./history";
-import { RestoreForm } from "./restore-form";
+import { QuickTune } from "./quick-tune";
 import { SettingForm, SettingsEditor } from "./settings-editor";
-import { ActiveBadge, Panel, SectionTitle } from "./shared";
-import { SetupActions, SetupBar, SetupForm, SetupSummary } from "./setups";
+import { ActiveBadge, ConditionChips, EquipmentText, LocalDate, Panel, RatingBadge, SectionTitle, useRun } from "./shared";
 import { SledDiagram } from "./sled-diagram";
+import { UNSAVED_MESSAGE, useUnsavedWarning } from "./use-unsaved-warning";
 import { ZoneList, ZonePanel } from "./zones";
+
+/** Remember Quick Tune or the map in this browser (read by the page on the server). */
+function rememberView(mode: SuspensionViewMode) {
+  try {
+    document.cookie = `${VIEW_COOKIE}=${mode}; path=/; max-age=31536000; samesite=lax`;
+  } catch {
+    // Not remembered: the default view next time.
+  }
+}
 
 export type SledInfo = { id: string; name: string; description: string; odometer: number | null; engineHours: number | null };
 
 type OpenSheet =
-  | { kind: "new-setup"; copyFrom?: string }
-  | { kind: "rename-setup"; id: string }
   | { kind: "add-setting"; zone?: SuspensionZone }
   | { kind: "edit-setting"; setting: SuspensionSetting }
   | { kind: "adjust" }
-  | { kind: "feedback"; revision: SuspensionRevision; feedback?: SuspensionFeedback }
-  | { kind: "restore"; revision: SuspensionRevision }
+  | { kind: "evaluation"; revision: SuspensionRevision; feedback?: SuspensionFeedback }
+  | { kind: "activate"; revision: SuspensionRevision }
+  | { kind: "view"; revision: SuspensionRevision }
+  | { kind: "equipment" }
   | { kind: "photos"; parent: "setting" | "revision"; id: string }
   | null;
 
 /**
- * The Suspension Tuning page for one sled: its setups, the map with the
- * current values, the selected setup's history (feedback, restore), the
- * comparison of any two revisions, the settings list and Recently Deleted. Everything is saved through the suspension server
- * actions as the signed-in user; the controls shown follow the user's role.
+ * The Suspension page for one sled. Quick Tune (default) or the Suspension Map
+ * (remembered per browser), both working on the ACTIVE numbered configuration
+ * shown at the top; the configuration history with ride evaluations and Make
+ * active; comparison of any two configurations; the settings list (suggested
+ * template or blank) and Recently Deleted. Everything is saved through the
+ * suspension server actions as the signed-in user; controls follow the role.
  */
 export function SuspensionView({
   data,
@@ -59,7 +75,7 @@ export function SuspensionView({
   role,
   photoUploads,
   userId,
-  initialSetupId,
+  initialView,
 }: {
   data: SuspensionData;
   sled: SledInfo;
@@ -67,20 +83,21 @@ export function SuspensionView({
   /** The photo-upload feature flag (decided on the server). */
   photoUploads: boolean;
   userId: string;
-  initialSetupId?: string;
+  initialView: SuspensionViewMode;
 }) {
   useRefreshOnReturn();
   const can = suspensionCapabilities(role, { photoUploads });
+  const [view, setView] = useState<SuspensionViewMode>(initialView);
   const [sheet, setSheet] = useState<OpenSheet>(null);
   const [session, setSession] = useState(0);
-  const [chosen, setChosen] = useState<string | null>(initialSetupId ?? null);
   const [zone, setZone] = useState<SuspensionZone>(SUSPENSION_ZONES[0]);
-  // Open while the list is empty; afterwards it stays as the user left it.
-  const [editorOpen, setEditorOpen] = useState(data.settings.length === 0);
-  /** The revision just saved by an adjustment or a restore (shown as a notice). */
-  const [saved, setSaved] = useState<{ id: string; restoredFrom?: number; warning?: string } | null>(null);
-  /** The two revisions being compared (defaults: the selected setup's last two). */
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [notice, setNotice] = useState<{ tone: "success" | "error"; text: string } | null>(null);
   const [compare, setCompare] = useState<{ a: string; b: string } | null>(null);
+  const [dirty, setDirty] = useState(false);
+  const [tuneKey, setTuneKey] = useState(0);
+  useUnsavedWarning(dirty);
+  const onDirtyChange = useCallback((value: boolean) => setDirty(value), []);
   // Close sheets when the page is hidden (Next.js keeps it mounted).
   useLayoutEffect(() => () => setSheet(null), []);
 
@@ -90,24 +107,31 @@ export function SuspensionView({
   };
   const close = () => setSheet(null);
 
-  const { setups, settings, revisions, deleted } = data;
-  const selected = setups.find((s) => s.id === chosen) ?? setups.find((s) => s.isActive) ?? setups[0] ?? null;
-  const renaming = sheet?.kind === "rename-setup" ? setups.find((s) => s.id === sheet.id) : undefined;
-  const latest = selected ? latestRevision(revisions, selected.id) : undefined;
-  const values = latest?.values ?? {};
-  const savedRevision = saved ? revisions.find((r) => r.id === saved.id && r.setupId === selected?.id) : undefined;
-  const history = selected ? revisions.filter((r) => r.setupId === selected.id).sort((x, y) => y.number - x.number) : [];
-  const compareB = (compare && revisions.find((r) => r.id === compare.b)) || latest;
-  const compareA =
-    (compare && revisions.find((r) => r.id === compare.a)) || (latest ? (previousRevision(revisions, latest) ?? latest) : undefined);
+  const { settings, revisions, deleted, activeRevisionId, installed } = data;
+  const active = revisions.find((r) => r.id === activeRevisionId);
+  const ordered = byNumberDesc(revisions);
   const counts = Object.fromEntries(SUSPENSION_ZONES.map((z) => [z, settings.filter((s) => s.zone === z).length])) as Record<
     SuspensionZone,
     number
   >;
-  const adjusted = (result: SuspensionActionState, restoredFrom?: number) => {
-    close();
-    if (result.ok && result.id) setSaved({ id: result.id, restoredFrom, warning: result.warning });
+
+  const switchView = (next: SuspensionViewMode) => {
+    if (next === view) return;
+    if (dirty && !window.confirm(UNSAVED_MESSAGE)) return;
+    if (dirty) {
+      setTuneKey((k) => k + 1);
+      setDirty(false);
+    }
+    setView(next);
+    rememberView(next);
   };
+
+  const saved = (result: SuspensionActionState, verb = "Saved as") => {
+    close();
+    if (result.ok && result.configNumber)
+      setNotice({ tone: "success", text: `${verb} ${configName(result.configNumber)}. It's the active configuration now.` });
+  };
+
   // The photos sheet reads the current data, so it updates after each upload or removal.
   const photoTarget = (() => {
     if (sheet?.kind !== "photos") return undefined;
@@ -116,169 +140,178 @@ export function SuspensionView({
       return setting ? { label: setting.name, title: `${setting.name} · ${sled.name}`, photos: setting.photos } : undefined;
     }
     const revision = revisions.find((r) => r.id === sheet.id);
-    const setupName = setups.find((s) => s.id === revision?.setupId)?.name ?? "Setup";
     return revision
-      ? { label: `rev ${revision.number}`, title: `${setupName} · Rev ${revision.number}`, photos: revision.photos }
+      ? { label: configName(revision.configNumber), title: `${configName(revision.configNumber)} · ${sled.name}`, photos: revision.photos }
       : undefined;
   })();
+
+  const defaultCompare = () => {
+    const b = active ?? ordered[0];
+    const a = b ? (baseOf(revisions, b) ?? ordered.find((r) => r.id !== b.id)) : undefined;
+    return a && b ? { a: a.id, b: b.id } : null;
+  };
+  const pair = compare ?? defaultCompare();
   const showCompare = (revision: SuspensionRevision) => {
-    const newest = latestRevision(revisions, revision.setupId);
-    const other = newest && newest.id !== revision.id ? newest : previousRevision(revisions, revision);
+    const other = revision.id === active?.id ? (baseOf(revisions, revision) ?? ordered.find((r) => r.id !== revision.id)) : active;
     setCompare({ a: revision.id, b: other?.id ?? revision.id });
     document.getElementById("compare")?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
   return (
-    <div className="mt-3 space-y-10" data-testid="suspension-page" data-sled-id={sled.id}>
+    <div className="mt-3 space-y-8" data-testid="suspension-page" data-sled-id={sled.id}>
       <header className="space-y-2">
-        <h1 className="font-display text-4xl font-extrabold uppercase italic leading-none tracking-tight sm:text-5xl">Suspension tuning</h1>
+        <h1 className="font-display text-4xl font-extrabold uppercase italic leading-none tracking-tight sm:text-5xl">Suspension</h1>
         <p className="text-lg text-muted">
           {sled.name}
           {sled.name !== sled.description ? ` · ${sled.description}` : ""}
         </p>
         {!can.canAdjust ? (
           <p className="text-sm text-muted" data-testid="read-only-note">
-            You can view this snowmobile&apos;s suspension ({ROLE_LABELS[role]}). The owner, editors and mechanics record changes.
+            You can view this snowmobile&apos;s suspension ({ROLE_LABELS[role]}
+            ). The owner, editors and mechanics record changes.
           </p>
         ) : null}
       </header>
 
-      <section aria-labelledby="setups-heading" className="space-y-4">
-        <SectionTitle id="setups-heading">Setups</SectionTitle>
-        {setups.length ? (
-          <SetupBar
-            setups={setups}
-            revisions={revisions}
-            selectedId={selected?.id ?? null}
-            onSelect={setChosen}
-            canManage={can.canManage}
-            onNew={() => show({ kind: "new-setup" })}
-          />
-        ) : (
-          <Panel data-testid="no-setups" className="space-y-3">
-            <p className="font-semibold">No setups yet.</p>
-            <p className="text-sm text-muted">
-              A setup is a named set of values, like “Trail” or “Deep powder”. Each adjustment saves a new revision, so you can always look
-              back or return to an earlier one.
-            </p>
-            {can.canManage ? (
-              <Button type="button" onClick={() => show({ kind: "new-setup" })}>
-                <Plus aria-hidden className="size-4" />
-                Create a setup
-              </Button>
-            ) : (
-              <p className="text-sm text-muted">The owner or an editor can create one.</p>
-            )}
-          </Panel>
-        )}
+      <ActiveConfiguration
+        active={active}
+        installed={installed}
+        canAdjust={can.canAdjust}
+        canAddFeedback={can.canAddFeedback}
+        dirty={dirty}
+        onEquipment={() => show({ kind: "equipment" })}
+        onEvaluate={(revision) => show({ kind: "evaluation", revision })}
+        onView={(revision) => show({ kind: "view", revision })}
+      />
 
-        {selected ? (
-          <Panel className="space-y-3" data-testid="selected-setup" data-setup-id={selected.id}>
-            <div className="flex flex-wrap items-center gap-2">
-              <h3 className="font-display text-2xl font-bold uppercase italic" data-testid="selected-setup-name">
-                {selected.name}
-              </h3>
-              {selected.isActive ? (
-                <ActiveBadge />
-              ) : (
-                <span className="text-xs font-semibold uppercase tracking-wider text-muted">Not active</span>
-              )}
-            </div>
-            <SetupSummary setup={selected} revisions={revisions} />
-            {selected.notes ? <p className="whitespace-pre-line break-words text-sm text-foreground/90">{selected.notes}</p> : null}
-            {can.canManage ? (
-              <SetupActions
-                setup={selected}
-                onRename={() => show({ kind: "rename-setup", id: selected.id })}
-                onDeleted={() => setChosen(null)}
-              />
-            ) : null}
-          </Panel>
-        ) : null}
-      </section>
+      {notice ? (
+        <div data-testid="suspension-notice">
+          <Alert tone={notice.tone}>{notice.text}</Alert>
+        </div>
+      ) : null}
 
-      <section aria-labelledby="map-heading" className="space-y-4" id="tuning-map">
-        <SectionTitle id="map-heading">{selected ? `${selected.name} · current values` : "Suspension map"}</SectionTitle>
-        {savedRevision ? (
-          <div data-testid="adjust-notice">
-            <Alert tone="success">
-              {saved?.restoredFrom
-                ? `Rev ${saved.restoredFrom} restored as revision ${savedRevision.number}.`
-                : `Adjustment saved as revision ${savedRevision.number}.`}
-            </Alert>
-            {saved?.warning ? (
-              <div className="mt-2" data-testid="adjust-warning">
-                <Alert tone="error">{saved.warning}</Alert>
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-        <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,420px)_minmax(0,1fr)]">
-          <Panel className="space-y-4 bg-[#0e1114] p-4 sm:p-5 lg:sticky lg:top-20">
-            <div className="flex items-center justify-between text-[0.65rem] font-semibold uppercase tracking-[0.25em] text-muted">
-              <span>Top view · front ↑</span>
-              <span className="text-accent-hot">SledWerx</span>
-            </div>
-            <SledDiagram selected={zone} onSelect={setZone} counts={counts} />
-          </Panel>
-          <div className="space-y-6">
-            <Panel>
-              <ZonePanel
-                zone={zone}
-                settings={settings}
-                values={values}
-                hasSetup={Boolean(selected && latest)}
-                canAdjust={can.canAdjust}
-                canManage={can.canManage}
-                canAddPhotos={can.canAddReferencePhotos}
-                onAdjust={() => {
-                  setSaved(null);
-                  show({ kind: "adjust" });
-                }}
-                onAddSetting={(z) => show({ kind: "add-setting", zone: z })}
-                onPhotos={(setting) => show({ kind: "photos", parent: "setting", id: setting.id })}
-              />
-            </Panel>
-            <Panel>
-              <ZoneList selected={zone} onSelect={setZone} settings={settings} values={values} />
-            </Panel>
+      {!settings.length ? (
+        <GettingStarted
+          sledId={sled.id}
+          canManage={can.canManage}
+          onBlank={() => {
+            setEditorOpen(true);
+            show({ kind: "add-setting" });
+          }}
+        />
+      ) : null}
+
+      <section aria-labelledby="tune-heading" className="space-y-4" id="tune">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 id="tune-heading" className="font-display text-2xl font-bold uppercase tracking-wide">
+            {view === "quick" ? "Quick Tune" : "Suspension Map"}
+          </h2>
+          <div className="inline-flex rounded-xl bg-white/5 p-1 ring-1 ring-white/10" role="group" aria-label="View">
+            {(
+              [
+                ["quick", "Quick Tune", ListChecks],
+                ["map", "Suspension Map", MapIcon],
+              ] as const
+            ).map(([mode, text, Icon]) => (
+              <button
+                key={mode}
+                type="button"
+                aria-pressed={view === mode}
+                onClick={() => switchView(mode)}
+                className={cn(
+                  "inline-flex min-h-11 items-center gap-2 rounded-lg px-4 text-sm font-semibold",
+                  view === mode ? "bg-primary text-white" : "text-muted hover:text-foreground",
+                )}
+              >
+                <Icon aria-hidden className="size-4" />
+                {text}
+              </button>
+            ))}
           </div>
         </div>
+
+        {view === "quick" ? (
+          <QuickTune
+            key={`${tuneKey}-${active?.id ?? "none"}`}
+            sledId={sled.id}
+            settings={settings}
+            active={active}
+            installed={installed}
+            revisions={revisions}
+            canAdjust={can.canAdjust}
+            canManage={can.canManage}
+            odometer={sled.odometer}
+            engineHours={sled.engineHours}
+            onSaved={(result) => saved(result)}
+            onDirtyChange={onDirtyChange}
+            onAddSetting={(z) => show({ kind: "add-setting", zone: z })}
+            onPhotos={(setting) => show({ kind: "photos", parent: "setting", id: setting.id })}
+          />
+        ) : (
+          <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,420px)_minmax(0,1fr)]" data-testid="suspension-map">
+            <Panel className="space-y-4 bg-[#0e1114] p-4 sm:p-5 lg:sticky lg:top-20">
+              <div className="flex items-center justify-between text-[0.65rem] font-semibold uppercase tracking-[0.25em] text-muted">
+                <span>Top view · front ↑</span>
+                <span className="text-accent-hot">SledWerx</span>
+              </div>
+              <SledDiagram selected={zone} onSelect={setZone} counts={counts} />
+            </Panel>
+            <div className="space-y-6">
+              <Panel>
+                <ZonePanel
+                  zone={zone}
+                  settings={settings}
+                  values={active?.values ?? {}}
+                  hasSetup={settings.length > 0}
+                  canAdjust={can.canAdjust}
+                  canManage={can.canManage}
+                  canAddPhotos={can.canAddReferencePhotos}
+                  onAdjust={() => {
+                    setNotice(null);
+                    show({ kind: "adjust" });
+                  }}
+                  onAddSetting={(z) => show({ kind: "add-setting", zone: z })}
+                  onPhotos={(setting) => show({ kind: "photos", parent: "setting", id: setting.id })}
+                />
+              </Panel>
+              <Panel>
+                <ZoneList selected={zone} onSelect={setZone} settings={settings} values={active?.values ?? {}} />
+              </Panel>
+            </div>
+          </div>
+        )}
       </section>
 
-      {selected && history.length ? (
+      {revisions.length ? (
         <section aria-labelledby="history-heading" className="scroll-mt-20 space-y-4" id="history">
-          <SectionTitle id="history-heading">{`${selected.name} · history`}</SectionTitle>
-          <RevisionHistory
-            key={selected.id}
-            revisions={history}
-            allRevisions={revisions}
+          <SectionTitle id="history-heading">Trail configurations</SectionTitle>
+          <ConfigurationHistory
+            revisions={revisions}
+            activeId={activeRevisionId}
             settings={settings}
             role={role}
             photoUploads={photoUploads}
             userId={userId}
-            onAddFeedback={(revision) => show({ kind: "feedback", revision })}
-            onEditFeedback={(revision, feedback) => show({ kind: "feedback", revision, feedback })}
+            onView={(revision) => show({ kind: "view", revision })}
             onCompare={showCompare}
+            onActivate={(revision) => show({ kind: "activate", revision })}
+            onAddEvaluation={(revision) => show({ kind: "evaluation", revision })}
+            onEditEvaluation={(revision, feedback) => show({ kind: "evaluation", revision, feedback })}
             onPhotos={(revision) => show({ kind: "photos", parent: "revision", id: revision.id })}
-            onRestore={(revision) => {
-              setSaved(null);
-              show({ kind: "restore", revision });
-            }}
           />
         </section>
       ) : null}
 
-      {compareA && compareB ? (
+      {pair && revisions.length > 1 ? (
         <section aria-labelledby="compare-heading" className="scroll-mt-20 space-y-4" id="compare">
-          <SectionTitle id="compare-heading">Compare revisions</SectionTitle>
+          <SectionTitle id="compare-heading">Compare configurations</SectionTitle>
           <Panel>
-            <CompareRevisions
-              setups={setups}
+            <CompareConfigurations
               revisions={revisions}
+              activeId={activeRevisionId}
               settings={settings}
-              aId={compareA.id}
-              bId={compareB.id}
+              aId={pair.a}
+              bId={pair.b}
               onChange={(a, b) => setCompare({ a, b })}
             />
           </Panel>
@@ -299,7 +332,7 @@ export function SuspensionView({
             Settings list
           </SectionTitle>
           <p className="text-sm text-muted">
-            One list for this snowmobile, shared by all its setups. Each setup keeps its own values, and any setting can be left blank.
+            One list for this snowmobile. Rename settings, change units, add or remove them; saved configurations keep their values.
           </p>
           <details
             className="group rounded-2xl border border-white/10 bg-surface/40"
@@ -331,56 +364,107 @@ export function SuspensionView({
       ) : null}
 
       <Sheet
-        open={sheet?.kind === "adjust" && Boolean(selected && latest)}
+        open={sheet?.kind === "adjust"}
         onClose={close}
         title="Record adjustment"
-        description={selected ? `${sled.name} · ${selected.name}` : sled.name}
+        description={active ? `${sled.name} · from ${configName(active.configNumber)}` : sled.name}
       >
-        {sheet?.kind === "adjust" && selected && latest ? (
+        {sheet?.kind === "adjust" ? (
           <AdjustForm
             key={session}
-            setupId={selected.id}
-            setupName={selected.name}
-            baseRevisionId={latest.id}
-            values={values}
+            configName={active ? configName(active.configNumber) : null}
+            baseRevisionId={active?.id ?? null}
+            values={active?.values ?? {}}
             sledId={sled.id}
             settings={settings}
             focusZone={zone}
             odometer={sled.odometer}
             engineHours={sled.engineHours}
             photoUploads={can.canAddAdjustmentPhotos}
-            onDone={adjusted}
+            onDone={(result) => saved(result)}
           />
         ) : null}
       </Sheet>
 
       <Sheet
-        open={sheet?.kind === "feedback"}
+        open={sheet?.kind === "evaluation"}
         onClose={close}
-        title={sheet?.kind === "feedback" && sheet.feedback ? "Edit feedback" : "Ride feedback"}
-        description={sheet?.kind === "feedback" ? `${selected?.name ?? "Setup"} · Rev ${sheet.revision.number}` : undefined}
+        title={sheet?.kind === "evaluation" && sheet.feedback ? "Edit ride evaluation" : "Ride evaluation"}
+        description={sheet?.kind === "evaluation" ? `${sled.name} · ${configName(sheet.revision.configNumber)}` : undefined}
       >
-        {sheet?.kind === "feedback" ? (
-          <FeedbackForm key={session} sledId={sled.id} revision={sheet.revision} feedback={sheet.feedback} onDone={close} />
+        {sheet?.kind === "evaluation" ? (
+          <EvaluationForm
+            key={session}
+            sledId={sled.id}
+            revisionId={sheet.revision.id}
+            feedback={sheet.feedback}
+            onDone={() => {
+              close();
+              setNotice({ tone: "success", text: "Ride evaluation saved." });
+            }}
+          />
         ) : null}
       </Sheet>
 
       <Sheet
-        open={sheet?.kind === "restore" && Boolean(latest)}
+        open={sheet?.kind === "activate"}
         onClose={close}
-        title="Restore revision"
-        description={sheet?.kind === "restore" ? `${selected?.name ?? "Setup"} · Rev ${sheet.revision.number}` : undefined}
+        title="Make active"
+        description={sheet?.kind === "activate" ? `${sled.name} · ${configName(sheet.revision.configNumber)}` : undefined}
       >
-        {sheet?.kind === "restore" && latest && selected ? (
-          <RestoreForm
+        {sheet?.kind === "activate" ? (
+          <ActivateForm
             key={session}
             revision={sheet.revision}
-            current={latest}
-            setupName={selected.name}
+            active={active}
+            installed={installed}
+            revisions={revisions}
             settings={settings}
-            odometer={sled.odometer}
-            engineHours={sled.engineHours}
-            onDone={(result) => adjusted(result, sheet.revision.number)}
+            onCancel={close}
+            onDone={(result) => {
+              close();
+              if (result.configNumber)
+                setNotice({ tone: "success", text: `${configName(result.configNumber)} is the active configuration now.` });
+            }}
+          />
+        ) : null}
+      </Sheet>
+
+      <Sheet
+        open={sheet?.kind === "view"}
+        onClose={close}
+        title={sheet?.kind === "view" ? configName(sheet.revision.configNumber) : "Configuration"}
+        description={sled.name}
+      >
+        {sheet?.kind === "view" ? (
+          <div className="space-y-5">
+            <ConfigurationDetails
+              revision={sheet.revision}
+              settings={settings}
+              active={sheet.revision.id === activeRevisionId}
+              role={role}
+              userId={userId}
+            />
+            {can.canAdjust && sheet.revision.id !== activeRevisionId ? (
+              <Button type="button" size="lg" className="w-full" onClick={() => show({ kind: "activate", revision: sheet.revision })}>
+                Make {configName(sheet.revision.configNumber)} active…
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
+      </Sheet>
+
+      <Sheet open={sheet?.kind === "equipment"} onClose={close} title="Skis & carbides" description={sled.name}>
+        {sheet?.kind === "equipment" ? (
+          <EquipmentForm
+            key={session}
+            sledId={sled.id}
+            activeRevisionId={active?.id ?? null}
+            activeName={active ? configName(active.configNumber) : null}
+            installed={installed}
+            values={active?.values ?? {}}
+            revisions={revisions}
+            onDone={(result) => saved(result, "New skis or carbides saved as")}
           />
         ) : null}
       </Sheet>
@@ -404,28 +488,6 @@ export function SuspensionView({
         ) : null}
       </Sheet>
 
-      <Sheet open={sheet?.kind === "new-setup"} onClose={close} title="New setup" description={sled.name}>
-        {sheet?.kind === "new-setup" ? (
-          <SetupForm
-            key={session}
-            sledId={sled.id}
-            setups={setups}
-            revisions={revisions}
-            copyFrom={sheet.copyFrom}
-            onDone={(id) => {
-              setChosen(id);
-              close();
-            }}
-          />
-        ) : null}
-      </Sheet>
-
-      <Sheet open={sheet?.kind === "rename-setup" && Boolean(renaming)} onClose={close} title="Rename setup" description={sled.name}>
-        {sheet?.kind === "rename-setup" && renaming ? (
-          <SetupForm key={session} sledId={sled.id} setup={renaming} setups={setups} revisions={revisions} onDone={close} />
-        ) : null}
-      </Sheet>
-
       <Sheet open={sheet?.kind === "add-setting"} onClose={close} title="Add setting" description={sled.name}>
         {sheet?.kind === "add-setting" ? <SettingForm key={session} sledId={sled.id} zone={sheet.zone} onDone={close} /> : null}
       </Sheet>
@@ -434,5 +496,156 @@ export function SuspensionView({
         {sheet?.kind === "edit-setting" ? <SettingForm key={session} sledId={sled.id} setting={sheet.setting} onDone={close} /> : null}
       </Sheet>
     </div>
+  );
+}
+
+/** The active configuration, clearly at the top: number, skis and carbides, newest ride evaluation. */
+function ActiveConfiguration({
+  active,
+  installed,
+  canAdjust,
+  canAddFeedback,
+  dirty,
+  onEquipment,
+  onEvaluate,
+  onView,
+}: {
+  active: SuspensionRevision | undefined;
+  installed: SuspensionData["installed"];
+  canAdjust: boolean;
+  canAddFeedback: boolean;
+  dirty: boolean;
+  onEquipment: () => void;
+  onEvaluate: (revision: SuspensionRevision) => void;
+  onView: (revision: SuspensionRevision) => void;
+}) {
+  const latest = active?.feedback[0];
+  return (
+    <Panel className="space-y-4 border-accent/40" data-testid="active-configuration">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">Active configuration</p>
+          {active ? (
+            <p className="mt-1 flex flex-wrap items-center gap-3">
+              <span className="font-display text-4xl font-extrabold uppercase italic leading-none" data-testid="active-name">
+                {configName(active.configNumber)}
+              </span>
+              <ActiveBadge />
+            </p>
+          ) : (
+            <p className="mt-1 text-lg font-semibold" data-testid="active-name">
+              None yet
+            </p>
+          )}
+          <p className="mt-1 text-sm text-muted">
+            {active ? (
+              <>
+                Saved <LocalDate value={active.createdAt} withTime /> · {active.createdByName}
+              </>
+            ) : (
+              "Make adjustments below and Save Adjustments to create Trail 1."
+            )}
+          </p>
+        </div>
+        {active ? (
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant="ghost" onClick={() => onView(active)} aria-label={`View ${configName(active.configNumber)}`}>
+              <Eye aria-hidden className="size-4" />
+              View
+            </Button>
+            {canAddFeedback ? (
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => onEvaluate(active)}
+                aria-label={`Add ride evaluation to ${configName(active.configNumber)}`}
+              >
+                <MessageSquarePlus aria-hidden className="size-4" />
+                Ride evaluation
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+
+      <div
+        className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-background/40 px-4 py-3 ring-1 ring-white/10"
+        data-testid="active-equipment"
+      >
+        <div className="min-w-0">
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">Active ski configuration</p>
+          <p className="mt-0.5 text-lg">
+            <EquipmentText equipment={installed} className="font-semibold" />
+          </p>
+        </div>
+        {canAdjust ? (
+          <div className="text-right">
+            <Button type="button" variant="secondary" onClick={onEquipment} disabled={dirty} aria-label="Change skis or carbides">
+              <Wrench aria-hidden className="size-4" />
+              Change
+            </Button>
+            {dirty ? <p className="mt-1 text-xs text-muted">Save or discard your adjustments first.</p> : null}
+          </div>
+        ) : null}
+      </div>
+
+      {latest ? (
+        <div className="flex flex-wrap items-center gap-2 text-sm" data-testid="active-evaluation">
+          <span className="text-muted">Latest ride:</span>
+          <RatingBadge rating={latest.rating} />
+          <ConditionChips conditions={latest.conditions} />
+        </div>
+      ) : active ? (
+        <p className="text-sm text-muted">No ride evaluations for {configName(active.configNumber)} yet.</p>
+      ) : null}
+    </Panel>
+  );
+}
+
+/** A sled without settings: the one suggested template, or start blank. */
+function GettingStarted({ sledId, canManage, onBlank }: { sledId: string; canManage: boolean; onBlank: () => void }) {
+  const { busy, error, run } = useRun();
+  const zones = [...new Set(SUGGESTED_SETTINGS.map((s) => s.zone))];
+  return (
+    <Panel className="space-y-4" data-testid="getting-started">
+      <div>
+        <h2 className="font-display text-2xl font-bold uppercase tracking-wide">Set up your settings</h2>
+        <p className="mt-1 text-sm text-muted">
+          {canManage
+            ? "Start from the suggested list or from nothing. You can rename, remove and add settings and change units at any time. No values are filled in."
+            : "This snowmobile has no suspension settings yet. The owner or an editor sets them up."}
+        </p>
+      </div>
+      {canManage ? (
+        <>
+          {error ? <Alert tone="error">{error}</Alert> : null}
+          <details className="group rounded-xl border border-white/10">
+            <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-4 py-2 text-sm font-semibold">
+              What&apos;s in the suggested list ({SUGGESTED_SETTINGS.length} settings)
+              <ChevronDown aria-hidden className="size-5 text-muted transition-transform group-open:rotate-180" />
+            </summary>
+            <ul className="space-y-1 border-t border-white/10 px-4 py-3 text-sm" data-testid="template-preview">
+              {zones.map((z) => (
+                <li key={z}>
+                  <span className="text-muted">{ZONE_LABEL[z]}:</span>{" "}
+                  {SUGGESTED_SETTINGS.filter((s) => s.zone === z)
+                    .map((s) => `${s.name}${s.unit ? ` (${s.unit})` : ""}`)
+                    .join(", ")}
+                </li>
+              ))}
+            </ul>
+          </details>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Button type="button" size="lg" disabled={busy} onClick={() => void run(() => applySuggestedSettings(sledId))}>
+              <SlidersHorizontal aria-hidden className="size-4" />
+              Use suggested settings
+            </Button>
+            <Button type="button" size="lg" variant="secondary" disabled={busy} onClick={onBlank}>
+              Start blank
+            </Button>
+          </div>
+        </>
+      ) : null}
+    </Panel>
   );
 }

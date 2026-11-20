@@ -6,7 +6,13 @@ import { createClient } from "@/lib/supabase/server";
 
 import { latestFeedback } from "./diff";
 import {
-  FEEDBACK_LABEL,
+  FEEDBACK_SHORT,
+  NO_EQUIPMENT,
+  configName,
+  isCarbideLength,
+  isSkiModel,
+  isTrailCondition,
+  type Equipment,
   RECOVERY_DAYS,
   daysLeftToRestore,
   SUSPENSION_PHOTO_BUCKET,
@@ -25,6 +31,7 @@ import {
   type SuspensionRevision,
   type SuspensionSetting,
   type SuspensionSetup,
+  type TrailCondition,
 } from "./types";
 
 // Every query runs as the signed-in user, so Row Level Security decides what
@@ -38,7 +45,34 @@ export const REVISION_LIMIT = 500;
 
 const SETTING_COLUMNS = "id, sled_id, name, zone, value_type, unit, position, notes, version";
 const REVISION_COLUMNS =
-  "id, setup_id, revision_number, setting_values, note, odometer_mi, engine_hours, restored_from_revision_id, created_at, created_by";
+  "id, setup_id, revision_number, config_number, ski_model, carbide_length, based_on_revision_id, setting_values, note, odometer_mi, engine_hours, restored_from_revision_id, created_at, created_by";
+const FEEDBACK_COLUMNS = "id, revision_id, ridden_on, rating, conditions, high_temp_f, note, created_by, created_at, version";
+
+/**
+ * Thrown when the database doesn't have Migration 9 (Quick Tune) yet, e.g. a
+ * preview deployment that shares a database still at Migration 8. Pages show a
+ * notice instead of failing.
+ */
+export class QuickTuneSchemaMissing extends Error {
+  constructor() {
+    super("The suspension database update (Migration 9) has not been applied yet.");
+  }
+}
+
+type DbError = { code?: string; message?: string } | null | undefined;
+
+/** Unknown column or table: the schema is older than this code. */
+export function isSchemaMissing(error: DbError): boolean {
+  return Boolean(error && ["42703", "42P01", "PGRST204", "PGRST205", "PGRST200"].includes(error.code ?? ""));
+}
+
+export function toEquipment(ski: string | null | undefined, carbide: string | null | undefined): Equipment {
+  return { ski: isSkiModel(ski) ? ski : null, carbide: isCarbideLength(carbide) ? carbide : null };
+}
+
+function toConditions(raw: unknown): TrailCondition[] {
+  return Array.isArray(raw) ? raw.filter(isTrailCondition) : [];
+}
 
 /** A stored snapshot, keeping only well-formed entries. */
 export function parseSnapshot(raw: unknown): Snapshot {
@@ -125,7 +159,7 @@ export async function getSuspensionData(sledId: string, userId: string, includeD
   const supabase = await createClient();
   const cutoff = new Date(Date.now() - RECOVERY_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
-  const [settingsBySled, setups, revisions, deletedSetups, deletedSettings, deletedFeedback] = await Promise.all([
+  const [settingsBySled, setups, revisions, deletedSetups, deletedSettings, deletedFeedback, state] = await Promise.all([
     loadSettings(supabase, [sledId]),
     supabase
       .from("suspension_setups")
@@ -165,8 +199,10 @@ export async function getSuspensionData(sledId: string, userId: string, includeD
           .not("deleted_at", "is", null)
           .gt("deleted_at", cutoff)
       : Promise.resolve({ data: [], error: null }),
+    supabase.from("sled_suspension_state").select("active_revision_id, ski_model, carbide_length").eq("sled_id", sledId).maybeSingle(),
   ]);
-  if (setups.error || revisions.error || deletedSetups.error || deletedSettings.error || deletedFeedback.error) {
+  if (isSchemaMissing(revisions.error) || isSchemaMissing(state.error)) throw new QuickTuneSchemaMissing();
+  if (setups.error || revisions.error || deletedSetups.error || deletedSettings.error || deletedFeedback.error || state.error) {
     throw new Error("Could not load suspension setups.");
   }
 
@@ -177,11 +213,7 @@ export async function getSuspensionData(sledId: string, userId: string, includeD
 
   const [feedback, photos] = await Promise.all([
     revisionIds.length
-      ? supabase
-          .from("suspension_feedback")
-          .select("id, revision_id, ridden_on, rating, note, created_by, created_at, version")
-          .eq("sled_id", sledId)
-          .is("deleted_at", null)
+      ? supabase.from("suspension_feedback").select(FEEDBACK_COLUMNS).eq("sled_id", sledId).is("deleted_at", null)
       : Promise.resolve({ data: [], error: null }),
     revisionIds.length || settingIds.length
       ? supabase
@@ -231,6 +263,8 @@ export async function getSuspensionData(sledId: string, userId: string, includeD
       revisionId: f.revision_id,
       riddenOn: f.ridden_on,
       rating: f.rating as FeedbackRating,
+      conditions: toConditions(f.conditions),
+      highTempF: f.high_temp_f,
       note: f.note,
       createdBy: f.created_by,
       createdByName: nameOf(f.created_by),
@@ -244,6 +278,9 @@ export async function getSuspensionData(sledId: string, userId: string, includeD
     id: r.id,
     setupId: r.setup_id,
     number: r.revision_number,
+    configNumber: r.config_number,
+    equipment: toEquipment(r.ski_model, r.carbide_length),
+    basedOnId: r.based_on_revision_id,
     values: parseSnapshot(r.setting_values),
     note: r.note,
     odometer: r.odometer_mi == null ? null : Number(r.odometer_mi),
@@ -292,15 +329,14 @@ export async function getSuspensionData(sledId: string, userId: string, includeD
     ...(deletedFeedback.data ?? []).flatMap((f) => {
       const revision = revisionRows.find((r) => r.id === f.revision_id);
       if (!revision) return [];
-      const setupName = setupList.find((x) => x.id === revision.setup_id)?.name ?? "Setup";
-      const rating = FEEDBACK_LABEL[f.rating as FeedbackRating] ?? f.rating;
+      const rating = FEEDBACK_SHORT[f.rating as FeedbackRating] ?? f.rating;
       const note = f.note ? ` · “${f.note.length > 60 ? `${f.note.slice(0, 57)}…` : f.note}”` : "";
       return [
         {
           kind: "feedback" as const,
           id: f.id,
-          name: `${rating} · ${setupName} rev ${revision.revision_number}`,
-          detail: `Ride feedback · ridden ${formatDate(f.ridden_on)} · ${nameOf(f.created_by)}${note}`,
+          name: `${rating} · ${configName(revision.config_number)}`,
+          detail: `Ride evaluation · ridden ${formatDate(f.ridden_on)} · ${nameOf(f.created_by)}${note}`,
           deletedAt: f.deleted_at!,
           daysLeft: daysLeftToRestore(f.deleted_at!),
           version: f.version,
@@ -309,72 +345,87 @@ export async function getSuspensionData(sledId: string, userId: string, includeD
     }),
   ].sort((a, b) => b.deletedAt.localeCompare(a.deletedAt));
 
-  return { sledId, settings, setups: setupList, revisions: revisionList, deleted };
+  const activeRevisionId =
+    state.data?.active_revision_id && revisionList.some((r) => r.id === state.data!.active_revision_id)
+      ? state.data.active_revision_id
+      : null;
+  return {
+    sledId,
+    settings,
+    setups: setupList,
+    revisions: revisionList,
+    deleted,
+    activeRevisionId,
+    installed: state.data ? toEquipment(state.data.ski_model, state.data.carbide_length) : NO_EQUIPMENT,
+  };
 }
 
 /**
- * The active setup of each of these sleds (if any), with its latest revision,
- * the newest feedback on it and the current settings: for the sled page and
- * the Garage Board.
+ * Each sled's suspension at a glance: the active configuration (if any) with
+ * its newest ride evaluation, the installed skis and carbides, and the
+ * current settings. For the sled page and the Garage Board. Returns an empty
+ * map (nothing shown) if the database doesn't have Migration 9 yet.
  */
 export async function getActiveSuspensions(sledIds: string[]): Promise<Map<string, ActiveSuspension>> {
   const result = new Map<string, ActiveSuspension>();
   if (!sledIds.length) return result;
   const supabase = await createClient();
-  const { data: setups, error } = await supabase
-    .from("suspension_setups")
-    .select("id, sled_id, name")
-    .in("sled_id", sledIds)
-    .eq("is_active", true)
-    .is("deleted_at", null);
+  const { data: states, error } = await supabase
+    .from("sled_suspension_state")
+    .select("sled_id, active_revision_id, ski_model, carbide_length")
+    .in("sled_id", sledIds);
+  if (isSchemaMissing(error)) return result;
   if (error) throw new Error("Could not load suspension setups.");
-  if (!setups?.length) return result;
 
-  const [settingsBySled, latest] = await Promise.all([
-    loadSettings(
-      supabase,
-      setups.map((s) => s.sled_id),
-    ),
-    Promise.all(
-      setups.map((s) =>
-        supabase
+  const activeIds = (states ?? []).flatMap((s) => (s.active_revision_id ? [s.active_revision_id] : []));
+  const [settingsBySled, revisions, feedback] = await Promise.all([
+    loadSettings(supabase, sledIds),
+    activeIds.length
+      ? supabase
           .from("suspension_revisions")
-          .select("id, revision_number, setting_values, created_at")
-          .eq("setup_id", s.id)
+          .select("id, sled_id, config_number, ski_model, carbide_length, setting_values, created_at")
+          .in("id", activeIds)
           .is("deleted_at", null)
-          .order("revision_number", { ascending: false })
-          .limit(1)
-          .maybeSingle(),
-      ),
-    ),
+      : Promise.resolve({ data: [], error: null }),
+    activeIds.length
+      ? supabase
+          .from("suspension_feedback")
+          .select("revision_id, rating, conditions, ridden_on, created_at")
+          .in("revision_id", activeIds)
+          .is("deleted_at", null)
+      : Promise.resolve({ data: [], error: null }),
   ]);
-  const revisionIds = latest.flatMap((r) => (r.data ? [r.data.id] : []));
-  const { data: feedback } = revisionIds.length
-    ? await supabase
-        .from("suspension_feedback")
-        .select("revision_id, rating, ridden_on, created_at")
-        .in("revision_id", revisionIds)
-        .is("deleted_at", null)
-    : { data: [] };
+  if (revisions.error || feedback.error) throw new Error("Could not load suspension setups.");
 
-  setups.forEach((setup, n) => {
-    const revision = latest[n].data;
-    if (!revision) return;
-    const newest = latestFeedback(
-      (feedback ?? [])
-        .filter((f) => f.revision_id === revision.id)
-        .map((f) => ({ rating: f.rating as FeedbackRating, riddenOn: f.ridden_on, createdAt: f.created_at })),
-    );
-    result.set(setup.sled_id, {
-      setupId: setup.id,
-      setupName: setup.name,
-      revisionId: revision.id,
-      revisionNumber: revision.revision_number,
-      changedAt: revision.created_at,
-      values: parseSnapshot(revision.setting_values),
-      latestFeedback: newest ? { rating: newest.rating, riddenOn: newest.riddenOn } : null,
-      settings: settingsBySled.get(setup.sled_id) ?? [],
+  for (const sledId of sledIds) {
+    const state = (states ?? []).find((s) => s.sled_id === sledId);
+    const revision = (revisions.data ?? []).find((r) => r.id === state?.active_revision_id);
+    const newest = revision
+      ? latestFeedback(
+          (feedback.data ?? [])
+            .filter((f) => f.revision_id === revision.id)
+            .map((f) => ({
+              rating: f.rating as FeedbackRating,
+              riddenOn: f.ridden_on,
+              createdAt: f.created_at,
+              conditions: toConditions(f.conditions),
+            })),
+        )
+      : undefined;
+    result.set(sledId, {
+      active: revision
+        ? {
+            revisionId: revision.id,
+            configNumber: revision.config_number,
+            changedAt: revision.created_at,
+            values: parseSnapshot(revision.setting_values),
+            equipment: toEquipment(revision.ski_model, revision.carbide_length),
+            latestFeedback: newest ? { rating: newest.rating, riddenOn: newest.riddenOn, conditions: newest.conditions } : null,
+          }
+        : null,
+      installed: state ? toEquipment(state.ski_model, state.carbide_length) : NO_EQUIPMENT,
+      settings: settingsBySled.get(sledId) ?? [],
     });
-  });
+  }
   return result;
 }

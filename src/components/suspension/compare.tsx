@@ -5,28 +5,29 @@ import { ArrowLeftRight, ArrowRight, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/components/ui/cn";
 import { SelectField } from "@/components/ui/field";
-import { formatHours, formatMiles } from "@/lib/sleds/format";
-import { compareSnapshots, formatValue, type ComparisonRow } from "@/lib/suspension/diff";
-import { ZONE_LABEL, latestRevision, type SuspensionRevision, type SuspensionSetting, type SuspensionSetup } from "@/lib/suspension/types";
+import { formatDate, formatHours, formatMiles } from "@/lib/sleds/format";
+import { compareSnapshots, equipmentChanges, formatValue, type ComparisonRow } from "@/lib/suspension/diff";
+import { byNumberDesc } from "@/lib/suspension/quick-tune";
+import { ZONE_LABEL, configName, type SuspensionRevision, type SuspensionSetting } from "@/lib/suspension/types";
 
-import { LocalDate } from "./shared";
+import { ActiveBadge, ConditionChips, EquipmentText, LocalDate, RatingBadge } from "./shared";
 
 /**
- * Two revisions of the sled side by side, from the same setup or different
- * ones. Settings that differ are listed with both values; the ones that are
- * the same are folded away. Stacks on phones (nothing scrolls sideways).
+ * Two configurations side by side: Trail numbers, active or not, skis and
+ * carbides, every suspension difference ("Compression: 10 → 12 clicks (+2)"),
+ * and their ride evaluations with conditions, temperatures and notes. Same
+ * values are folded away. Stacks on phones (nothing scrolls sideways).
  */
-export function CompareRevisions({
-  setups,
+export function CompareConfigurations({
   revisions,
+  activeId,
   settings,
   aId,
   bId,
   onChange,
 }: {
-  setups: SuspensionSetup[];
-  /** Every revision on the sled, newest first. */
   revisions: SuspensionRevision[];
+  activeId: string | null;
   settings: SuspensionSetting[];
   aId: string;
   bId: string;
@@ -34,13 +35,11 @@ export function CompareRevisions({
 }) {
   const a = revisions.find((r) => r.id === aId);
   const b = revisions.find((r) => r.id === bId);
-  const nameOf = new Map(setups.map((s) => [s.id, s.name]));
-  const label = (r: SuspensionRevision) =>
-    `${nameOf.get(r.setupId) ?? "Setup"} · Rev ${r.number}${latestRevision(revisions, r.setupId)?.id === r.id ? " (current)" : ""}`;
-  // Grouped by setup, newest revision first.
-  const options = setups.map((setup) => ({ setup, list: revisions.filter((r) => r.setupId === setup.id) })).filter((g) => g.list.length);
+  const label = (r: SuspensionRevision) => `${configName(r.configNumber)}${r.id === activeId ? " (active)" : ""}`;
+  const options = byNumberDesc(revisions);
 
   const rows = a && b ? compareSnapshots(a.values, b.values, settings) : [];
+  const equipment = a && b ? equipmentChanges(a.equipment, b.equipment) : [];
   const changed = rows.filter((r) => r.changed);
   const same = rows.filter((r) => !r.changed);
 
@@ -51,14 +50,10 @@ export function CompareRevisions({
       value={value}
       onChange={(event) => (name === "a" ? onChange(event.target.value, bId) : onChange(aId, event.target.value))}
     >
-      {options.map(({ setup, list }) => (
-        <optgroup key={setup.id} label={setup.name}>
-          {list.map((r) => (
-            <option key={r.id} value={r.id}>
-              {label(r)}
-            </option>
-          ))}
-        </optgroup>
+      {options.map((r) => (
+        <option key={r.id} value={r.id}>
+          {label(r)}
+        </option>
       ))}
     </SelectField>
   );
@@ -71,7 +66,7 @@ export function CompareRevisions({
           type="button"
           variant="ghost"
           className="justify-self-center"
-          aria-label="Swap the two revisions"
+          aria-label="Swap the two configurations"
           onClick={() => onChange(bId, aId)}
         >
           <ArrowLeftRight aria-hidden className="size-4" />
@@ -82,28 +77,50 @@ export function CompareRevisions({
       {a && b ? (
         <>
           <div className="grid gap-3 text-sm sm:grid-cols-2">
-            <RevisionSummary revision={a} title={label(a)} tone="a" />
-            <RevisionSummary revision={b} title={label(b)} tone="b" />
+            <ConfigurationSummary revision={a} active={a.id === activeId} tone="a" />
+            <ConfigurationSummary revision={b} active={b.id === activeId} tone="b" />
           </div>
 
           {a.id === b.id ? (
-            <p className="text-muted">Pick two different revisions.</p>
-          ) : changed.length ? (
+            <p className="text-muted">Pick two different configurations.</p>
+          ) : changed.length || equipment.length ? (
             <div>
               <p className="mb-2 font-semibold" data-testid="compare-summary">
-                {changed.length === 1 ? "1 setting differs" : `${changed.length} settings differ`}
+                {configName(a.configNumber)} → {configName(b.configNumber)}:{" "}
+                {[
+                  changed.length ? (changed.length === 1 ? "1 setting differs" : `${changed.length} settings differ`) : null,
+                  equipment.length ? "different skis or carbides" : null,
+                ]
+                  .filter(Boolean)
+                  .join(", ")}
               </p>
               <ul className="space-y-2" data-testid="compare-changed">
                 {changed.map((row) => (
                   <CompareRow key={row.settingId} row={row} />
                 ))}
+                {equipment.map((line) => (
+                  <li
+                    key={line}
+                    className="rounded-lg border border-accent-hot/40 bg-accent-hot/5 px-3 py-2 font-semibold"
+                    data-testid="compare-equipment"
+                  >
+                    {line}
+                  </li>
+                ))}
               </ul>
             </div>
           ) : (
             <p className="font-semibold" data-testid="compare-summary">
-              Same values in both.
+              Same values and equipment in both.
             </p>
           )}
+
+          {a.id !== b.id ? (
+            <div className="grid gap-3 sm:grid-cols-2" data-testid="compare-evaluations">
+              <EvaluationSummary revision={a} />
+              <EvaluationSummary revision={b} />
+            </div>
+          ) : null}
 
           {same.length && a.id !== b.id ? (
             <details className="group rounded-xl border border-white/10" data-testid="compare-same">
@@ -122,21 +139,58 @@ export function CompareRevisions({
           ) : null}
         </>
       ) : (
-        <p className="text-muted">Pick two revisions to compare.</p>
+        <p className="text-muted">Pick two configurations to compare.</p>
       )}
     </div>
   );
 }
 
-function RevisionSummary({ revision, title, tone }: { revision: SuspensionRevision; title: string; tone: "a" | "b" }) {
+function ConfigurationSummary({ revision, active, tone }: { revision: SuspensionRevision; active: boolean; tone: "a" | "b" }) {
   return (
-    <div className={cn("rounded-xl border px-3 py-2", tone === "b" ? "border-accent-hot/40" : "border-white/15")}>
-      <p className="font-semibold">{title}</p>
+    <div
+      className={cn("rounded-xl border px-3 py-2", tone === "b" ? "border-accent-hot/40" : "border-white/15")}
+      data-testid="compare-config"
+    >
+      <p className="flex flex-wrap items-center gap-2 font-semibold">
+        {configName(revision.configNumber)}
+        {active ? <ActiveBadge /> : <span className="text-xs font-semibold uppercase tracking-wider text-muted">Inactive</span>}
+      </p>
+      <p className="text-sm">
+        <EquipmentText equipment={revision.equipment} />
+      </p>
       <p className="text-xs text-muted">
         <LocalDate value={revision.createdAt} />
         {revision.odometer != null ? ` · ${formatMiles(revision.odometer)}` : ""}
         {revision.engineHours != null ? ` · ${formatHours(revision.engineHours)}` : ""}
       </p>
+    </div>
+  );
+}
+
+/** A configuration's ride evaluations in short: rating, conditions, temperature, notes. */
+function EvaluationSummary({ revision }: { revision: SuspensionRevision }) {
+  return (
+    <div className="rounded-xl border border-white/10 px-3 py-2">
+      <p className="mb-2 text-xs font-semibold uppercase tracking-[0.2em] text-muted">
+        {configName(revision.configNumber)} · ride evaluations
+      </p>
+      {revision.feedback.length ? (
+        <ul className="space-y-2">
+          {revision.feedback.map((f) => (
+            <li key={f.id} className="space-y-1 text-sm">
+              <div className="flex flex-wrap items-center gap-2">
+                <RatingBadge rating={f.rating} />
+                <span className="text-muted">{formatDate(f.riddenOn)}</span>
+                {f.highTempF != null ? <span className="text-muted">· High {f.highTempF} °F</span> : null}
+              </div>
+              <ConditionChips conditions={f.conditions} />
+              {f.note ? <p className="whitespace-pre-line break-words text-foreground/90">{f.note}</p> : null}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-sm text-muted">No ride evaluations yet.</p>
+      )}
     </div>
   );
 }

@@ -17,7 +17,7 @@ import {
   type Snapshot,
   type SuspensionRevision,
 } from "./types";
-import { checkSettingValue, normalizeNumber, settingSchema, setupSchema } from "./validation";
+import { checkSettingValue, feedbackSchema, normalizeNumber, settingSchema } from "./validation";
 
 const COMP = "11111111-1111-4111-8111-111111111111";
 const REB = "22222222-2222-4222-8222-222222222222";
@@ -102,9 +102,16 @@ describe("forms", () => {
     expect(settingSchema.safeParse({ name: "X", zone: "rear_general", valueType: "number", unit: "x".repeat(21) }).success).toBe(false);
   });
 
-  it("limits setup names to 80 characters", () => {
-    expect(setupSchema.safeParse({ name: "x".repeat(81) }).success).toBe(false);
-    expect(setupSchema.safeParse({ name: "Deep powder" }).success).toBe(true);
+  it("checks ride evaluations: new ratings, known conditions, whole-degree temperatures", () => {
+    const ride = { rating: "liked", conditions: [], riddenOn: "2026-01-02" };
+    expect(feedbackSchema.safeParse(ride).success).toBe(true);
+    expect(feedbackSchema.safeParse({ ...ride, rating: "improved" }).success).toBe(false); // earlier scale: kept, not chosen anew
+    expect(feedbackSchema.safeParse({ ...ride, conditions: ["powder_day"] }).success).toBe(false);
+    expect(feedbackSchema.parse({ ...ride, conditions: ["sloppy", "loose_snow", "sloppy"] }).conditions).toEqual(["loose_snow", "sloppy"]);
+    expect(feedbackSchema.parse({ ...ride, highTemp: "-12" }).highTemp).toBe(-12);
+    expect(feedbackSchema.parse({ ...ride, highTemp: "" }).highTemp).toBeUndefined();
+    expect(feedbackSchema.safeParse({ ...ride, highTemp: "12.5" }).success).toBe(false);
+    expect(feedbackSchema.safeParse({ ...ride, highTemp: "150" }).success).toBe(false);
   });
 });
 
@@ -132,7 +139,7 @@ describe("changes between revisions", () => {
 
   it("describes changes in plain words", () => {
     const [rebound, spring] = revisionChanges(r1, r2);
-    expect(describeChange(rebound)).toBe("Rebound: 8 → 10 clicks");
+    expect(describeChange(rebound)).toBe("Rebound: 8 → 10 clicks (+2)");
     expect(describeChange(spring)).toBe("Spring: set to Stiff");
     expect(describeChange(revisionChanges(r2, r1)[1])).toBe("Spring: cleared (was Stiff)");
   });

@@ -189,6 +189,8 @@ recorded) when:
 | The bucket has files and records point at it, but **no** file matches any record (the reference lookup is not trusted) | that bucket |
 | More than 10% of the files would be removed | buckets of **100 files or more** only (Decision 12) |
 
+Migration 9 (Quick Tune) adds `sled_suspension_state` (no Recently Deleted; removed with its sled) and gives it the `cleanup_count_deletes` trigger, so the registry stays complete. Its pgTAP test checks `cleanup_registry_problems()` is empty.
+
 In buckets under 100 files the percentage does not apply, but the
 100-files-per-run limit, the 24-hour age, the reference checks, the
 metadata checks and the claim lock all still do. A failed reference lookup

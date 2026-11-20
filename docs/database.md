@@ -680,6 +680,36 @@ the purge gap under "Recently Deleted".
 Tests: `supabase/tests/database/010_suspension.test.sql`; rollback test
 `scripts/test-migration-7-rollback.sh`.
 
+## Suspension Quick Tune (Migration 9)
+
+`20261123090000_suspension_quick_tune.sql`, additive, **not applied to
+production** (needs approval; the app shows a notice until it is). Product
+behaviour: [suspension-tuning.md](suspension-tuning.md).
+
+| Object | What |
+|---|---|
+| `suspension_revisions.config_number` | Sled-wide number ("Trail N"), assigned by the `number` trigger under a per-sled lock; unique per sled; never reused. Existing revisions are numbered in save order by the migration. |
+| `suspension_revisions.ski_model`, `carbide_length` | Equipment snapshot (`ca_pro_xpt` / `ca_pro_xcs`; `6` / `7.5` / `9`); null = not recorded. Defaults to the installed equipment. Immutable like the rest of a revision. |
+| `suspension_revisions.based_on_revision_id` | What a configuration was made from (no foreign key, so purges never touch history). |
+| `sled_suspension_state` | One row per sled: `active_revision_id` and the installed `ski_model` / `carbide_length`. RLS: everyone on the sled reads it; nobody writes it directly. Backfilled for existing sleds (active setup's latest revision). |
+| `suspension_feedback.conditions`, `high_temp_f` | Trail conditions (subset of five) and the day's high in °F (−60 to 120). Rating check widened to `liked`/`neutral`/`disliked` plus the earlier three. |
+| `save_suspension_configuration(sled, base, changes, ski, carbide, note, odometer, hours, key)` | Next configuration from the active one (must equal `base`, else PT409); refuses "Nothing changed."; idempotent by key; updates the state. Owners, editors, mechanics. |
+| `activate_suspension_configuration(revision, equipment_installed)` | Makes an existing configuration active; never creates one; other equipment needs `equipment_installed = true` (else error hint `equipment_mismatch`), then the installed equipment follows. Owners, editors, mechanics. |
+| `quick_tune` trigger on `suspension_setups` | The setup holding the active configuration can't go to Recently Deleted. |
+
+Both functions are `SECURITY DEFINER` (mechanics may record and switch
+configurations but may not write the state row or setups directly): each
+checks `auth.uid()` and the sled permission first, and the revision triggers,
+Migration 1's guard included, still run for the caller. `anon` can execute
+neither. Migration 7's functions keep working (their revisions are numbered
+too). Migration 8: `sled_suspension_state` gets the `cleanup_count_deletes`
+trigger, so the cleanup registry stays complete.
+
+Tests: `supabase/tests/database/014_suspension_quick_tune.test.sql`; rollback
+`supabase/rollback/20261123090000_rollback.sql` and
+`scripts/test-migration-9-rollback.sh` (also checks the numbering of existing
+data on re-apply).
+
 ## Migration 8: cleanup (built; see cleanup.md)
 
 The Recently Deleted & storage cleanup is described in [cleanup.md](cleanup.md)

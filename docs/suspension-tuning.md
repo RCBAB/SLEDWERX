@@ -1,9 +1,15 @@
-# Suspension Tuning (Phase 6.2)
+# Suspension Quick Tune (Phase 6.2)
 
 Track how each snowmobile's suspension is set up, every adjustment made to
-it, how it rode, and go back to any earlier setup. Data lives in Migration 7
-(see "Suspension setup & tuning" in [database.md](database.md)); nothing here
-needs another migration.
+it, which skis and carbides it ran, and how it rode, so you build up a
+history of what works on that sled. Data lives in Migration 7 (settings,
+revisions, feedback, photos) and Migration 9 (numbered configurations,
+equipment, ride evaluations); see [database.md](database.md).
+
+> **Migration 9 is not applied to production yet.** Until it is, the
+> Suspension page shows a "needs a database update" notice and the snowmobile
+> page and Garage Board show "Suspension: Not available yet". Nothing else
+> is affected. Applying it needs separate approval.
 
 > **Release (Decision 10, amended 2026-11-20):** Phase 6.2 is released with
 > **suspension photo uploads turned off** (feature flag
@@ -19,85 +25,141 @@ needs another migration.
 
 | Where | What |
 |---|---|
-| `/garage/[sledId]/suspension` | **Suspension Tuning** page: everything below |
-| Snowmobile page, **Suspension** section | Active setup, current revision, newest ride feedback; View setup, Adjust, Ride feedback, Open Suspension Tuning |
+| `/garage/[sledId]/suspension` | **Quick Tune** (default) or the **Suspension Map**: everything below |
+| Snowmobile page, **Suspension** section | Active Trail configuration, newest ride evaluation, **Active Ski Configuration** (change it here), View, Adjust, Ride evaluation, Open Quick Tune |
 | Garage Board (Cards, Compact, Wall Display) | The same summary and quick actions on every sled (large controls on Wall Display) |
 | My Snowmobiles | Unchanged (no suspension information) |
 
-## Setups
+## The active configuration
 
-- A snowmobile can have any number of named **setups** ("Trail", "Deep
-  powder", …). Names are unique per sled.
-- A new setup starts **blank** or as a **copy of any saved revision** of the
-  sled (values are copied for settings that still exist).
-- **At most one setup is active.** A new setup is made active only when you
-  tick "Make this the active setup"; **Set active** switches it later.
-- The **active setup can't be deleted** (the button is disabled with an
-  explanation): make another setup active first. Nothing is activated for
-  you.
-- Deleting a setup moves it, with its whole history, feedback and adjustment
-  photos, to **Recently Deleted**.
+The top of the page always shows the **active configuration** ("Trail 4 ·
+Active"), when it was saved, the **Active Ski Configuration** (installed skis
+and carbides, with **Change**) and the newest ride evaluation. Everything you
+adjust starts from the active configuration.
 
-## Settings list (custom settings and units)
+## Quick Tune and the Suspension Map
 
-- One list per snowmobile, shared by all its setups; each setup keeps its own
-  values, and any setting can be blank.
-- **Every sled starts empty.** There are no templates, starter settings or
-  factory values.
-- A setting has a name, a **zone** (where it is on the sled), a type
-  (**Number** or **Text**), an optional **unit** and notes. Units are free
-  text; **Clicks, Turns, mm, in, PSI** are offered as suggestions only.
-- Settings can be reordered within their zone and removed (they go to
-  Recently Deleted; history keeps their names and values).
+- **Quick Tune** is the default view; the **Suspension Map** (the sled
+  diagram with its zone panel) is the alternate view. The choice is
+  remembered in this browser (a cookie); `?view=quick|map` opens either.
+- Quick Tune lists every setting on one scrolling page in five sections:
+  **Front Ski Shocks, Front Track Shock, Rear Track Shock, Springs & Limiter
+  Strap, Rear General**. The seven stored zones map onto them (left and right
+  ski shocks and "front general" all go to Front Ski Shocks); no data changes.
+- **Left and right ski shocks combined:** a left and a right setting with the
+  same name, type and unit show as one row ("Compression · Both ski shocks")
+  and change together. **Left and right separately** splits the row; a row
+  whose saved or edited values differ is always shown split.
+- **Clicks, turns, holes, positions** get large **−** / **+** buttons (and can
+  still be typed); **measurements** (in, mm, psi, ...) are typed. Text
+  settings are typed.
+- Every changed value shows the saved one and the difference ("Was 10 clicks
+  · +2"). Change as many settings as you like, then **Save Adjustments**
+  (optional notes) or **Discard Changes**. Numbers that can't be saved are
+  flagged and block the save.
+- **Unsaved changes are protected:** following a link, switching view or
+  closing the tab asks first; changing skis or carbides waits until you save
+  or discard.
+- The **Suspension Map** keeps working as before: pick a zone, see its values,
+  **Record adjustment** (saves the next configuration the same way).
 
-## Interactive suspension diagram
+## Numbered Trail configurations
 
-- An original SledWerx top-down "blueprint" drawing, nose up (the sled's
-  left is on the left). Seven numbered zones:
-  1. Left ski shock, 2. Right ski shock, 3. Front general,
-  4. Front track shock, 5. Rear track shock, 6. Springs & limiter strap,
-  7. Rear general.
-- Markers are 44 px buttons; arrow keys, Home and End move between them;
-  the selected part is highlighted on the drawing.
-- The **All zones** list does the same job as plain text (screen readers,
-  keyboards). The zone panel shows the selected setup's current values.
+- There are no setup categories (Trail / Powder / Racing) any more: each
+  snowmobile has one numbered sequence, **Trail 1, Trail 2, Trail 3, ...**
+- Each configuration is a complete snapshot of every suspension value **and**
+  the skis and carbides it was saved with.
+- **Saving adjustments** creates the next number from the active
+  configuration (unchanged values copied) and makes it active. A configuration
+  is never edited or overwritten.
+- **No duplicates:** a save with nothing changed is refused; each save
+  carries an idempotency key, so a retry after a lost connection returns the
+  configuration already saved instead of a second one; a save made from a
+  configuration that is no longer active (someone else saved or switched in
+  the meantime) is refused with "Reload".
+- **History** lists every configuration, newest first: number, Active badge,
+  date and author, mileage/hours copied at the time, skis and carbides, what
+  changed from the configuration it was made from ("Trail 2 → Trail 5:
+  Compression: 10 → 12 clicks (+2), Skis: XPT → XCS"), the note and its ride
+  evaluations.
+- **View** shows a configuration in full. Viewing never activates it.
+- **Make active** switches to an older configuration without creating a new
+  one (see below). The next save then continues from it with the next number.
 
-## Adjustments and revision history
+## Skis and carbides
 
-- **Record adjustment** shows every setting with its current value; change
-  only what you adjusted. Zones are collapsible: the zone picked on the map
-  opens, others start collapsed, several can be open, and collapsed zones
-  show "N changes" or "Needs fixing". Values are kept when a zone collapses.
-- Each save creates the next **revision**. Unchanged values carry forward;
-  a blank value clears a setting. Saving with no change is refused.
-- Number settings accept numbers only (e.g. `12`, `-1.5`, `0.5`; `.5` is
-  read as `0.5`). Invalid values are flagged as you type and refused by the
-  server and the database.
-- **Mileage and engine hours** are copied from the current readings and can
-  be edited. They are stored on the revision only and **never create or
-  change a reading**, and don't affect maintenance or Ready/Not Ready.
-- **Duplicate saves** are prevented (one idempotency key per opened form);
-  **concurrent edits** are detected: if someone saved first, the save is
-  refused with "Reload it and try again".
-- Revisions can't be edited. The **history** shows, newest first: what
-  changed against the previous revision (e.g. "Rebound: 8 → 10 Clicks"), date
-  and time, who saved it, mileage and hours, "Restored from rev N", the note,
-  ride feedback and photos.
+- Ski models: **C&A Pro XPT**, **C&A Pro XCS**. Carbide lengths: **6"**,
+  **7.5"**, **9"**.
+- The **Active Ski Configuration** is one record per snowmobile, shown and
+  changed on the snowmobile page, the Garage Board and Quick Tune; a change
+  anywhere shows everywhere.
+- Changing it asks for confirmation, then: the current configuration is kept;
+  the next Trail configuration is created with every suspension value copied
+  and the new skis and carbides; it becomes active.
+- Older configurations keep the equipment they were saved with.
+  Configurations saved before Quick Tune show "Not recorded".
 
-## Ride feedback
+## Making an older configuration active
 
-- Any number of entries per revision: **Improved / Worse / No change**, the
-  ride date (not in the future) and an optional note.
-- Mechanics edit their own; owners and editors edit and remove any.
+Selecting, viewing and activating are separate steps. **Make active** opens a
+summary of what differs from the active configuration, then:
 
-## Comparisons and restore
+- **Same (or unrecorded) skis and carbides:** Activate.
+- **Different skis or carbides:** both are shown ("Trail 3 was set up with
+  C&A Pro XPT · 6" carbides / Installed now: C&A Pro XCS · 7.5" carbides").
+  SledWerx doesn't assume anything was changed on the sled: **Activate** stays
+  disabled until you tick "I've installed ...", which also updates the Active
+  Ski Configuration. **Cancel** changes nothing.
 
-- **Compare** any two revisions of the sled, also across setups. Settings that
-  differ show both values; unchanged settings fold under "Same in both".
-  Stacked on phones (no sideways scrolling).
-- **Restore this revision** previews what will change, then saves a **new**
-  revision with those values ("Restored revision N"). Nothing is overwritten
-  or erased. Settings removed since are listed as not restored.
+## Ride evaluations
+
+- Any number per configuration (adding one never creates a configuration):
+  overall rating **Liked / Neutral (needs more testing) / Disliked**; trail
+  conditions, any of **Loose Snow, Hard Pack, Perfect Groomed, Sloppy, Fresh
+  Snow**; ride date (today by default, editable, not in the future); the
+  **day's high °F** (optional, whole degrees −60 to 120); **ride notes**
+  (optional).
+- Shown in the configuration's history card, in the comparison and (newest)
+  at the top and on the snowmobile page and Garage Board. Switching
+  configurations keeps every evaluation.
+- Feedback saved before Quick Tune keeps its rating (Improved / Worse / No
+  change) and is shown as it was; editing it asks for a new-style rating.
+
+## Warnings about configurations that rode badly
+
+When you **make a configuration active**, **change skis or carbides**, or
+**edit values in Quick Tune**, SledWerx checks whether the result is a
+configuration that was rated **Disliked** before (same values for every
+setting, same skis, same carbides). If so it shows, without blocking:
+
+> This suspension configuration was previously rated Disliked under Loose
+> Snow conditions. Review your earlier feedback before trying it again.
+> (Trail 2)
+
+Conditions matter: the warning names the conditions it was disliked in and,
+if the same configuration was also **Liked** in other conditions, says so. A
+configuration without a Disliked rating never warns. Quick Tune also says
+when your edits match an existing configuration.
+
+## Comparing configurations
+
+Pick any two configurations: numbers, Active / Inactive, skis and carbides,
+every suspension difference with its change ("10 → 12 clicks (+2)"), the
+equipment change, and each one's ride evaluations (rating, conditions,
+temperature, notes). Settings that are the same are folded away. **Compare**
+on a history card compares it with the active one.
+
+## Settings list and the suggested template
+
+- One settings list per snowmobile. A snowmobile without settings offers
+  **Use suggested settings** (one general list: compression, rebound and
+  preload on both ski shocks; front track shock compression and rebound; rear
+  track shock compression, rebound and preload; limiter strap; torsion spring
+  position; track tension; names and units only, never values) or **Start
+  blank**. There are no riding-style templates.
+- Owners and editors can rename settings, change units and type, add, reorder
+  and remove settings at any time. Saved configurations keep their values
+  (with the names and units of the time).
 
 ## Photos
 
@@ -119,10 +181,10 @@ needs another migration.
 
 ## Garage Board and Wall Display
 
-- Cards, Compact and Wall Display show the active setup, revision and newest
-  feedback, with **View setup** (everyone), **Adjust** and **Ride feedback**
-  (owners, editors, mechanics). Setup and settings management stay on the
-  full page.
+- Cards, Compact and Wall Display show the active Trail configuration, its
+  newest ride evaluation and the Active Ski Configuration, with **View**
+  (everyone), **Adjust**, **Ride evaluation** and **Change** skis/carbides
+  (owners, editors, mechanics). Settings management stays on the full page.
 - On Wall Display the SledWerx keyboard adds a **±** key for suspension
   number values only (see [wall-display.md](wall-display.md)).
 
@@ -142,25 +204,25 @@ maintenance board's interval line ("Every 500 mi") uses the full muted gray
 
 | | Owner / editor | Mechanic | Viewer | No access |
 |---|---|---|---|---|
-| See setups, values, history, feedback, photos | ✅ | ✅ | ✅ | ❌ |
-| Create, rename, activate, delete setups | ✅ | ❌ | ❌ | ❌ |
-| Add, edit, reorder, remove settings; reference photos | ✅ | ❌ | ❌ | ❌ |
-| Record adjustments, restore revisions | ✅ | ✅ | ❌ | ❌ |
-| Add ride feedback and adjustment photos | ✅ | ✅ | ❌ | ❌ |
-| Edit feedback | any | own | ❌ | ❌ |
-| Remove feedback and photos | ✅ | ❌ | ❌ | ❌ |
+| See configurations, values, equipment, evaluations, photos | ✅ | ✅ | ✅ | ❌ |
+| Settings list (template, add, rename, units, reorder, remove); reference photos | ✅ | ❌ | ❌ | ❌ |
+| Save adjustments, make a configuration active, change skis and carbides | ✅ | ✅ | ❌ | ❌ |
+| Add ride evaluations and adjustment photos | ✅ | ✅ | ❌ | ❌ |
+| Edit ride evaluations | any | own | ❌ | ❌ |
+| Remove evaluations and photos | ✅ | ❌ | ❌ | ❌ |
 | Recently Deleted (restore) | ✅ | ❌ | ❌ | ❌ |
 
 The interface only hides what a role can't do; Row Level Security, the
-Migration 7 triggers and storage policies enforce it.
+Migration 7 triggers, the Migration 9 functions (which check the caller's
+permission on the sled) and storage policies enforce it.
 
 ## Recently Deleted
 
-Owners and editors see, for 30 days, deleted **setups** (restored with their
-whole history), **settings** (with their reference photos) and **ride
-feedback** removed on its own (restored exactly as it was: author, ride date,
-rating, note, revision). Feedback that was deleted together with its setup
-comes back with the setup and isn't listed separately. Nothing is permanently
+Owners and editors see, for 30 days, deleted **settings** (with their
+reference photos), **ride evaluations** removed on their own (restored
+exactly as they were: author, ride date, rating, conditions, temperature,
+notes, configuration), and any **setup** deleted before Quick Tune (restored
+with its history). Nothing is permanently
 deleted by the app; see Migration 8 below.
 
 ## Photo uploads feature flag
@@ -210,17 +272,32 @@ deleted by the app; see Migration 8 below.
 - **Photo recovery** from Recently Deleted is deferred to a future release.
 - **Photo links** expire after an hour; a page left open longer shows
   "Photo unavailable" until reloaded (same as issue photos).
-- **History size:** the page loads a sled's newest 500 revisions and shows
-  ten at a time.
+- **History size:** the page loads a sled's newest 500 configurations and
+  shows ten at a time.
+- **Remembered view** is per browser (a cookie), not per account.
+- **Leaving with unsaved changes:** links, view switches and closing the tab
+  ask first; the browser's Back button in the app doesn't.
+- **Older data:** sleds with several setups from before Quick Tune keep them
+  internally; their revisions are numbered into one Trail sequence in the
+  order they were saved, and the active setup's latest revision is the active
+  configuration.
 
 ## Tests
 
 - Unit: `src/lib/suspension/*.test.ts`, `src/lib/keyboard/edit.test.ts`.
-- Database: `supabase/tests/database/010_suspension.test.sql` (pgTAP).
+  `quick-tune.test.ts` covers sections and left/right pairing, + / − steps,
+  differences, pending changes, equipment, warnings and the template.
+- Database: `supabase/tests/database/010_suspension.test.sql` and
+  `014_suspension_quick_tune.test.sql` (pgTAP); Migration 9 rollback:
+  `scripts/test-migration-9-rollback.sh`.
 - Browser: `e2e/suspension.spec.ts` (desktop and phone, real local Supabase
-  stack in CI): roles end to end, adjustments, history, feedback, compare,
-  restore, photos and cleanup, sled page and Garage Board, keyboard,
-  accessibility (axe), no sideways scrolling, 44 px targets. Playwright
+  stack in CI): first visit and template, Quick Tune batch saves, discard and
+  left/right, skis and carbides from either screen with history snapshots,
+  activating older configurations (matching and mismatched equipment,
+  cancel), ride evaluations with conditions and temperature, Disliked
+  warnings, comparison, unsaved-change protection, the Suspension Map, roles,
+  snowmobile page, Garage Board and Wall Display, photos off, the leftover
+  photo file case, accessibility (axe), no sideways scrolling, 44 px targets. Playwright
   starts two servers from the same build: the main one with photo uploads
   **off** (as in production; includes a test that no upload control is
   offered anywhere and that existing photos stay visible and removable) and

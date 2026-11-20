@@ -67,3 +67,14 @@ test("public pages pass automated accessibility checks, color contrast included;
   const { violations } = await new AxeBuilder({ page }).withRules(["color-contrast"]).analyze();
   expect(violations).toEqual([]);
 });
+
+test("the scheduled cleanup endpoint refuses calls without the cron secret", async ({ request }) => {
+  const attempts: Record<string, string>[] = [{}, { authorization: "Bearer not-the-secret" }];
+  for (const headers of attempts) {
+    const response = await request.get("/api/cron/cleanup", { headers });
+    // 401 with a CRON_SECRET configured, 503 without one; never a run.
+    expect([401, 503]).toContain(response.status());
+    expect(Object.keys(await response.json())).toEqual(["error"]);
+  }
+  expect((await request.post("/api/cron/cleanup")).status()).toBe(405);
+});

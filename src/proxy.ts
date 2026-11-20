@@ -3,7 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { updateSession } from "@/lib/supabase/proxy";
 
 /** Pages that require a signed-in user. */
-const PROTECTED_PREFIXES = ["/garage"];
+const PROTECTED_PREFIXES = ["/garage", "/admin"];
 /** Pages a signed-in user is sent past, straight to their garage. */
 const SIGNED_OUT_ONLY = ["/", "/login", "/signup"];
 

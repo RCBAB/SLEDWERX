@@ -18,9 +18,64 @@ below call for it, and preferably after talking it through.
 
 ## Order matters
 
-Roll back the newest migration first: Migration 7, then 6, then 5, then 4, then 3, then 2, then 1. Each
+Roll back the newest migration first: Migration 8, then 7, then 6, then 5, then 4, then 3, then 2, then 1. Each
 older rollback fails safely (changing nothing) while a newer migration that
 depends on it is still applied.
+
+---
+
+## `20261122090000_rollback.sql` (Migration 8)
+
+Undoes `supabase/migrations/20261122090000_recently_deleted_cleanup.sql`: the
+cleanup tables (settings, runs, candidates, registries, file claims), the
+cleanup functions including the eight `public.cleanup_*` API functions, the `cleanup_review` view, the
+`cleanup_count_deletes` and `storage_claim_guard` triggers, and
+`sleds_photo_path_idx`. It puts `private.purge_expired_records()` back exactly
+as Migration 2 left it, and drops the two restrictive storage policies Migration 8
+added. The ten earlier storage policies and every other object are untouched.
+
+**It cannot bring back anything the cleanup already deleted.** Records and
+files removed by a delete run are gone; restore them from the backup taken
+before deletion was authorized. The run history is dropped with the tables.
+
+### When to use it
+
+Only when **all** of these are true:
+
+1. Migration 8 was applied (`20261122090000` is listed under Remote).
+2. A post-deployment check failed, or the cleanup must be withdrawn.
+3. Deletion is switched off, no cleanup run is in progress and no file is
+   claimed. Otherwise the script refuses and changes nothing.
+4. The scheduled cleanup job is disabled (or not deployed).
+
+### Step 1: Switch deletion off and keep the history (if needed)
+
+```sql
+select private.revoke_cleanup_deletion();
+select * from private.cleanup_runs where status = 'running';             -- must be empty
+select * from private.storage_cleanup_claims where status = 'claimed';  -- must be empty
+-- Optional: export private.cleanup_runs and private.cleanup_candidates (Table Editor → Export).
+```
+
+### Step 2: Run the rollback
+
+In **SQL Editor**, first line:
+```sql
+set sledwerx.confirm_rollback = '20261122090000';
+```
+then paste the whole of `20261122090000_rollback.sql` and run it once. The
+expected result is the notice `Rollback complete: Migration 8 removed;
+purge_expired_records() is back to its Migration 2 form; Migrations 1-7
+untouched.` Any error means nothing changed.
+
+### Step 3: Verify (read-only)
+
+`npx supabase migration list --remote` should show `20261122090000` under
+Local only, and this should return no rows:
+
+```sql
+select tablename from pg_tables where schemaname = 'private' and tablename like 'cleanup%';
+```
 
 ---
 
@@ -38,11 +93,13 @@ Only when **all** of these are true:
 
 1. Migration 7 was applied (`20261121090000` is listed under Remote).
 2. A post-deployment check failed.
-3. No suspension setting, setup, revision, feedback, photo or
+3. Migration 8 is not applied (or was rolled back first; the script refuses
+   otherwise).
+4. No suspension setting, setup, revision, feedback, photo or
    suspension-photo file exists (Step 1), including Recently Deleted.
    Otherwise the script refuses and changes nothing: once people use
    suspension tuning, fix forward instead.
-4. The app version that uses Migration 7 is not deployed (roll back in
+5. The app version that uses Migration 7 is not deployed (roll back in
    Vercel first).
 
 ### Step 1: Confirm nothing uses suspension tuning (read-only)

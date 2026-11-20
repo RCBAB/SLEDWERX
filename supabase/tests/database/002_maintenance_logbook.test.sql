@@ -431,6 +431,19 @@ set local request.jwt.claims = '';
 alter table public.maintenance_entries disable trigger guard;
 update public.maintenance_entries set deleted_at = now() - interval '31 days' where id = '5f000000-0000-0000-0000-000000000003';
 alter table public.maintenance_entries enable trigger guard;
+-- Migration 8 and later: the purge needs deletion authorized (7 report runs and a
+-- backup reference). Authorized here inside this test's transaction only.
+do $$
+begin
+  if to_regclass('private.cleanup_settings') is not null then
+    insert into private.cleanup_runs (mode, source, status, started_at, finished_at, records_step_at, files_step_at)
+    select 'report', 'scheduled', 'completed', now() - d * interval '1 day', now() - d * interval '1 day',
+           now() - d * interval '1 day', now() - d * interval '1 day'
+    from generate_series(1, 7) d;
+    update private.cleanup_settings set deletion_enabled = true, deletion_backup_reference = 'test transaction';
+  end if;
+end;
+$$;
 select is((private.purge_expired_records() ->> 'entries')::int, 1, 'cleanup removes entries past 30 days');
 select is((select count(*)::int from public.sled_readings where id = '5e000000-0000-0000-0000-000000000008'), 1,
   'cleanup keeps the entry''s reading');

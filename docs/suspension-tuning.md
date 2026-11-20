@@ -7,7 +7,8 @@ needs another migration.
 
 > **Release blocker (production):** a mechanic's photo file can stay in
 > storage when its upload succeeds but saving its record fails. Removing
-> such files depends on the approved, not yet built **Migration 8** cleanup.
+> such files depends on the **Migration 8** cleanup ([cleanup.md](cleanup.md)),
+> which must be applied and verified before release.
 > See [Release blocker: leftover photo files](#release-blocker-leftover-photo-files).
 
 ## Where to find it
@@ -162,13 +163,14 @@ deleted by the app; see Migration 8 below.
   file again; mechanics can't** (storage policy: only owners and editors
   delete files). Such a file stays in storage, unlisted.
 - Existing storage permissions **must not be weakened** to fix this.
-- **Migration 8** (approved, not built) must remove unreferenced files
-  safely (only app photo paths, no record of any state pointing at them,
-  older than 24 hours, re-checked before each removal), start in
-  **report-only** mode, and permanently delete only after separate approval.
-- The cleanup must be **implemented and verified before the photo feature is
-  released to production.** Details: "Migration 8: planned cleanup" in
-  [database.md](database.md).
+- **Migration 8** (built; [cleanup.md](cleanup.md)) removes unreferenced
+  files safely (only app photo paths, no record of any state pointing at them,
+  at least 24 hours old, re-checked under a lock before each removal), starts
+  in **report-only** mode, and permanently deletes only after separate
+  approval. Claimed and removed paths are closed to new uploads.
+- The cleanup must be **applied and verified in deletion mode before the
+  photo feature is released to production**
+  ([cleanup-release-runbook.md](cleanup-release-runbook.md), steps B1–B9).
 
 ## Known limitations
 

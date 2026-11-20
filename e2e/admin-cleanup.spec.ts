@@ -4,7 +4,7 @@ import AxeBuilder from "@axe-core/playwright";
 import { createClient } from "@supabase/supabase-js";
 import { expect, test, type Page } from "@playwright/test";
 
-import { NEEDS_SUPABASE, PASSWORD, addSled, hasSupabase, shareSled, signUp, uniqueEmail } from "./helpers";
+import { NEEDS_SUPABASE, PASSWORD, addSled, hasSupabase, shareSled, signIn, signUp, uniqueEmail } from "./helpers";
 
 // The administrator cleanup dashboard against the local Supabase stack. The
 // tests change system-wide cleanup data, so they run in the desktop project
@@ -83,6 +83,13 @@ test.describe("an administrator", () => {
   let admin: string;
 
   test.beforeAll(() => resetCleanup());
+  // Each test has its own browser context: sign the administrator in again.
+  test.beforeEach(async ({ page }, testInfo) => {
+    if (!admin || testInfo.title.startsWith("sees the empty state")) return;
+    await page.goto(`/login?next=${encodeURIComponent(URL)}`);
+    await signIn(page, admin);
+    await expect(page).toHaveURL(/\/admin\/cleanup$/);
+  });
   test.afterAll(() => {
     resetCleanup();
     if (admin) sql(`delete from private.app_administrators where user_id = '${userId(admin)}';`);

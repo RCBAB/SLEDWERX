@@ -135,6 +135,8 @@ If the variables are missing, the app still runs: the proxy skips the session re
 
 The schema lives in version-controlled SQL migrations in `supabase/migrations/`, with pgTAP tests in `supabase/tests/`. Migrations are reviewed in pull requests and applied to the live project manually. CI never applies them. See [docs/database.md](docs/database.md) for the data model, permissions, and the steps for applying a migration.
 
+Records past their 30-day recovery period and orphaned photo files are removed by the Migration 8 cleanup (report-only first, deletion off by default): see [docs/cleanup.md](docs/cleanup.md).
+
 ```bash
 npm run db:start
 ```

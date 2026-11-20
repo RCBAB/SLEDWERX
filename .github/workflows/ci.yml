@@ -91,6 +91,42 @@ jobs:
       # Rollback scripts are never applied to any real database by CI.
       # Order: newest first. After each rollback, the tests of the remaining
       # migrations run again on the result; finally Migration 1's rollback.
+      # Migration 8: the cleanup job against the local stack (real users,
+      # uploads, storage policies and Storage API removals).
+      - name: Cleanup job integration test (local stack)
+        run: |
+          eval "$(npx supabase status -o env)"
+          export CLEANUP_IT_URL="$API_URL"
+          export CLEANUP_IT_SECRET_KEY="${SECRET_KEY:-$SERVICE_ROLE_KEY}"
+          export CLEANUP_IT_PUBLISHABLE_KEY="${PUBLISHABLE_KEY:-$ANON_KEY}"
+          npx vitest run src/lib/cleanup/cleanup.integration.test.ts
+        env:
+          THROWAWAY_DATABASE: "yes"
+          CLEANUP_IT_PSQL: docker exec -i supabase_db_sledwerx psql -U postgres
+      # Migration 8: the cleanup's locking, checked with two real sessions.
+      - name: Cleanup concurrency test (local stack)
+        run: scripts/test-cleanup-concurrency.sh
+        env:
+          THROWAWAY_DATABASE: "yes"
+          PSQL: docker exec -i supabase_db_sledwerx psql -U postgres
+      - name: Migration 8 rollback test (local stack)
+        run: scripts/test-migration-8-rollback.sh
+        env:
+          THROWAWAY_DATABASE: "yes"
+          PSQL: docker exec -i supabase_db_sledwerx psql -U postgres
+      - name: Migration 1-7 tests after Migration 8 rollback (local stack)
+        run: >-
+          npx supabase test db
+          supabase/tests/database/001_foundation.test.sql
+          supabase/tests/database/002_maintenance_logbook.test.sql
+          supabase/tests/database/003_save_maintenance_entry.test.sql
+          supabase/tests/database/004_sled_photos_and_create_sled.test.sql
+          supabase/tests/database/005_service_records.test.sql
+          supabase/tests/database/006_maintenance_board.test.sql
+          supabase/tests/database/007_garage_board.test.sql
+          supabase/tests/database/008_meter_updates.test.sql
+          supabase/tests/database/009_issues.test.sql
+          supabase/tests/database/010_suspension.test.sql
       - name: Migration 7 rollback test (local stack)
         run: scripts/test-migration-7-rollback.sh
         env:
@@ -207,6 +243,8 @@ jobs:
           eval "$(npx supabase status -o env)"
           export NEXT_PUBLIC_SUPABASE_URL="$API_URL" NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY="${PUBLISHABLE_KEY:-$ANON_KEY}"
           export E2E_SUPABASE=1 MAILPIT_URL="${MAILPIT_URL:-${INBUCKET_URL:-http://127.0.0.1:54324}}"
+          # Administrator setup for the cleanup dashboard tests (throwaway stack only).
+          export E2E_PSQL="docker exec -i supabase_db_sledwerx psql -U postgres"
           npx playwright test
       - if: failure()
         uses: actions/upload-artifact@v4

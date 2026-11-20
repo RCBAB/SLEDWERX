@@ -594,6 +594,22 @@ reset role;
 set local request.jwt.claims = '';
 select throws_ok($$ delete from public.garages where id = (select v::uuid from t where k = 'garage_alex@example.com') $$,
   '23503', null, 'deleting a garage row directly cannot cascade-delete its sleds');
+-- Migration 8 and later: the purge needs deletion authorized (7 report runs and a
+-- backup reference). Authorized here inside this test's transaction only.
+do $$
+begin
+  if to_regclass('private.cleanup_settings') is not null then
+    -- This test's own record table is not in the cleanup registry (the
+    -- registry check would rightly stop the purge); it is no longer needed.
+    drop table public.test_service_records;
+    insert into private.cleanup_runs (mode, source, status, started_at, finished_at, records_step_at, files_step_at)
+    select 'report', 'scheduled', 'completed', now() - d * interval '1 day', now() - d * interval '1 day',
+           now() - d * interval '1 day', now() - d * interval '1 day'
+    from generate_series(1, 7) d;
+    update private.cleanup_settings set deletion_enabled = true, deletion_backup_reference = 'test transaction';
+  end if;
+end;
+$$;
 select is((private.purge_expired_records() ->> 'sleds')::int, 1, 'cleanup removes sleds past 30 days');
 select is_empty($$ select 1 from public.sleds where id = 'aaaaaaaa-0000-0000-0000-000000000002' $$,
   'the expired sled is gone');

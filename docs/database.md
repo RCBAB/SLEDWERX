@@ -20,9 +20,10 @@ the helpers created in stage 1.
 | 6 | Issue log (Phase 6.1): `sled_issues` (priority, open/resolved, mileage copy, link to the completed service record that fixed it), `sled_issue_photos`, private `issue-photos` bucket | Applied (manually, SQL Editor, 2026-11-18) |
 | 6b | Repairs; installed parts and modifications with install/removal history (can link to logbook parts); shopping list | Planned |
 | 7 | Suspension setup & tuning (Phase 6.2): a custom settings list per sled (no defaults), named setups with one active setup, append-only revisions with restore, ride feedback, reference and adjustment photos in a private `suspension-photos` bucket | Applied (manually, SQL Editor, 2026-11-18) |
-| 8 | Attachments: private Storage bucket, file metadata, size/type validation, storage RLS, cleanup with Recently Deleted and account deletion | Planned |
-| 9 | Community library: opt-in rider profiles, published setup copies, reviews, moderation | Planned |
-| 10 | Offline sync: change feed, conflict records and resolution | Planned |
+| 8 | Recently Deleted & storage cleanup ([cleanup.md](cleanup.md)): purge of every table past its 30-day recovery period (issues and suspension included), cascade-aware limits, report-only runs, orphaned-photo detection with file claims; deletion off by default | Built on a branch (Checkpoints 1–4: database, daily job, administrator dashboard, retention; release runbook in [cleanup-release-runbook.md](cleanup-release-runbook.md)); not applied, not deployed |
+| 9 | Attachments: private Storage bucket, file metadata, size/type validation, storage RLS, cleanup with Recently Deleted and account deletion | Planned |
+| 10 | Community library: opt-in rider profiles, published setup copies, reviews, moderation | Planned |
+| 11 | Offline sync: change feed, conflict records and resolution | Planned |
 | Future | Suspension test sessions and manual ride logs (moved out of Phase 6.2) | Planned |
 
 ## Ownership model
@@ -118,16 +119,14 @@ is stored. The provider is chosen when the sharing interface is built.
   Restore the garage first, or restore the sled into another garage.
 - A garage row can never be removed while it still has sleds (no cascade), so
   a mistaken garage delete cannot wipe out sleds and their history.
-- `private.purge_expired_records()` permanently removes records past 30 days,
-  resolved invitations (which contain email addresses), and revoked shares
-  older than 30 days. It is **not scheduled**. Run it manually from the SQL
-  editor, or schedule it later (for example with `pg_cron`) once approved.
-- **Known gap:** `purge_expired_records()` predates Migrations 6 and 7 and
-  does not include `sled_issues`, `sled_issue_photos` or the five suspension
-  tables. Their Recently Deleted rows are hidden from users and can no longer
-  be restored after 30 days, but they are not permanently removed yet. Their
-  Storage files also stay until the planned storage cleanup. Extending the
-  purge (and scheduling it) is a separate, future change that needs approval.
+- Permanent removal after 30 days (every Recently Deleted table, resolved
+  invitations, revoked shares) is done by the Migration 8 cleanup, described
+  in [cleanup.md](cleanup.md): report-only first, limited per run, and
+  deletion only once separately authorized. `private.purge_expired_records()`
+  runs the same guarded engine manually. Nothing is scheduled yet.
+- Until Migration 8 is applied and deletion is authorized, rows past 30 days
+  stay in the database (hidden, no longer restorable) and their Storage files
+  stay too.
 
 ## Audit history
 
@@ -667,9 +666,9 @@ profile, preferences, garages, sleds, shares, invitations for their sleds, and
 those sleds' audit history. Actor columns (`created_by`, `updated_by`, etc.)
 are plain ids without foreign keys, so deletion never rewrites other owners'
 records. Once the account is gone, those ids no longer identify anyone.
-Storage files (sled photos, and later attachments) are removed by the
-Storage cleanup (Phase 7 / migration 8), which must run before the auth user
-is deleted.
+Their Storage files (snowmobile, issue and suspension photos) are no longer
+referenced afterwards; the Migration 8 cleanup finds and removes them as
+orphans once they are at least 24 hours old ([cleanup.md](cleanup.md)).
 
 ## Testing
 
@@ -687,7 +686,9 @@ Supabase stack:
 - `scripts/db-api-smoke-test.mjs`, which signs up real users through Supabase
   Auth and exercises sharing, RLS, the maintenance logbook and conflict
   detection through the REST API with `supabase-js`
-- the rollback tests, newest first: 7, 6, 5, 4, 3, 2, 1. After each rollback, the
+- `scripts/test-cleanup-concurrency.sh`, which checks the Migration 8
+  cleanup's locking with two real database sessions
+- the rollback tests, newest first: 8, 7, 6, 5, 4, 3, 2, 1. After each rollback, the
   tests of the remaining migrations run again on the result
 
 CI never connects to the live project.

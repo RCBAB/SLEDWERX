@@ -45,3 +45,14 @@ test("an expired or invalid email link shows an error on sign in", async ({ page
   await expect(page).toHaveURL(/\/login\?error=link$/);
   await expect(page.getByText("That link is invalid or has expired.", { exact: false })).toBeVisible();
 });
+
+test("the scheduled cleanup endpoint refuses calls without the cron secret", async ({ request }) => {
+  const attempts: Record<string, string>[] = [{}, { authorization: "Bearer not-the-secret" }];
+  for (const headers of attempts) {
+    const response = await request.get("/api/cron/cleanup", { headers });
+    // 401 with a CRON_SECRET configured, 503 without one; never a run.
+    expect([401, 503]).toContain(response.status());
+    expect(Object.keys(await response.json())).toEqual(["error"]);
+  }
+  expect((await request.post("/api/cron/cleanup")).status()).toBe(405);
+});

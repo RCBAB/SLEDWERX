@@ -14,6 +14,7 @@ import { describeChange, equipmentChanges, formatValue, revisionChanges } from "
 import { QUICK_TUNE_SECTIONS, baseOf, byNumberDesc, sectionRows } from "@/lib/suspension/quick-tune";
 import { ZONE_LABEL, configName, type SuspensionFeedback, type SuspensionRevision, type SuspensionSetting } from "@/lib/suspension/types";
 
+import { MeasurementPhotoButton } from "./measurement-photos";
 import { PhotoGrid } from "./photos";
 import { ActiveBadge, ConditionChips, EquipmentText, LocalDate, RatingBadge, useRun } from "./shared";
 
@@ -323,13 +324,17 @@ export function ConfigurationDetails({
   active,
   role,
   userId,
+  measurement,
 }: {
   revision: SuspensionRevision;
   settings: SuspensionSetting[];
   active: boolean;
   role: SledRole;
   userId: string;
+  /** Measurement photos of this configuration (Migration 10), when available. */
+  measurement?: { canAdd: boolean; open: (setting: SuspensionSetting, name: string) => void } | null;
 }) {
+  const photoCount = (settingId: string) => revision.measurementPhotos.filter((m) => m.settingId === settingId).length;
   // Settings that still exist, in Quick Tune order; then values of settings removed since.
   const shownIds = new Set<string>();
   const sections = QUICK_TUNE_SECTIONS.map((section) => {
@@ -364,7 +369,19 @@ export function ConfigurationDetails({
                 const value = revision.values[r.id]?.value ?? null;
                 return (
                   <li key={r.id} className="flex items-center justify-between gap-4 px-4 py-2.5" data-testid="detail-value">
-                    <span className="min-w-0 break-words font-medium">{r.label}</span>
+                    <span className="min-w-0 break-words font-medium">
+                      {r.label}
+                      {measurement && (photoCount(r.id) > 0 || measurement.canAdd) ? (
+                        <span className="ml-3 inline-block align-middle">
+                          <MeasurementPhotoButton
+                            count={photoCount(r.id)}
+                            name={r.label}
+                            configNumber={revision.configNumber}
+                            onClick={() => measurement.open(r.setting, r.label)}
+                          />
+                        </span>
+                      ) : null}
+                    </span>
                     <span className={cn("shrink-0 font-display text-xl font-bold tabular-nums", value == null && "text-muted")}>
                       {formatValue(value, r.setting.unit, r.setting.valueType)}
                     </span>

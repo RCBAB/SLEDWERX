@@ -11,7 +11,15 @@ import { changedValues } from "@/lib/suspension/diff";
 import { suspensionErrorMessage, type SuspensionSubject } from "@/lib/suspension/errors";
 import { isSchemaMissing, parseSnapshot } from "@/lib/suspension/queries";
 import { SUGGESTED_SETTINGS } from "@/lib/suspension/template";
-import { MAX_SUSPENSION_PHOTOS, isCarbideLength, isSkiModel, isZone, settingsInZone, type SettingValueType } from "@/lib/suspension/types";
+import {
+  MAX_MEASUREMENT_PHOTOS,
+  MAX_SUSPENSION_PHOTOS,
+  isCarbideLength,
+  isSkiModel,
+  isZone,
+  settingsInZone,
+  type SettingValueType,
+} from "@/lib/suspension/types";
 import { adjustmentSchema, checkSettingValue, feedbackSchema, settingSchema, uuidSchema } from "@/lib/suspension/validation";
 import { futureDateError } from "@/lib/sleds/validation";
 import { createClient } from "@/lib/supabase/server";
@@ -74,7 +82,7 @@ function failed(error: DbError, subject: SuspensionSubject, extra?: Partial<Susp
 
 /** A soft delete or restore of one row, with the version check. */
 async function setDeleted(
-  table: "suspension_setups" | "suspension_settings" | "suspension_feedback" | "suspension_photos",
+  table: "suspension_setups" | "suspension_settings" | "suspension_feedback" | "suspension_photos" | "sled_measurement_photos",
   id: string,
   version: number,
   deleted: boolean,
@@ -565,6 +573,108 @@ export async function addSuspensionPhoto(
     .single();
   if (error || !data) return failed(error, "photo");
   return done(data.id);
+}
+
+// ---------------------------------------------------------------------------
+// Measurement photos (Migration 10): up to 2 per setting per configuration.
+// Never creates a configuration or changes values, numbers or the active
+// one. The file is uploaded from the browser into the configuration's
+// folder; these record it. Add: owners, editors, mechanics. Replace and
+// remove: owners and editors. Adding and replacing need the photo-upload
+// feature flag; removing doesn't.
+// ---------------------------------------------------------------------------
+export type MeasurementPhotoCheck = { error?: string; canRemoveFiles: boolean };
+
+/**
+ * Checked BEFORE a file is uploaded: the configuration and setting still
+ * exist, the user may add (or replace), and there's room (2 at most) unless
+ * replacing.
+ */
+export async function prepareMeasurementPhoto(
+  sledId: string,
+  revisionId: string,
+  settingId: string,
+  replacing: boolean,
+): Promise<MeasurementPhotoCheck> {
+  const user = await signedInUser();
+  const none = (error: string): MeasurementPhotoCheck => ({ error, canRemoveFiles: false });
+  if (!suspensionPhotoUploadsEnabled()) return none(PHOTO_UPLOADS_OFF);
+  if (![sledId, revisionId, settingId].every((id) => uuidSchema.safeParse(id).success)) return none("Photo not found.");
+  const sled = await getSled(sledId, user.id);
+  if (!sled) return none("Snowmobile not found.");
+  const can = suspensionCapabilities(sled.role, { photoUploads: true });
+  if (replacing ? !can.canReplaceMeasurementPhotos : !can.canAddMeasurementPhotos) {
+    return none(replacing ? "Only the owner or an editor can replace photos." : "You can't add photos here.");
+  }
+  const supabase = await createClient();
+  const [{ data: revision }, { data: setting }] = await Promise.all([
+    supabase.from("suspension_revisions").select("id").eq("id", revisionId).eq("sled_id", sledId).is("deleted_at", null).maybeSingle(),
+    supabase.from("suspension_settings").select("id").eq("id", settingId).eq("sled_id", sledId).is("deleted_at", null).maybeSingle(),
+  ]);
+  if (!revision || !setting) return none("This was removed meanwhile. Reload the page and try again.");
+  if (!replacing) {
+    const { count, error } = await supabase
+      .from("sled_measurement_photos")
+      .select("id", { count: "exact", head: true })
+      .eq("revision_id", revisionId)
+      .eq("setting_id", settingId)
+      .is("deleted_at", null);
+    if (error) return none(isSchemaMissing(error) ? SCHEMA_MISSING : "Something went wrong. Please try again.");
+    if ((count ?? 0) >= MAX_MEASUREMENT_PHOTOS) return none(`At most ${MAX_MEASUREMENT_PHOTOS} photos per measurement.`);
+  }
+  return { canRemoveFiles: can.canRemove };
+}
+
+const pathFor = (sledId: string, revisionId: string, path: string) => PHOTO_PATH.test(path) && path.startsWith(`${sledId}/${revisionId}/`);
+
+/** Record an uploaded file as the next photo of a measurement on one configuration. */
+export async function addMeasurementPhoto(
+  sledId: string,
+  revisionId: string,
+  settingId: string,
+  path: string,
+): Promise<SuspensionActionState> {
+  await signedInUser();
+  if (!suspensionPhotoUploadsEnabled()) return { error: PHOTO_UPLOADS_OFF };
+  if (![sledId, revisionId, settingId].every((id) => uuidSchema.safeParse(id).success)) return { error: "Photo not found." };
+  if (!pathFor(sledId, revisionId, path)) return { error: "That photo can't be used." };
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("add_suspension_measurement_photo", {
+    p_revision_id: revisionId,
+    p_setting_id: settingId,
+    p_path: path,
+  });
+  const saved = data as { id?: string } | null;
+  if (error || !saved?.id) return isSchemaMissing(error) ? { error: SCHEMA_MISSING } : failed(error, "photo");
+  return done(saved.id);
+}
+
+/** Replace one photo of one configuration with an uploaded file (other configurations keep theirs). Owners and editors. */
+export async function replaceMeasurementPhoto(
+  sledId: string,
+  revisionId: string,
+  photoId: string,
+  version: number,
+  path: string,
+): Promise<SuspensionActionState> {
+  await signedInUser();
+  if (!suspensionPhotoUploadsEnabled()) return { error: PHOTO_UPLOADS_OFF };
+  if (!uuidSchema.safeParse(photoId).success || !validVersion(version)) return { error: "Reload the page and try again." };
+  if (!pathFor(sledId, revisionId, path)) return { error: "That photo can't be used." };
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("replace_suspension_measurement_photo", {
+    p_photo_id: photoId,
+    p_version: version,
+    p_path: path,
+  });
+  const saved = data as { id?: string } | null;
+  if (error || !saved?.id) return isSchemaMissing(error) ? { error: SCHEMA_MISSING } : failed(error, "photo");
+  return done(saved.id);
+}
+
+/** Remove one photo of one configuration (Recently Deleted; the file stays for other configurations). Owners and editors. */
+export async function removeMeasurementPhoto(photoId: string, version: number): Promise<SuspensionActionState> {
+  return setDeleted("sled_measurement_photos", photoId, version, true, "photo");
 }
 
 /** Remove a photo (Recently Deleted, like other records). Owners and editors. */

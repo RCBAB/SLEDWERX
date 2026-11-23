@@ -191,6 +191,8 @@ recorded) when:
 
 Migration 9 (Quick Tune) adds `sled_suspension_state` (no Recently Deleted; removed with its sled) and gives it the `cleanup_count_deletes` trigger, so the registry stays complete. Its pgTAP test checks `cleanup_registry_problems()` is empty.
 
+Migration 10 (measurement photos) registers `sled_measurement_photos` (purged 30 days after Recently Deleted, children first) and its `path` column as a reference of the `suspension-photos` bucket, with the claim guard. Several rows can share one file; the file stays while any of them exists.
+
 In buckets under 100 files the percentage does not apply, but the
 100-files-per-run limit, the 24-hour age, the reference checks, the
 metadata checks and the claim lock all still do. A failed reference lookup

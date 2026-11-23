@@ -59,6 +59,9 @@ export function suspensionCapabilities(role: SledRole, { photoUploads = false }:
     canAddFeedback: adjusts,
     canAddReferencePhotos: manages && photoUploads,
     canAddAdjustmentPhotos: adjusts && photoUploads,
+    /** Measurement photos (Migration 10): add (owners, editors, mechanics), replace (owners, editors). */
+    canAddMeasurementPhotos: adjusts && photoUploads,
+    canReplaceMeasurementPhotos: manages && photoUploads,
     canRemove: manages,
   };
 }

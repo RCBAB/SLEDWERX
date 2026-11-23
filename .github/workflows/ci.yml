@@ -91,8 +91,30 @@ jobs:
       # Rollback scripts are never applied to any real database by CI.
       # Order: newest first. After each rollback, the tests of the remaining
       # migrations run again on the result; finally Migration 1's rollback.
-      # Migration 9 first (it leaves the database at the Migration 8 state); the
-      # cleanup tests below then run against a clean Migration 8 database.
+      # Migrations 10 and 9 first (leaving the Migration 8 state); the cleanup
+      # tests below then run against a clean Migration 8 database.
+      - name: Migration 10 rollback test (local stack)
+        run: scripts/test-migration-10-rollback.sh
+        env:
+          THROWAWAY_DATABASE: "yes"
+          PSQL: docker exec -i supabase_db_sledwerx psql -U postgres
+      - name: Migration 1-9 tests after Migration 10 rollback (local stack)
+        run: >-
+          npx supabase test db
+          supabase/tests/database/001_foundation.test.sql
+          supabase/tests/database/002_maintenance_logbook.test.sql
+          supabase/tests/database/003_save_maintenance_entry.test.sql
+          supabase/tests/database/004_sled_photos_and_create_sled.test.sql
+          supabase/tests/database/005_service_records.test.sql
+          supabase/tests/database/006_maintenance_board.test.sql
+          supabase/tests/database/007_garage_board.test.sql
+          supabase/tests/database/008_meter_updates.test.sql
+          supabase/tests/database/009_issues.test.sql
+          supabase/tests/database/010_suspension.test.sql
+          supabase/tests/database/011_cleanup.test.sql
+          supabase/tests/database/012_cleanup_dashboard.test.sql
+          supabase/tests/database/013_cleanup_retention.test.sql
+          supabase/tests/database/014_suspension_quick_tune.test.sql
       - name: Migration 9 rollback test (local stack)
         run: scripts/test-migration-9-rollback.sh
         env:

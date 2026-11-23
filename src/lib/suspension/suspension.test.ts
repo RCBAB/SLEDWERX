@@ -225,6 +225,8 @@ describe("permissions", () => {
       canAddFeedback: true,
       canAddReferencePhotos: true,
       canAddAdjustmentPhotos: true,
+      canAddMeasurementPhotos: true,
+      canReplaceMeasurementPhotos: true,
       canRemove: true,
     });
     expect(suspensionCapabilities("editor").canManage).toBe(true);
@@ -234,6 +236,8 @@ describe("permissions", () => {
       canAddFeedback: true,
       canAddReferencePhotos: false,
       canAddAdjustmentPhotos: true,
+      canAddMeasurementPhotos: true,
+      canReplaceMeasurementPhotos: false,
       canRemove: false,
     });
     expect(Object.values(suspensionCapabilities("viewer", { photoUploads: true })).every((v) => v === false)).toBe(true);
@@ -244,6 +248,8 @@ describe("permissions", () => {
       for (const can of [suspensionCapabilities(role), suspensionCapabilities(role, { photoUploads: false })]) {
         expect(can.canAddReferencePhotos).toBe(false);
         expect(can.canAddAdjustmentPhotos).toBe(false);
+        expect(can.canAddMeasurementPhotos).toBe(false);
+        expect(can.canReplaceMeasurementPhotos).toBe(false);
       }
     }
     // Everything else is unchanged by the flag.

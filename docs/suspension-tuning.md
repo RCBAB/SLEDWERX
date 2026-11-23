@@ -161,6 +161,42 @@ on a history card compares it with the active one.
   and remove settings at any time. Saved configurations keep their values
   (with the names and units of the time).
 
+## Measurement photos (Migration 10)
+
+Optional photos that document a measurement **as it was on one snowmobile
+and one Trail configuration** (not a reference library or instructions).
+
+- **Up to 2 per measurement per configuration.** A small camera and count
+  (0/2, 1/2, 2/2) sits beside each setting in Quick Tune (the active
+  configuration) and in **View Trail N** (any configuration, so older ones
+  can be documented later). A combined left/right row shows one per side
+  ("L 1/2", "R 0/2").
+- The dialog names the configuration ("Photos of Sag on **Trail 7**") and
+  shows two slots: **Take photo** (phone camera) or **Choose photo**,
+  **View** (enlarged, with "Open full size"), **Replace** and **Remove**.
+  Images are checked and resized in the browser (JPEG, longest side 1600 px,
+  location data removed; 25 MB input, 5 MB stored).
+- **Never a new Trail configuration:** adding, replacing or removing photos
+  doesn't change numbers, values, evaluations or which configuration is
+  active, and never marks Quick Tune as unsaved.
+- **Carry-forward:** a new configuration starts with the photos of the one it
+  was made from (new rows pointing at the same files, so nothing is uploaded
+  twice). After that each configuration's photos are independent: replacing
+  a photo in Trail 7 leaves Trail 6's photo as it was, and adding one to
+  Trail 6 later doesn't change Trail 7.
+- **Files are never overwritten or deleted by the app.** Replace uploads a
+  new file; Replace and Remove move that configuration's row to Recently
+  Deleted (30 days; restoring photos from the app is deferred, as for other
+  photos). The Migration 8 cleanup removes a file only when no row in any
+  configuration, active or deleted, refers to it.
+- **Who:** everyone on the sled views; owners, editors and mechanics add;
+  owners and editors replace and remove. Others can't see the rows or the
+  files (Row Level Security and the existing private-bucket policies).
+- **Feature flag:** adding and replacing need `SUSPENSION_PHOTO_UPLOADS=on`,
+  the same flag as every other suspension photo (see below; off in
+  production). With it off, existing measurement photos are still shown and
+  can be removed; empty measurements show no camera.
+
 ## Photos
 
 > **Uploads are turned off in production for now** (see

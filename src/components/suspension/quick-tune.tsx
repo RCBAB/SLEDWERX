@@ -1,7 +1,7 @@
 "use client";
 
 import { AlertTriangle, Camera, Link2, Minus, Plus, Split, Undo2 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useState } from "react";
 
 import { saveConfiguration, type SuspensionActionState } from "@/app/garage/suspension-actions";
 import { Alert } from "@/components/ui/alert";
@@ -32,6 +32,17 @@ import {
 import { randomUuid } from "@/lib/uuid";
 import { dislikeWarning, matchingConfigurations } from "@/lib/suspension/warnings";
 
+import { MeasurementPhotoButton } from "./measurement-photos";
+
+/** Measurement photos of the active configuration (Migration 10); null when there are none to show. */
+export type MeasurementPhotoAccess = {
+  configNumber: number;
+  count: (settingId: string) => number;
+  canAdd: boolean;
+  open: (setting: SuspensionSetting, name: string) => void;
+};
+const MeasurementContext = createContext<MeasurementPhotoAccess | null>(null);
+
 /**
  * Quick Tune: every setting on one scrolling page in five sections. Change as
  * many values as needed (large − / + for clicks, typed numbers for
@@ -55,6 +66,7 @@ export function QuickTune({
   onDirtyChange,
   onAddSetting,
   onPhotos,
+  measurement = null,
 }: {
   sledId: string;
   settings: SuspensionSetting[];
@@ -69,6 +81,8 @@ export function QuickTune({
   onDirtyChange: (dirty: boolean) => void;
   onAddSetting: (zone: SuspensionZone) => void;
   onPhotos: (setting: SuspensionSetting) => void;
+  /** Measurement photos of the active configuration (photo changes never touch adjustments). */
+  measurement?: MeasurementPhotoAccess | null;
 }) {
   const saved: Snapshot = useMemo(() => active?.values ?? {}, [active]);
   const [pending, setPending] = useState<PendingValues>({});
@@ -144,125 +158,133 @@ export function QuickTune({
   };
 
   return (
-    <div className="space-y-4" data-testid="quick-tune">
-      {QUICK_TUNE_SECTIONS.map((section, n) => {
-        const rows = sectionRows(settings, section.id);
-        return (
-          <section
-            key={section.id}
-            aria-labelledby={`qt-${section.id}`}
-            className="rounded-2xl border border-white/10 bg-surface/70"
-            data-testid="quick-tune-section"
-            data-section={section.id}
-          >
-            <header className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3 sm:px-5">
-              <h3 id={`qt-${section.id}`} className="font-display text-xl font-bold uppercase tracking-wide">
-                <span className="mr-2 text-accent-hot">{n + 1}</span>
-                {section.label}
-              </h3>
-              {canManage ? (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  onClick={() => onAddSetting(section.zones[0])}
-                  aria-label={`Add setting to ${section.label}`}
-                >
-                  <Plus aria-hidden className="size-4" />
-                  Add
-                </Button>
-              ) : null}
-            </header>
-            {rows.length ? (
-              <ul className="divide-y divide-white/10">
-                {rows.map((row) => (
-                  <Row
-                    key={row.key}
-                    row={row}
-                    pending={pending}
-                    saved={saved}
-                    invalid={invalid}
-                    split={split.has(row.key)}
-                    canAdjust={canAdjust && !busy}
-                    onSplit={(on) =>
-                      setSplit((s) => {
-                        const next = new Set(s);
-                        if (on) next.add(row.key);
-                        else next.delete(row.key);
-                        return next;
-                      })
-                    }
-                    setValue={setValue}
-                    onPhotos={onPhotos}
-                  />
-                ))}
-              </ul>
-            ) : (
-              <p className="px-4 py-4 text-sm text-muted sm:px-5">No settings here yet.</p>
-            )}
-          </section>
-        );
-      })}
+    <MeasurementContext.Provider value={measurement}>
+      <div className="space-y-4" data-testid="quick-tune">
+        {QUICK_TUNE_SECTIONS.map((section, n) => {
+          const rows = sectionRows(settings, section.id);
+          return (
+            <section
+              key={section.id}
+              aria-labelledby={`qt-${section.id}`}
+              className="rounded-2xl border border-white/10 bg-surface/70"
+              data-testid="quick-tune-section"
+              data-section={section.id}
+            >
+              <header className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3 sm:px-5">
+                <h3 id={`qt-${section.id}`} className="font-display text-xl font-bold uppercase tracking-wide">
+                  <span className="mr-2 text-accent-hot">{n + 1}</span>
+                  {section.label}
+                </h3>
+                {canManage ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={() => onAddSetting(section.zones[0])}
+                    aria-label={`Add setting to ${section.label}`}
+                  >
+                    <Plus aria-hidden className="size-4" />
+                    Add
+                  </Button>
+                ) : null}
+              </header>
+              {rows.length ? (
+                <ul className="divide-y divide-white/10">
+                  {rows.map((row) => (
+                    <Row
+                      key={row.key}
+                      row={row}
+                      pending={pending}
+                      saved={saved}
+                      invalid={invalid}
+                      split={split.has(row.key)}
+                      canAdjust={canAdjust && !busy}
+                      onSplit={(on) =>
+                        setSplit((s) => {
+                          const next = new Set(s);
+                          if (on) next.add(row.key);
+                          else next.delete(row.key);
+                          return next;
+                        })
+                      }
+                      setValue={setValue}
+                      onPhotos={onPhotos}
+                    />
+                  ))}
+                </ul>
+              ) : (
+                <p className="px-4 py-4 text-sm text-muted sm:px-5">No settings here yet.</p>
+              )}
+            </section>
+          );
+        })}
 
-      {canAdjust && dirty ? <div aria-hidden className="h-48 sm:h-40" /> : null}
-      {canAdjust && dirty ? (
-        <div
-          className="fixed inset-x-0 bottom-0 z-30 border-t border-white/15 bg-background/95 px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 shadow-[0_-12px_32px_rgba(0,0,0,0.5)] backdrop-blur"
-          role="region"
-          aria-label="Unsaved adjustments"
-          data-testid="quick-tune-bar"
-        >
-          <div className="mx-auto max-w-6xl space-y-3">
-            {error ? <Alert tone="error">{error}</Alert> : null}
-            {warning?.dislike ? (
-              <p className="flex gap-2 text-sm text-amber-100" data-testid="dislike-warning">
-                <AlertTriangle aria-hidden className="mt-0.5 size-4 shrink-0" />
-                <span>
-                  {warning.dislike.message} ({warning.dislike.configurations.join(", ")})
-                </span>
-              </p>
-            ) : warning?.same.length ? (
-              <p className="text-sm text-muted" data-testid="same-as">
-                These settings match {warning.same.join(", ")}.
-              </p>
-            ) : null}
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-              <label className="min-w-0 flex-1">
-                <span className="text-sm font-medium text-foreground/90">
-                  {invalid.size ? (
-                    <span className="text-accent-hot">Fix the highlighted value{invalid.size === 1 ? "" : "s"} to save.</span>
-                  ) : (
-                    <>
-                      <span data-testid="change-count">
-                        {count} change{count === 1 ? "" : "s"}
-                      </span>{" "}
-                      · saved as the next Trail configuration · notes (optional)
-                    </>
-                  )}
-                </span>
-                <input
-                  type="text"
-                  value={note}
-                  maxLength={2000}
-                  onChange={(e) => setNote(e.target.value)}
-                  placeholder="What did you change and why?"
-                  aria-label="Notes (optional)"
-                  className="mt-1 h-12 w-full rounded-lg border border-white/15 bg-surface px-3 text-base text-foreground placeholder:text-muted focus:outline focus:outline-2 focus:outline-accent"
-                />
-              </label>
-              <div className="grid grid-cols-2 gap-3 sm:flex">
-                <Button type="button" variant="secondary" size="lg" className="h-12" onClick={discard} disabled={busy}>
-                  <Undo2 aria-hidden className="size-4" />
-                  Discard Changes
-                </Button>
-                <Button type="button" size="lg" className="h-12" onClick={() => void save()} disabled={busy || invalid.size > 0 || !count}>
-                  {busy ? "Saving…" : "Save Adjustments"}
-                </Button>
+        {canAdjust && dirty ? <div aria-hidden className="h-48 sm:h-40" /> : null}
+        {canAdjust && dirty ? (
+          <div
+            className="fixed inset-x-0 bottom-0 z-30 border-t border-white/15 bg-background/95 px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 shadow-[0_-12px_32px_rgba(0,0,0,0.5)] backdrop-blur"
+            role="region"
+            aria-label="Unsaved adjustments"
+            data-testid="quick-tune-bar"
+          >
+            <div className="mx-auto max-w-6xl space-y-3">
+              {error ? <Alert tone="error">{error}</Alert> : null}
+              {warning?.dislike ? (
+                <p className="flex gap-2 text-sm text-amber-100" data-testid="dislike-warning">
+                  <AlertTriangle aria-hidden className="mt-0.5 size-4 shrink-0" />
+                  <span>
+                    {warning.dislike.message} ({warning.dislike.configurations.join(", ")})
+                  </span>
+                </p>
+              ) : warning?.same.length ? (
+                <p className="text-sm text-muted" data-testid="same-as">
+                  These settings match {warning.same.join(", ")}.
+                </p>
+              ) : null}
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                <label className="min-w-0 flex-1">
+                  <span className="text-sm font-medium text-foreground/90">
+                    {invalid.size ? (
+                      <span className="text-accent-hot">Fix the highlighted value{invalid.size === 1 ? "" : "s"} to save.</span>
+                    ) : (
+                      <>
+                        <span data-testid="change-count">
+                          {count} change{count === 1 ? "" : "s"}
+                        </span>{" "}
+                        · saved as the next Trail configuration · notes (optional)
+                      </>
+                    )}
+                  </span>
+                  <input
+                    type="text"
+                    value={note}
+                    maxLength={2000}
+                    onChange={(e) => setNote(e.target.value)}
+                    placeholder="What did you change and why?"
+                    aria-label="Notes (optional)"
+                    className="mt-1 h-12 w-full rounded-lg border border-white/15 bg-surface px-3 text-base text-foreground placeholder:text-muted focus:outline focus:outline-2 focus:outline-accent"
+                  />
+                </label>
+                <div className="grid grid-cols-2 gap-3 sm:flex">
+                  <Button type="button" variant="secondary" size="lg" className="h-12" onClick={discard} disabled={busy}>
+                    <Undo2 aria-hidden className="size-4" />
+                    Discard Changes
+                  </Button>
+                  <Button
+                    type="button"
+                    size="lg"
+                    className="h-12"
+                    onClick={() => void save()}
+                    disabled={busy || invalid.size > 0 || !count}
+                  >
+                    {busy ? "Saving…" : "Save Adjustments"}
+                  </Button>
+                </div>
               </div>
             </div>
           </div>
-        </div>
-      ) : null}
-    </div>
+        ) : null}
+      </div>
+    </MeasurementContext.Provider>
   );
 }
 
@@ -412,6 +434,13 @@ function Control({
   const changed = number ? (after === null ? before !== null : before === null || !sameNumber(after, before)) : (after ?? null) !== before;
   const delta = number && changed ? numberDelta(before, after) : null;
   const withPhotos = (photosOf ?? [setting]).filter((s) => s.photos.length);
+  const measurement = useContext(MeasurementContext);
+  const measured = (photosOf ?? [setting]).map((s, n) => ({
+    setting: s,
+    side: photosOf ? (n === 0 ? "L" : "R") : undefined,
+    name: photosOf ? `${label} (${n === 0 ? "Left" : "Right"})` : name,
+    count: measurement?.count(s.id) ?? 0,
+  }));
 
   return (
     <div
@@ -447,6 +476,20 @@ function Control({
             {s.photos.length} reference photo{s.photos.length === 1 ? "" : "s"}
           </button>
         ))}
+        {measurement
+          ? measured
+              .filter((m) => m.count > 0 || measurement.canAdd)
+              .map((m) => (
+                <MeasurementPhotoButton
+                  key={m.setting.id}
+                  count={m.count}
+                  name={m.name}
+                  side={m.side}
+                  configNumber={measurement.configNumber}
+                  onClick={() => measurement.open(m.setting, m.name)}
+                />
+              ))
+          : null}
       </div>
 
       {canAdjust ? (

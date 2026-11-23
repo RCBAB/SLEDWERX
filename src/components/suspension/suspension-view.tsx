@@ -31,6 +31,7 @@ import { ConfigurationDetails, ConfigurationHistory } from "./configurations";
 import { DeletedItems } from "./deleted-items";
 import { EquipmentForm } from "./equipment";
 import { EvaluationForm } from "./evaluation-form";
+import { MeasurementPhotoManager } from "./measurement-photos";
 import { PhotoManager } from "./photos";
 import { QuickTune } from "./quick-tune";
 import { SettingForm, SettingsEditor } from "./settings-editor";
@@ -59,6 +60,7 @@ type OpenSheet =
   | { kind: "view"; revision: SuspensionRevision }
   | { kind: "equipment" }
   | { kind: "photos"; parent: "setting" | "revision"; id: string }
+  | { kind: "measurement"; revisionId: string; settingId: string; name: string }
   | null;
 
 /**
@@ -133,6 +135,25 @@ export function SuspensionView({
   };
 
   // The photos sheet reads the current data, so it updates after each upload or removal.
+  // Measurement photos (Migration 10): never part of an adjustment, so they never mark Quick Tune as unsaved.
+  const openMeasurement = (revision: SuspensionRevision) => (setting: SuspensionSetting, name: string) =>
+    show({ kind: "measurement", revisionId: revision.id, settingId: setting.id, name });
+  const measurementFor = (revision: SuspensionRevision | undefined) =>
+    data.measurementPhotos && revision
+      ? {
+          configNumber: revision.configNumber,
+          count: (settingId: string) => revision.measurementPhotos.filter((m) => m.settingId === settingId).length,
+          canAdd: can.canAddMeasurementPhotos,
+          open: openMeasurement(revision),
+        }
+      : null;
+  const measurementTarget = (() => {
+    if (sheet?.kind !== "measurement") return undefined;
+    const revision = revisions.find((r) => r.id === sheet.revisionId);
+    return revision ? { revision, photos: revision.measurementPhotos.filter((m) => m.settingId === sheet.settingId) } : undefined;
+  })();
+  const viewed = sheet?.kind === "view" ? (revisions.find((r) => r.id === sheet.revision.id) ?? sheet.revision) : undefined;
+
   const photoTarget = (() => {
     if (sheet?.kind !== "photos") return undefined;
     if (sheet.parent === "setting") {
@@ -246,6 +267,7 @@ export function SuspensionView({
             onDirtyChange={onDirtyChange}
             onAddSetting={(z) => show({ kind: "add-setting", zone: z })}
             onPhotos={(setting) => show({ kind: "photos", parent: "setting", id: setting.id })}
+            measurement={measurementFor(active)}
           />
         ) : (
           <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,420px)_minmax(0,1fr)]" data-testid="suspension-map">
@@ -439,11 +461,12 @@ export function SuspensionView({
         {sheet?.kind === "view" ? (
           <div className="space-y-5">
             <ConfigurationDetails
-              revision={sheet.revision}
+              revision={viewed ?? sheet.revision}
               settings={settings}
               active={sheet.revision.id === activeRevisionId}
               role={role}
               userId={userId}
+              measurement={measurementFor(viewed)}
             />
             {can.canAdjust && sheet.revision.id !== activeRevisionId ? (
               <Button type="button" size="lg" className="w-full" onClick={() => show({ kind: "activate", revision: sheet.revision })}>
@@ -451,6 +474,31 @@ export function SuspensionView({
               </Button>
             ) : null}
           </div>
+        ) : null}
+      </Sheet>
+
+      <Sheet
+        open={sheet?.kind === "measurement" && Boolean(measurementTarget)}
+        onClose={close}
+        title="Measurement photos"
+        description={
+          sheet?.kind === "measurement" && measurementTarget
+            ? `${sheet.name} · ${configName(measurementTarget.revision.configNumber)} · ${sled.name}`
+            : undefined
+        }
+      >
+        {sheet?.kind === "measurement" && measurementTarget ? (
+          <MeasurementPhotoManager
+            key={session}
+            sledId={sled.id}
+            revision={measurementTarget.revision}
+            settingId={sheet.settingId}
+            name={sheet.name}
+            photos={measurementTarget.photos}
+            canAdd={can.canAddMeasurementPhotos}
+            canReplace={can.canReplaceMeasurementPhotos}
+            canRemove={can.canRemove}
+          />
         ) : null}
       </Sheet>
 

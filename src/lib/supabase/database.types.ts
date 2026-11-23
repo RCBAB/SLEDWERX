@@ -325,6 +325,38 @@ isOneToOne: false
       referencedColumns: ["id"]
     }
                   ]
+                },"sled_measurement_photos": {
+                  Row: {
+                    "carried_from_id": string | null,"created_at": string,"created_by": string | null,"deleted_at": string | null,"deleted_by": string | null,"id": string,"path": string,"revision_id": string,"setting_id": string,"sled_id": string,"slot": number,"updated_at": string,"updated_by": string | null,"version": number
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "carried_from_id"?: string | null,"created_at"?: string,"created_by"?: string | null,"deleted_at"?: string | null,"deleted_by"?: string | null,"id"?: string,"path": string,"revision_id": string,"setting_id": string,"sled_id": string,"slot": number,"updated_at"?: string,"updated_by"?: string | null,"version"?: number
+                  }
+                  Update: {
+                    "carried_from_id"?: string | null,"created_at"?: string,"created_by"?: string | null,"deleted_at"?: string | null,"deleted_by"?: string | null,"id"?: string,"path"?: string,"revision_id"?: string,"setting_id"?: string,"sled_id"?: string,"slot"?: number,"updated_at"?: string,"updated_by"?: string | null,"version"?: number
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "sled_measurement_photos_revision_id_fkey"
+      columns: ["revision_id"]
+isOneToOne: false
+      referencedRelation: "suspension_revisions"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "sled_measurement_photos_setting_id_fkey"
+      columns: ["setting_id"]
+isOneToOne: false
+      referencedRelation: "suspension_settings"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "sled_measurement_photos_sled_id_fkey"
+      columns: ["sled_id"]
+isOneToOne: false
+      referencedRelation: "sleds"
+      referencedColumns: ["id"]
+    }
+                  ]
                 },"sled_readings": {
                   Row: {
                     "created_at": string,"created_by": string | null,"deleted_at": string | null,"deleted_by": string | null,"engine_event": Database["public"]['Enums']["engine_event"] | null,"engine_hours": number | null,"hour_meter_reset": boolean,"id": string,"note": string | null,"odometer_mi": number | null,"odometer_reset": boolean,"read_on": string,"sled_id": string,"updated_at": string,"updated_by": string | null,"version": number
@@ -624,6 +656,9 @@ isOneToOne: false
 "activate_suspension_setup":
 { Args: { "p_setup_id": string }; Returns: undefined
                            },
+"add_suspension_measurement_photo":
+{ Args: { "p_path": string,"p_revision_id": string,"p_setting_id": string }; Returns: Json
+                           },
 "cleanup_begin_run":
 { Args: { "p_mode": string }; Returns: number
                            },
@@ -672,6 +707,9 @@ isOneToOne: false
                            },
 "reactivate_sled_share":
 { Args: { "p_share_id": string }; Returns: undefined
+                           },
+"replace_suspension_measurement_photo":
+{ Args: { "p_path": string,"p_photo_id": string,"p_version": number }; Returns: Json
                            },
 "restore_record_version":
 { Args: { "p_audit_id": number }; Returns: undefined

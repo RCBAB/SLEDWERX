@@ -710,6 +710,28 @@ Tests: `supabase/tests/database/014_suspension_quick_tune.test.sql`; rollback
 `scripts/test-migration-9-rollback.sh` (also checks the numbering of existing
 data on re-apply).
 
+## Measurement photos (Migration 10)
+
+`20261124090000_suspension_measurement_photos.sql`, additive, **not applied
+to production** (needs approval). Product behaviour:
+[suspension-tuning.md](suspension-tuning.md#measurement-photos-migration-10).
+
+| Object | What |
+|---|---|
+| `sled_measurement_photos` | One row per (configuration `revision_id`, `setting_id`, `slot` 1/2); `path` of an immutable file in `suspension-photos` (`<sled>/<revision it was uploaded to>/<uuid>.jpg`; several rows may share it); `carried_from_id` (informational). Record-table pattern; unique active slot per measurement. |
+| `add_suspension_measurement_photo(revision, setting, path)` | Next free slot; refuses a third (`At most 2 photos per measurement.`); a repeat with the same file returns the saved row. Owners, editors, mechanics. |
+| `replace_suspension_measurement_photo(photo, version, path)` | Old row to Recently Deleted, new row in the same slot; other configurations untouched. Owners and editors. |
+| `save_suspension_configuration` (re-created) | Same as Migration 9, plus: copies the base configuration's active photo rows to the new configuration. |
+| `cascade_measurement_photos` trigger | A configuration moved to Recently Deleted with its setup takes its photo rows along (and back). |
+| Migration 8 registries | `sled_measurement_photos` is purged (expiry `deleted_at`), counted, and its `path` is a reference column with the claim guard. |
+
+Storage policies are unchanged: uploads use the configuration's folder, which
+the existing policies already allow (everyone on the sled views; owners,
+editors and mechanics upload; owners and editors remove). Tests:
+`supabase/tests/database/015_measurement_photos.test.sql`; rollback
+`supabase/rollback/20261124090000_rollback.sql` and
+`scripts/test-migration-10-rollback.sh`.
+
 ## Migration 8: cleanup (built; see cleanup.md)
 
 The Recently Deleted & storage cleanup is described in [cleanup.md](cleanup.md)

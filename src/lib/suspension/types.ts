@@ -114,6 +114,8 @@ export function equipmentMismatch(required: Equipment, installed: Equipment): bo
 export const configName = (number: number) => `Trail ${number}`;
 
 export const MAX_SUSPENSION_PHOTOS = 6;
+/** Measurement photos per setting per configuration (Migration 10). */
+export const MAX_MEASUREMENT_PHOTOS = 2;
 export const SUSPENSION_PHOTO_BUCKET = "suspension-photos";
 /** Longest value the database accepts. */
 export const MAX_SETTING_VALUE = 200;
@@ -154,6 +156,23 @@ export type SuspensionFeedback = {
   version: number;
 };
 
+/**
+ * A photo documenting one measurement (setting) on one configuration
+ * (Migration 10). The file may be shared with other configurations; the row
+ * is this configuration's own.
+ */
+export type MeasurementPhoto = {
+  id: string;
+  revisionId: string;
+  settingId: string;
+  slot: 1 | 2;
+  path: string;
+  url: string | null;
+  version: number;
+  createdBy: string | null;
+  createdAt: string;
+};
+
 /** A numbered configuration ("Trail N"): one saved revision of the sled's suspension. */
 export type SuspensionRevision = {
   id: string;
@@ -176,6 +195,8 @@ export type SuspensionRevision = {
   /** Newest first. */
   feedback: SuspensionFeedback[];
   photos: SuspensionPhoto[];
+  /** Measurement photos of this configuration, by slot. */
+  measurementPhotos: MeasurementPhoto[];
 };
 
 export type SuspensionSetup = { id: string; name: string; notes: string | null; isActive: boolean; version: number; createdAt: string };
@@ -202,6 +223,8 @@ export type SuspensionData = {
   activeRevisionId: string | null;
   /** The skis and carbides installed now. */
   installed: Equipment;
+  /** Whether the database has measurement photos (Migration 10). */
+  measurementPhotos: boolean;
   /** Recently Deleted setups, settings and feedback (owners and editors only), newest first. */
   deleted: DeletedSuspensionItem[];
 };

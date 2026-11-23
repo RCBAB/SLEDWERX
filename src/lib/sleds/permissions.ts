@@ -57,8 +57,11 @@ export function suspensionCapabilities(role: SledRole, { photoUploads = false }:
     canManage: manages,
     canAdjust: adjusts,
     canAddFeedback: adjusts,
-    canAddReferencePhotos: manages && photoUploads,
-    canAddAdjustmentPhotos: adjusts && photoUploads,
+    // Reference and adjustment photos (Migration 7) are no longer added, even
+    // with photo uploads on: measurement photos replace them. Existing ones
+    // can still be viewed, and removed by owners and editors.
+    canAddReferencePhotos: false,
+    canAddAdjustmentPhotos: false,
     /** Measurement photos (Migration 10): add (owners, editors, mechanics), replace (owners, editors). */
     canAddMeasurementPhotos: adjusts && photoUploads,
     canReplaceMeasurementPhotos: manages && photoUploads,

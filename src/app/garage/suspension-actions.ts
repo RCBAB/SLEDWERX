@@ -11,15 +11,7 @@ import { changedValues } from "@/lib/suspension/diff";
 import { suspensionErrorMessage, type SuspensionSubject } from "@/lib/suspension/errors";
 import { isSchemaMissing, parseSnapshot } from "@/lib/suspension/queries";
 import { SUGGESTED_SETTINGS } from "@/lib/suspension/template";
-import {
-  MAX_MEASUREMENT_PHOTOS,
-  MAX_SUSPENSION_PHOTOS,
-  isCarbideLength,
-  isSkiModel,
-  isZone,
-  settingsInZone,
-  type SettingValueType,
-} from "@/lib/suspension/types";
+import { MAX_MEASUREMENT_PHOTOS, isCarbideLength, isSkiModel, isZone, settingsInZone, type SettingValueType } from "@/lib/suspension/types";
 import { adjustmentSchema, checkSettingValue, feedbackSchema, settingSchema, uuidSchema } from "@/lib/suspension/validation";
 import { futureDateError } from "@/lib/sleds/validation";
 import { createClient } from "@/lib/supabase/server";
@@ -509,6 +501,7 @@ export async function deleteFeedback(feedbackId: string, version: number): Promi
 // flag is off (lib/suspension/photo-flag.ts); removing photos still works.
 // ---------------------------------------------------------------------------
 const PHOTO_UPLOADS_OFF = "Adding photos is turned off for now.";
+const LEGACY_PHOTOS_OFF = "Reference and adjustment photos can no longer be added. Use measurement photos instead.";
 
 export type PhotoRoom = { error?: string; room: number; canRemoveFiles: boolean };
 
@@ -520,35 +513,15 @@ export type PhotoRoom = { error?: string; room: number; canRemoveFiles: boolean 
  * whether a file can be cleaned up if saving its record still fails.
  */
 export async function prepareSuspensionPhotos(sledId: string, parent: { kind: "setting" | "revision"; id: string }): Promise<PhotoRoom> {
-  const user = await signedInUser();
-  const none = (error: string): PhotoRoom => ({ error, room: 0, canRemoveFiles: false });
-  if (!suspensionPhotoUploadsEnabled()) return none(PHOTO_UPLOADS_OFF);
-  if (!uuidSchema.safeParse(sledId).success || !uuidSchema.safeParse(parent.id).success) return none("Photo not found.");
-  const sled = await getSled(sledId, user.id);
-  if (!sled) return none("Snowmobile not found.");
-  const can = suspensionCapabilities(sled.role, { photoUploads: true });
-  if (parent.kind === "setting" ? !can.canAddReferencePhotos : !can.canAddAdjustmentPhotos) {
-    return none(parent.kind === "setting" ? "Only the owner or an editor can add reference photos." : "You can't add photos here.");
-  }
-  const supabase = await createClient();
-  const table = parent.kind === "setting" ? "suspension_settings" : "suspension_revisions";
-  const { data: found } = await supabase
-    .from(table)
-    .select("id")
-    .eq("id", parent.id)
-    .eq("sled_id", sledId)
-    .is("deleted_at", null)
-    .maybeSingle();
-  if (!found) return none("This was removed meanwhile. Reload the page and try again.");
-  const { count, error } = await supabase
-    .from("suspension_photos")
-    .select("id", { count: "exact", head: true })
-    .eq(parent.kind === "setting" ? "setting_id" : "revision_id", parent.id)
-    .is("deleted_at", null);
-  if (error) return none("Something went wrong. Please try again.");
-  return { room: Math.max(0, MAX_SUSPENSION_PHOTOS - (count ?? 0)), canRemoveFiles: can.canRemove };
+  await signedInUser();
+  void sledId;
+  void parent;
+  // Measurement photos (Migration 10) replace reference and adjustment photos: none are added any more,
+  // whatever the photo-upload flag says. Existing ones stay viewable and removable.
+  return { error: LEGACY_PHOTOS_OFF, room: 0, canRemoveFiles: false };
 }
 
+/** Refused: reference and adjustment photos are no longer added (see prepareSuspensionPhotos). */
 export async function addSuspensionPhoto(
   sledId: string,
   parent: { kind: "setting" | "revision"; id: string },
@@ -556,23 +529,8 @@ export async function addSuspensionPhoto(
   position: number,
 ): Promise<SuspensionActionState> {
   await signedInUser();
-  if (!suspensionPhotoUploadsEnabled()) return { error: PHOTO_UPLOADS_OFF };
-  if (!uuidSchema.safeParse(sledId).success || !uuidSchema.safeParse(parent.id).success) return { error: "Photo not found." };
-  if (!PHOTO_PATH.test(path) || !path.startsWith(`${sledId}/${parent.id}/`)) return { error: "That photo can't be used." };
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("suspension_photos")
-    .insert({
-      sled_id: sledId,
-      setting_id: parent.kind === "setting" ? parent.id : null,
-      revision_id: parent.kind === "revision" ? parent.id : null,
-      path,
-      position: Math.max(0, Math.min(MAX_SUSPENSION_PHOTOS * 10, Math.trunc(position) || 0)),
-    })
-    .select("id")
-    .single();
-  if (error || !data) return failed(error, "photo");
-  return done(data.id);
+  void [sledId, parent, path, position];
+  return { error: LEGACY_PHOTOS_OFF };
 }
 
 // ---------------------------------------------------------------------------

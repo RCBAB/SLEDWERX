@@ -732,6 +732,28 @@ editors and mechanics upload; owners and editors remove). Tests:
 `supabase/rollback/20261124090000_rollback.sql` and
 `scripts/test-migration-10-rollback.sh`.
 
+## Measurement photo access (Migration 11)
+
+`20261125090000_measurement_photo_access.sql`, **not applied to production**
+(needs approval). Replaces two functions; no table, policy or data changes.
+
+- `private.suspension_photo_sled_id(name)` (used by the suspension-photos
+  storage policies) also resolves a file that a measurement photo row of the
+  same snowmobile refers to. Without it, a file carried forward from a
+  configuration that is later purged could no longer be opened. Access is
+  not widened: still that snowmobile, still its sharing permissions.
+- `private.tg_sled_measurement_photos_check()` accepts such a file too.
+  Without it, carrying photos forward from that configuration would make
+  every later save of the snowmobile fail.
+
+Reachable today only through direct API calls (the app always saves a new
+configuration into its base's setup, and a setup's configurations are only
+ever deleted together); fixed before photo uploads and cleanup deletion are
+turned on. Tests: `016_measurement_photo_cleanup.test.sql` (fails without
+this migration), `src/lib/cleanup/measurement-photos.integration.test.ts`;
+rollback `supabase/rollback/20261125090000_rollback.sql` and
+`scripts/test-migration-11-rollback.sh`.
+
 ## Migration 8: cleanup (built; see cleanup.md)
 
 The Recently Deleted & storage cleanup is described in [cleanup.md](cleanup.md)

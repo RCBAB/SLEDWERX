@@ -28,6 +28,9 @@ begin
   if current_setting('sledwerx.confirm_rollback', true) is distinct from '20261124090000' then
     raise exception 'Rollback not confirmed. Run  set sledwerx.confirm_rollback = ''20261124090000'';  first, in the same session. See supabase/rollback/README.md.';
   end if;
+  if position('sled_measurement_photos' in coalesce((select prosrc from pg_proc where proname = 'suspension_photo_sled_id'), '')) > 0 then
+    raise exception 'Rollback aborted: Migration 11 (measurement photo access) is applied. Roll back Migration 11 first.';
+  end if;
   if to_regclass('public.sled_measurement_photos') is not null then
     select count(*) into v_rows from public.sled_measurement_photos;
     if v_rows > 0 then

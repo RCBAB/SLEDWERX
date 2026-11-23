@@ -143,16 +143,52 @@ After each of the first few delete runs:
       `select private.authorize_retention_maintenance('<approval reference>');`
       and check its preview first: `select private.retention_counts();`.
 
-### B9. Turn on Phase 6.2 suspension photo uploads (approval required)
+### B9. Turn on measurement photo uploads (approval required)
 
-- [ ] At least one delete run verified (B8), including a photo removal.
-- [ ] No unresolved replaced or failed removals, no warnings.
-- [ ] Mechanics' orphaned uploads are found and removed (or known and
-      expected).
-Then, under its own approval: set `SUSPENSION_PHOTO_UPLOADS=on` for
-**Production** in Vercel and redeploy; check that an owner can add a
-reference photo and a mechanic an adjustment photo. To turn uploads off
-again, unset the variable and redeploy.
+Only **measurement photos** (Migration 10) are added from the app. The older
+reference and adjustment photo uploads stay off in the code whatever the
+flag says; existing ones remain viewable and removable.
+
+Before (all must hold):
+- [ ] Migration 11 (`20261125090000_measurement_photo_access.sql`) applied
+      and verified (shared photos stay viewable and can still be carried
+      forward after an old configuration is purged).
+- [ ] At least one delete run verified (B8), **including a photo removal**:
+      for example a controlled test orphan uploaded to the Photo Test
+      snowmobile's folder without a record, reported after 24 hours, then
+      removed, while every Photo Test photo still loads.
+- [ ] No unresolved replaced or failed removals, no warnings, registry
+      problems `{}`.
+- [ ] Read-only check: every active measurement photo row points at an
+      existing file, and every file in `suspension-photos` is either referenced
+      or listed by the latest report:
+      ```sql
+      select count(*) as rows_without_file from public.sled_measurement_photos m
+      where m.deleted_at is null and not exists (
+        select 1 from storage.objects o where o.bucket_id = 'suspension-photos' and o.name = m.path);
+      select f.status, count(*) from private.storage_file_candidates() f
+      where f.bucket_id = 'suspension-photos' group by 1;
+      ```
+      Expected: `rows_without_file = 0`; statuses only `referenced`,
+      `too_new`, and the orphans the report listed.
+
+Then, under its own approval:
+1. Set `SUSPENSION_PHOTO_UPLOADS=on` for **Production only** in Vercel and
+   redeploy (leave Preview and Development unset unless testing).
+2. Smoke test on Photo Test, as the owner: add a photo, add a second, see
+   that a third can't be added, view one enlarged, replace one, remove one,
+   save an adjustment and see the photos carried to the new Trail, replace a
+   photo there and check the previous Trail still shows its own. Then, as a
+   mechanic shared on Photo Test: add a photo; Replace and Remove are not
+   offered.
+3. Check that no "Add reference photos", Record-adjustment photo picker or
+   History "Photos" upload appears.
+4. Watch the next daily runs: no warnings; new photos counted as referenced;
+   only true orphans (for example a mechanic's upload whose save failed)
+   listed and, in deletion mode, removed after 24 hours.
+
+To turn uploads off again: delete the variable and redeploy. Photos already
+added stay visible and removable.
 
 ---
 

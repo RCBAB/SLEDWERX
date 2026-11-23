@@ -253,7 +253,7 @@ export function SuspensionView({
 
         {view === "quick" ? (
           <QuickTune
-            key={`${tuneKey}-${active?.id ?? "none"}`}
+            key={tuneKey}
             sledId={sled.id}
             settings={settings}
             active={active}

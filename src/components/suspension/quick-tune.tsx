@@ -92,6 +92,22 @@ export function QuickTune({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // The active configuration changed. After our own save it is the one just
+  // saved: keep anything typed since (the page refreshes a moment later, and
+  // remounting here used to drop those keystrokes). After any other change
+  // (another configuration made active, someone else's save), start fresh.
+  const [baseId, setBaseId] = useState(active?.id ?? null);
+  const [ownSave, setOwnSave] = useState<string | null>(null);
+  const activeId = active?.id ?? null;
+  if (activeId !== baseId) {
+    setBaseId(activeId);
+    if (activeId === null || activeId !== ownSave) {
+      setPending({});
+      setNote("");
+      setError(null);
+    }
+  }
+
   const changes = useMemo(() => pendingChanges(pending, saved, settings), [pending, saved, settings]);
   const invalid = useMemo(() => new Set(invalidNumbers(pending, settings)), [pending, settings]);
   const count = Object.keys(changes).length;
@@ -145,6 +161,7 @@ export function QuickTune({
         setPending({});
         setNote("");
         setKey(randomUuid());
+        setOwnSave(result.id ?? null);
         onSaved(result);
       } else {
         setError(result.error ?? "Something went wrong. Please try again.");

@@ -228,6 +228,8 @@ test("typing right after Save Adjustments keeps every keystroke; making another 
   await tuneInput(page, FRONT, BOTH).fill("10");
   await bar(page).getByRole("button", { name: "Save Adjustments" }).click();
   await expect(bar(page)).toBeHidden({ timeout: 15_000 });
+  // The saved value shows at once, before the refresh (never the value from before the save).
+  await expect(tuneInput(page, FRONT, BOTH)).toHaveValue("10");
   await tuneInput(page, FRONT, BOTH).fill("12");
   await tuneInput(page, "springs-limiter", "Limiter strap").fill("3");
   await expect(activeName(page)).toHaveText("Trail 1"); // the refresh has arrived

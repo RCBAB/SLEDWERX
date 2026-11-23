@@ -84,7 +84,9 @@ export function QuickTune({
   /** Measurement photos of the active configuration (photo changes never touch adjustments). */
   measurement?: MeasurementPhotoAccess | null;
 }) {
-  const saved: Snapshot = useMemo(() => active?.values ?? {}, [active]);
+  /** The values just saved, shown until the refreshed page brings them as the active configuration. */
+  const [justSaved, setJustSaved] = useState<Snapshot | null>(null);
+  const saved: Snapshot = useMemo(() => justSaved ?? active?.values ?? {}, [justSaved, active]);
   const [pending, setPending] = useState<PendingValues>({});
   const [split, setSplit] = useState<ReadonlySet<string>>(new Set());
   const [note, setNote] = useState("");
@@ -101,6 +103,7 @@ export function QuickTune({
   const activeId = active?.id ?? null;
   if (activeId !== baseId) {
     setBaseId(activeId);
+    setJustSaved(null);
     if (activeId === null || activeId !== ownSave) {
       setPending({});
       setNote("");
@@ -117,13 +120,7 @@ export function QuickTune({
   // Would the result be a configuration that was disliked before?
   const warning = useMemo(() => {
     if (!count || invalid.size) return null;
-    const result: Snapshot = { ...saved };
-    for (const [id, value] of Object.entries(changes)) {
-      const setting = settings.find((s) => s.id === id);
-      if (!setting) continue;
-      if (value === null) delete result[id];
-      else result[id] = { value, name: setting.name, zone: setting.zone, unit: setting.unit, type: setting.valueType };
-    }
+    const result = applyChanges(saved, changes, settings);
     const matches = matchingConfigurations({ values: result, equipment: installed }, revisions);
     return { dislike: dislikeWarning(matches), same: matches.map((r) => configName(r.configNumber)) };
   }, [changes, count, invalid.size, saved, settings, installed, revisions]);
@@ -158,6 +155,8 @@ export function QuickTune({
         idempotencyKey: key,
       });
       if (result.ok) {
+        // Show the saved values at once (not the previous ones) until the refresh arrives.
+        setJustSaved(applyChanges(saved, changes, settings));
         setPending({});
         setNote("");
         setKey(randomUuid());
@@ -561,4 +560,16 @@ function Control({
       )}
     </div>
   );
+}
+
+/** A configuration's values with changes applied (null clears a value). */
+function applyChanges(values: Snapshot, changes: Record<string, string | null>, settings: SuspensionSetting[]): Snapshot {
+  const result: Snapshot = { ...values };
+  for (const [id, value] of Object.entries(changes)) {
+    const setting = settings.find((s) => s.id === id);
+    if (!setting) continue;
+    if (value === null) delete result[id];
+    else result[id] = { value, name: setting.name, zone: setting.zone, unit: setting.unit, type: setting.valueType };
+  }
+  return result;
 }

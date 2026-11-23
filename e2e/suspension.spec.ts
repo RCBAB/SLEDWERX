@@ -242,6 +242,14 @@ test("typing right after Save Adjustments keeps every keystroke; making another 
   await expect(activeName(page)).toHaveText("Trail 2");
   expect(await configCount(email, sledId)).toBe(2);
 
+  // The same right after changing skis and carbides (a new Trail arrives from the server).
+  await changeEquipment(page, suspensionPage(page), "Change skis or carbides", "C&A Pro XPT", '6"');
+  await tuneInput(page, "springs-limiter", "Limiter strap").fill("4");
+  await expect(activeName(page)).toHaveText("Trail 3");
+  await expect(tuneInput(page, "springs-limiter", "Limiter strap")).toHaveValue("4");
+  await expect(bar(page).getByTestId("change-count")).toHaveText("1 change");
+  await bar(page).getByRole("button", { name: "Discard Changes" }).click();
+
   // Unsaved edits don't carry over to a different configuration made active.
   await tuneInput(page, FRONT, BOTH).fill("14");
   await config(page, 1).getByRole("button", { name: "Make Trail 1 active" }).click();

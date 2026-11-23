@@ -94,21 +94,15 @@ export function QuickTune({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // The active configuration changed. After our own save it is the one just
-  // saved: keep anything typed since (the page refreshes a moment later, and
-  // remounting here used to drop those keystrokes). After any other change
-  // (another configuration made active, someone else's save), start fresh.
+  // The active configuration changed (our own save arriving from the server,
+  // new skis or carbides, someone else's save): keep anything typed, now
+  // measured against the new active values. Making another configuration
+  // active on purpose starts Quick Tune afresh (the page remounts it).
   const [baseId, setBaseId] = useState(active?.id ?? null);
-  const [ownSave, setOwnSave] = useState<string | null>(null);
   const activeId = active?.id ?? null;
   if (activeId !== baseId) {
     setBaseId(activeId);
     setJustSaved(null);
-    if (activeId === null || activeId !== ownSave) {
-      setPending({});
-      setNote("");
-      setError(null);
-    }
   }
 
   const changes = useMemo(() => pendingChanges(pending, saved, settings), [pending, saved, settings]);
@@ -160,7 +154,6 @@ export function QuickTune({
         setPending({});
         setNote("");
         setKey(randomUuid());
-        setOwnSave(result.id ?? null);
         onSaved(result);
       } else {
         setError(result.error ?? "Something went wrong. Please try again.");

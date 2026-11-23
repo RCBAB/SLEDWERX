@@ -78,7 +78,9 @@ Vercel detects Next.js and runs `npm run build`; no extra configuration is neede
 .
 ├── .github/workflows/      # CI (lint, typecheck, unit, build, database and browser tests)
 ├── docs/
-│   └── database.md         # Data model, permissions, migration workflow
+│   ├── database.md         # Data model, permissions, migration workflow
+│   ├── suspension-tuning.md # Suspension Quick Tune (Phase 6.2): Trail configurations, skis/carbides, evaluations, photo flag
+│   └── wall-display.md     # Garage Board Wall Display and on-screen keyboard
 ├── public/
 │   └── icons/              # App icons (favicon, PWA)
 ├── src/

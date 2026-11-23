@@ -8,7 +8,10 @@ explicit approval before it is executed; stop at the first failed check.
   production.
 - **Part B — Execution** changes production, one approved step at a time.
 
-Phase 6.2 (suspension photos, PR #17) is released only at step B9.
+Phase 6.2 (PR #17) may be released **with suspension photo uploads turned
+off** before this runbook is finished (Decision 10, amended 2026-11-20;
+feature flag `SUSPENSION_PHOTO_UPLOADS` unset). Photo uploads are turned on
+only at step B9.
 
 ---
 
@@ -19,7 +22,8 @@ Phase 6.2 (suspension photos, PR #17) is released only at step B9.
 - [ ] PR #18 reviewed; all eight CI checks green on its final commit.
 - [ ] Written approval for each of: B1 (apply migration), B2 (first
       administrator), B3 (deploy report-only), B6 (backups), B7 (authorize
-      deletion), B8 (operational-history retention), B9 (release Phase 6.2).
+      deletion), B8 (operational-history retention), B9 (turn on Phase 6.2
+      photo uploads).
 - [ ] Who is on call for the first two weeks, and who may switch deletion off.
 
 ### A2. Credentials to prepare (do not add them yet)
@@ -139,13 +143,16 @@ After each of the first few delete runs:
       `select private.authorize_retention_maintenance('<approval reference>');`
       and check its preview first: `select private.retention_counts();`.
 
-### B9. Confirm readiness to release Phase 6.2 (approval required)
+### B9. Turn on Phase 6.2 suspension photo uploads (approval required)
 
 - [ ] At least one delete run verified (B8), including a photo removal.
 - [ ] No unresolved replaced or failed removals, no warnings.
 - [ ] Mechanics' orphaned uploads are found and removed (or known and
       expected).
-Then Phase 6.2 (PR #17) may be merged and released under its own approval.
+Then, under its own approval: set `SUSPENSION_PHOTO_UPLOADS=on` for
+**Production** in Vercel and redeploy; check that an owner can add a
+reference photo and a mechanic an adjustment photo. To turn uploads off
+again, unset the variable and redeploy.
 
 ---
 

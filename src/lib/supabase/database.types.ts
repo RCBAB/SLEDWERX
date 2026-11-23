@@ -365,6 +365,32 @@ isOneToOne: false
       referencedColumns: ["id"]
     }
                   ]
+                },"sled_suspension_state": {
+                  Row: {
+                    "active_revision_id": string | null,"carbide_length": string | null,"created_at": string,"created_by": string | null,"id": string,"ski_model": string | null,"sled_id": string,"updated_at": string,"updated_by": string | null,"version": number
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "active_revision_id"?: string | null,"carbide_length"?: string | null,"created_at"?: string,"created_by"?: string | null,"id"?: string,"ski_model"?: string | null,"sled_id": string,"updated_at"?: string,"updated_by"?: string | null,"version"?: number
+                  }
+                  Update: {
+                    "active_revision_id"?: string | null,"carbide_length"?: string | null,"created_at"?: string,"created_by"?: string | null,"id"?: string,"ski_model"?: string | null,"sled_id"?: string,"updated_at"?: string,"updated_by"?: string | null,"version"?: number
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "sled_suspension_state_active_revision_id_fkey"
+      columns: ["active_revision_id"]
+isOneToOne: false
+      referencedRelation: "suspension_revisions"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "sled_suspension_state_sled_id_fkey"
+      columns: ["sled_id"]
+isOneToOne: true
+      referencedRelation: "sleds"
+      referencedColumns: ["id"]
+    }
+                  ]
                 },"sleds": {
                   Row: {
                     "created_at": string,"created_by": string | null,"deleted_at": string | null,"deleted_by": string | null,"engine_description": string | null,"engine_displacement_cc": number | null,"garage_id": string,"id": string,"make": string,"model": string,"model_year": number,"nickname": string | null,"notes": string | null,"owner_id": string,"photo_path": string | null,"purchase_date": string | null,"status": Database["public"]['Enums']["sled_status"],"updated_at": string,"updated_by": string | null,"version": number,"vin": string | null
@@ -387,14 +413,14 @@ isOneToOne: false
                   ]
                 },"suspension_feedback": {
                   Row: {
-                    "created_at": string,"created_by": string | null,"deleted_at": string | null,"deleted_by": string | null,"id": string,"note": string | null,"rating": string,"revision_id": string,"ridden_on": string,"sled_id": string,"updated_at": string,"updated_by": string | null,"version": number
+                    "conditions": (string)[],"created_at": string,"created_by": string | null,"deleted_at": string | null,"deleted_by": string | null,"high_temp_f": number | null,"id": string,"note": string | null,"rating": string,"revision_id": string,"ridden_on": string,"sled_id": string,"updated_at": string,"updated_by": string | null,"version": number
                   }
                   ComputedFields: never
                   Insert: {
-                    "created_at"?: string,"created_by"?: string | null,"deleted_at"?: string | null,"deleted_by"?: string | null,"id"?: string,"note"?: string | null,"rating": string,"revision_id": string,"ridden_on"?: string,"sled_id": string,"updated_at"?: string,"updated_by"?: string | null,"version"?: number
+                    "conditions"?: (string)[],"created_at"?: string,"created_by"?: string | null,"deleted_at"?: string | null,"deleted_by"?: string | null,"high_temp_f"?: number | null,"id"?: string,"note"?: string | null,"rating": string,"revision_id": string,"ridden_on"?: string,"sled_id": string,"updated_at"?: string,"updated_by"?: string | null,"version"?: number
                   }
                   Update: {
-                    "created_at"?: string,"created_by"?: string | null,"deleted_at"?: string | null,"deleted_by"?: string | null,"id"?: string,"note"?: string | null,"rating"?: string,"revision_id"?: string,"ridden_on"?: string,"sled_id"?: string,"updated_at"?: string,"updated_by"?: string | null,"version"?: number
+                    "conditions"?: (string)[],"created_at"?: string,"created_by"?: string | null,"deleted_at"?: string | null,"deleted_by"?: string | null,"high_temp_f"?: number | null,"id"?: string,"note"?: string | null,"rating"?: string,"revision_id"?: string,"ridden_on"?: string,"sled_id"?: string,"updated_at"?: string,"updated_by"?: string | null,"version"?: number
                   }
                   Relationships: [
                     {
@@ -445,14 +471,14 @@ isOneToOne: false
                   ]
                 },"suspension_revisions": {
                   Row: {
-                    "client_request_id": string | null,"created_at": string,"created_by": string | null,"deleted_at": string | null,"deleted_by": string | null,"engine_hours": number | null,"id": string,"note": string | null,"odometer_mi": number | null,"restored_from_revision_id": string | null,"revision_number": number,"setting_values": NonNullable<Json>,"setup_id": string,"sled_id": string,"updated_at": string,"updated_by": string | null,"version": number
+                    "based_on_revision_id": string | null,"carbide_length": string | null,"client_request_id": string | null,"config_number": number,"created_at": string,"created_by": string | null,"deleted_at": string | null,"deleted_by": string | null,"engine_hours": number | null,"id": string,"note": string | null,"odometer_mi": number | null,"restored_from_revision_id": string | null,"revision_number": number,"setting_values": NonNullable<Json>,"setup_id": string,"ski_model": string | null,"sled_id": string,"updated_at": string,"updated_by": string | null,"version": number
                   }
                   ComputedFields: never
                   Insert: {
-                    "client_request_id"?: string | null,"created_at"?: string,"created_by"?: string | null,"deleted_at"?: string | null,"deleted_by"?: string | null,"engine_hours"?: number | null,"id"?: string,"note"?: string | null,"odometer_mi"?: number | null,"restored_from_revision_id"?: string | null,"revision_number": number,"setting_values"?: NonNullable<Json>,"setup_id": string,"sled_id": string,"updated_at"?: string,"updated_by"?: string | null,"version"?: number
+                    "based_on_revision_id"?: string | null,"carbide_length"?: string | null,"client_request_id"?: string | null,"config_number": number,"created_at"?: string,"created_by"?: string | null,"deleted_at"?: string | null,"deleted_by"?: string | null,"engine_hours"?: number | null,"id"?: string,"note"?: string | null,"odometer_mi"?: number | null,"restored_from_revision_id"?: string | null,"revision_number": number,"setting_values"?: NonNullable<Json>,"setup_id": string,"ski_model"?: string | null,"sled_id": string,"updated_at"?: string,"updated_by"?: string | null,"version"?: number
                   }
                   Update: {
-                    "client_request_id"?: string | null,"created_at"?: string,"created_by"?: string | null,"deleted_at"?: string | null,"deleted_by"?: string | null,"engine_hours"?: number | null,"id"?: string,"note"?: string | null,"odometer_mi"?: number | null,"restored_from_revision_id"?: string | null,"revision_number"?: number,"setting_values"?: NonNullable<Json>,"setup_id"?: string,"sled_id"?: string,"updated_at"?: string,"updated_by"?: string | null,"version"?: number
+                    "based_on_revision_id"?: string | null,"carbide_length"?: string | null,"client_request_id"?: string | null,"config_number"?: number,"created_at"?: string,"created_by"?: string | null,"deleted_at"?: string | null,"deleted_by"?: string | null,"engine_hours"?: number | null,"id"?: string,"note"?: string | null,"odometer_mi"?: number | null,"restored_from_revision_id"?: string | null,"revision_number"?: number,"setting_values"?: NonNullable<Json>,"setup_id"?: string,"ski_model"?: string | null,"sled_id"?: string,"updated_at"?: string,"updated_by"?: string | null,"version"?: number
                   }
                   Relationships: [
                     {
@@ -592,6 +618,9 @@ isOneToOne: false
             "accept_sled_invitation":
 { Args: { "p_token": string }; Returns: string
                            },
+"activate_suspension_configuration":
+{ Args: { "p_equipment_installed"?: boolean,"p_revision_id": string }; Returns: Json
+                           },
 "activate_suspension_setup":
 { Args: { "p_setup_id": string }; Returns: undefined
                            },
@@ -658,6 +687,9 @@ isOneToOne: false
                            },
 "save_maintenance_entry":
 { Args: { "p_category"?: string,"p_completed"?: boolean,"p_done_by"?: string,"p_idempotency_key": string,"p_labor_cost"?: number,"p_notes"?: string,"p_other_cost"?: number,"p_parts"?: Json,"p_performed_on": string,"p_reading"?: Json,"p_sled_id": string,"p_tasks"?: Json,"p_title": string }; Returns: Json
+                           },
+"save_suspension_configuration":
+{ Args: { "p_base_revision_id"?: string,"p_carbide_length"?: string,"p_changes"?: Json,"p_engine_hours"?: number,"p_idempotency_key"?: string,"p_note"?: string,"p_odometer_mi"?: number,"p_ski_model"?: string,"p_sled_id": string }; Returns: Json
                            },
 "save_suspension_revision":
 { Args: { "p_base_revision_id": string,"p_changes": Json,"p_engine_hours"?: number,"p_idempotency_key"?: string,"p_note"?: string,"p_odometer_mi"?: number,"p_setup_id": string }; Returns: Json

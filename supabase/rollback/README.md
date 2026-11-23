@@ -18,9 +18,34 @@ below call for it, and preferably after talking it through.
 
 ## Order matters
 
-Roll back the newest migration first: Migration 8, then 7, then 6, then 5, then 4, then 3, then 2, then 1. Each
+Roll back the newest migration first: Migration 9, then 8, then 7, then 6, then 5, then 4, then 3, then 2, then 1. Each
 older rollback fails safely (changing nothing) while a newer migration that
 depends on it is still applied.
+
+---
+
+## `20261123090000_rollback.sql` (Migration 9)
+
+Undoes `supabase/migrations/20261123090000_suspension_quick_tune.sql`: the
+`sled_suspension_state` table, `save_suspension_configuration` and
+`activate_suspension_configuration`, the `number` and `quick_tune` triggers
+and their functions, the new revision columns (`config_number`, `ski_model`,
+`carbide_length`, `based_on_revision_id`) and feedback columns (`conditions`,
+`high_temp_f`), and puts Migration 7's rating check back.
+
+It **refuses** while anything exists that Migration 7 can't hold: recorded
+skis or carbides (installed or on a configuration), or a ride evaluation with
+a Liked / Neutral / Disliked rating, trail conditions or a temperature. Fix
+forward instead once Quick Tune is in use. Configurations saved through Quick
+Tune stay as ordinary revisions; their numbers and the active configuration
+are worked out again if Migration 9 is re-applied.
+
+```sql
+set sledwerx.confirm_rollback = '20261123090000';
+-- then run the whole file in the same session (SQL Editor: paste both).
+```
+
+Tested by `scripts/test-migration-9-rollback.sh` (CI, local stack only).
 
 ---
 

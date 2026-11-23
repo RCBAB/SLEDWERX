@@ -1,3 +1,4 @@
+import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
 import { NEEDS_SUPABASE, addSled, hasSupabase, shareSled, signUp, uniqueEmail } from "./helpers";
@@ -115,6 +116,11 @@ test("the board shows every task in color order, and Mark Done updates it", asyn
   await expect(row(page, "Change oil").getByTestId("board-last-done")).toContainText("Done before SledWerx");
   await expect(row(page, "Inspect belt").getByTestId("board-last-done")).toHaveText("Never done in SledWerx");
   await noSidewaysScroll(page);
+
+  // Every row's text, the interval line ("Every 1,000 mi") included, meets WCAG AA contrast.
+  await expect(row(page, "Change oil")).toContainText("Every 1,000 mi");
+  const contrast = await new AxeBuilder({ page }).include('[data-testid="maintenance-board"]').withRules(["color-contrast"]).analyze();
+  expect(contrast.violations.flatMap((v) => v.nodes.map((n) => n.target.join(" ")))).toEqual([]);
 
   // Mark Done defaults to today and the current mileage and hours.
   await row(page, "Change oil").getByRole("button", { name: "Mark Change oil done" }).click();

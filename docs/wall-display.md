@@ -11,7 +11,10 @@ The SledWerx keyboard appears only in Wall Display, when **Keyboard: On**
 (the default; the choice is saved with your account).
 
 - Mileage, engine hours and money fields get a large number pad (with a
-  decimal point where decimals are allowed). Notes and other text fields get
+  decimal point where decimals are allowed). Suspension number values
+  (Phase 6.2) also get a **±** key: it flips the sign of the whole value, a
+  minus can only be first, and only one decimal point can be typed. No other
+  field gets ±; it is opt-in per field (`data-allow-negative="true"`). Notes and other text fields get
   a full keyboard with Shift (tap twice for caps lock), Space, Backspace,
   numbers and punctuation.
 - Keys never move focus or submit the form; **Save** does. **Done** (or Esc)

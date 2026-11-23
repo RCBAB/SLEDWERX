@@ -1,0 +1,305 @@
+# Suspension Quick Tune (Phase 6.2)
+
+Track how each snowmobile's suspension is set up, every adjustment made to
+it, which skis and carbides it ran, and how it rode, so you build up a
+history of what works on that sled. Data lives in Migration 7 (settings,
+revisions, feedback, photos) and Migration 9 (numbered configurations,
+equipment, ride evaluations); see [database.md](database.md).
+
+> **Migration 9 is not applied to production yet.** Until it is, the
+> Suspension page shows a "needs a database update" notice and the snowmobile
+> page and Garage Board show "Suspension: Not available yet". Nothing else
+> is affected. Applying it needs separate approval.
+
+> **Release (Decision 10, amended 2026-11-20):** Phase 6.2 is released with
+> **suspension photo uploads turned off** (feature flag
+> `SUSPENSION_PHOTO_UPLOADS`, off by default). Everything else (setups,
+> settings, adjustments, feedback, comparison, history, restore, Recently
+> Deleted) works as described. Uploads are turned back on only after the
+> **Migration 8** cleanup ([cleanup.md](cleanup.md)) has been verified in
+> deletion mode, because a mechanic's photo file can stay in storage when its
+> upload succeeds but saving its record fails.
+> See [Photo uploads feature flag](#photo-uploads-feature-flag).
+
+## Where to find it
+
+| Where | What |
+|---|---|
+| `/garage/[sledId]/suspension` | **Quick Tune** (default) or the **Suspension Map**: everything below |
+| Snowmobile page, **Suspension** section | Active Trail configuration, newest ride evaluation, **Active Ski Configuration** (change it here), View, Adjust, Ride evaluation, Open Quick Tune |
+| Garage Board (Cards, Compact, Wall Display) | The same summary and quick actions on every sled (large controls on Wall Display) |
+| My Snowmobiles | Unchanged (no suspension information) |
+
+## The active configuration
+
+The top of the page always shows the **active configuration** ("Trail 4 ·
+Active"), when it was saved, the **Active Ski Configuration** (installed skis
+and carbides, with **Change**) and the newest ride evaluation. Everything you
+adjust starts from the active configuration.
+
+## Quick Tune and the Suspension Map
+
+- **Quick Tune** is the default view; the **Suspension Map** (the sled
+  diagram with its zone panel) is the alternate view. The choice is
+  remembered in this browser (a cookie); `?view=quick|map` opens either.
+- Quick Tune lists every setting on one scrolling page in five sections:
+  **Front Ski Shocks, Front Track Shock, Rear Track Shock, Springs & Limiter
+  Strap, Rear General**. The seven stored zones map onto them (left and right
+  ski shocks and "front general" all go to Front Ski Shocks); no data changes.
+- **Left and right ski shocks combined:** a left and a right setting with the
+  same name, type and unit show as one row ("Compression · Both ski shocks")
+  and change together. **Left and right separately** splits the row; a row
+  whose saved or edited values differ is always shown split.
+- **Clicks, turns, holes, positions** get large **−** / **+** buttons (and can
+  still be typed); **measurements** (in, mm, psi, ...) are typed. Text
+  settings are typed.
+- Every changed value shows the saved one and the difference ("Was 10 clicks
+  · +2"). Change as many settings as you like, then **Save Adjustments**
+  (optional notes) or **Discard Changes**. Numbers that can't be saved are
+  flagged and block the save.
+- **Unsaved changes are protected:** following a link, switching view or
+  closing the tab asks first; changing skis or carbides waits until you save
+  or discard.
+- The **Suspension Map** keeps working as before: pick a zone, see its values,
+  **Record adjustment** (saves the next configuration the same way).
+
+## Numbered Trail configurations
+
+- There are no setup categories (Trail / Powder / Racing) any more: each
+  snowmobile has one numbered sequence, **Trail 1, Trail 2, Trail 3, ...**
+- Each configuration is a complete snapshot of every suspension value **and**
+  the skis and carbides it was saved with.
+- **Saving adjustments** creates the next number from the active
+  configuration (unchanged values copied) and makes it active. A configuration
+  is never edited or overwritten.
+- **No duplicates:** a save with nothing changed is refused; each save
+  carries an idempotency key, so a retry after a lost connection returns the
+  configuration already saved instead of a second one; a save made from a
+  configuration that is no longer active (someone else saved or switched in
+  the meantime) is refused with "Reload".
+- **History** lists every configuration, newest first: number, Active badge,
+  date and author, mileage/hours copied at the time, skis and carbides, what
+  changed from the configuration it was made from ("Trail 2 → Trail 5:
+  Compression: 10 → 12 clicks (+2), Skis: XPT → XCS"), the note and its ride
+  evaluations.
+- **View** shows a configuration in full. Viewing never activates it.
+- **Make active** switches to an older configuration without creating a new
+  one (see below). The next save then continues from it with the next number.
+
+## Skis and carbides
+
+- Ski models: **C&A Pro XPT**, **C&A Pro XCS**. Carbide lengths: **6"**,
+  **7.5"**, **9"**.
+- The **Active Ski Configuration** is one record per snowmobile, shown and
+  changed on the snowmobile page, the Garage Board and Quick Tune; a change
+  anywhere shows everywhere.
+- Changing it asks for confirmation, then: the current configuration is kept;
+  the next Trail configuration is created with every suspension value copied
+  and the new skis and carbides; it becomes active.
+- Older configurations keep the equipment they were saved with.
+  Configurations saved before Quick Tune show "Not recorded".
+
+## Making an older configuration active
+
+Selecting, viewing and activating are separate steps. **Make active** opens a
+summary of what differs from the active configuration, then:
+
+- **Same (or unrecorded) skis and carbides:** Activate.
+- **Different skis or carbides:** both are shown ("Trail 3 was set up with
+  C&A Pro XPT · 6" carbides / Installed now: C&A Pro XCS · 7.5" carbides").
+  SledWerx doesn't assume anything was changed on the sled: **Activate** stays
+  disabled until you tick "I've installed ...", which also updates the Active
+  Ski Configuration. **Cancel** changes nothing.
+
+## Ride evaluations
+
+- Any number per configuration (adding one never creates a configuration):
+  overall rating **Liked / Neutral (needs more testing) / Disliked**; trail
+  conditions, any of **Loose Snow, Hard Pack, Perfect Groomed, Sloppy, Fresh
+  Snow**; ride date (today by default, editable, not in the future); the
+  **day's high °F** (optional, whole degrees −60 to 120); **ride notes**
+  (optional).
+- Shown in the configuration's history card, in the comparison and (newest)
+  at the top and on the snowmobile page and Garage Board. Switching
+  configurations keeps every evaluation.
+- Feedback saved before Quick Tune keeps its rating (Improved / Worse / No
+  change) and is shown as it was; editing it asks for a new-style rating.
+
+## Warnings about configurations that rode badly
+
+When you **make a configuration active**, **change skis or carbides**, or
+**edit values in Quick Tune**, SledWerx checks whether the result is a
+configuration that was rated **Disliked** before (same values for every
+setting, same skis, same carbides). If so it shows, without blocking:
+
+> This suspension configuration was previously rated Disliked under Loose
+> Snow conditions. Review your earlier feedback before trying it again.
+> (Trail 2)
+
+Conditions matter: the warning names the conditions it was disliked in and,
+if the same configuration was also **Liked** in other conditions, says so. A
+configuration without a Disliked rating never warns. Quick Tune also says
+when your edits match an existing configuration.
+
+## Comparing configurations
+
+Pick any two configurations: numbers, Active / Inactive, skis and carbides,
+every suspension difference with its change ("10 → 12 clicks (+2)"), the
+equipment change, and each one's ride evaluations (rating, conditions,
+temperature, notes). Settings that are the same are folded away. **Compare**
+on a history card compares it with the active one.
+
+## Settings list and the suggested template
+
+- One settings list per snowmobile. A snowmobile without settings offers
+  **Use suggested settings** (one general list: compression, rebound and
+  preload on both ski shocks; front track shock compression and rebound; rear
+  track shock compression, rebound and preload; limiter strap; torsion spring
+  position; track tension; names and units only, never values) or **Start
+  blank**. There are no riding-style templates.
+- Owners and editors can rename settings, change units and type, add, reorder
+  and remove settings at any time. Saved configurations keep their values
+  (with the names and units of the time).
+
+## Photos
+
+> **Uploads are turned off in production for now** (see
+> [Photo uploads feature flag](#photo-uploads-feature-flag)). This section
+> describes the behaviour with `SUSPENSION_PHOTO_UPLOADS=on`.
+
+- **Reference photos** per setting (e.g. where the clicker is) and
+  **adjustment photos** per revision, **6 at most each**, in the private
+  `suspension-photos` bucket (signed links that expire after an hour).
+- Photos are resized in the browser (longest side 1600 px, JPEG), which
+  removes location (GPS) data. Non-images are refused before upload.
+- Adjustment photos can be added while recording an adjustment or later from
+  the history; they stay with their revision.
+- Removed photos go to Recently Deleted in the database (kept 30 days).
+  **Restoring removed photos from the app is deferred to a future release**
+  (product decision, Checkpoint 7); setups, settings and ride feedback can be
+  restored today.
+
+## Garage Board and Wall Display
+
+- Cards, Compact and Wall Display show the active Trail configuration, its
+  newest ride evaluation and the Active Ski Configuration, with **View**
+  (everyone), **Adjust**, **Ride evaluation** and **Change** skis/carbides
+  (owners, editors, mechanics). Settings management stays on the full page.
+- On Wall Display the SledWerx keyboard adds a **±** key for suspension
+  number values only (see [wall-display.md](wall-display.md)).
+
+## Color and contrast
+
+Primary buttons and other filled controls with white text use `--primary`
+(`#d92b12`, 4.88:1 with white; WCAG AA), darkening to `--primary-hover`
+(`#b8240f`, 6.37:1) on hover and press. The brand `--accent` (`#ff3b1f`) is
+unchanged for text, borders, focus outlines and decoration, where it reads
+better on the dark background (5.46:1). The diagram's selected marker keeps
+the accent (large bold number, 3.56:1; 3:1 needed). The automated
+accessibility tests check every axe rule, color contrast included. The
+maintenance board's interval line ("Every 500 mi") uses the full muted gray
+(5.95:1; it was 80% opacity, 4.25:1).
+
+## Who can do what
+
+| | Owner / editor | Mechanic | Viewer | No access |
+|---|---|---|---|---|
+| See configurations, values, equipment, evaluations, photos | ✅ | ✅ | ✅ | ❌ |
+| Settings list (template, add, rename, units, reorder, remove); reference photos | ✅ | ❌ | ❌ | ❌ |
+| Save adjustments, make a configuration active, change skis and carbides | ✅ | ✅ | ❌ | ❌ |
+| Add ride evaluations and adjustment photos | ✅ | ✅ | ❌ | ❌ |
+| Edit ride evaluations | any | own | ❌ | ❌ |
+| Remove evaluations and photos | ✅ | ❌ | ❌ | ❌ |
+| Recently Deleted (restore) | ✅ | ❌ | ❌ | ❌ |
+
+The interface only hides what a role can't do; Row Level Security, the
+Migration 7 triggers, the Migration 9 functions (which check the caller's
+permission on the sled) and storage policies enforce it.
+
+## Recently Deleted
+
+Owners and editors see, for 30 days, deleted **settings** (with their
+reference photos), **ride evaluations** removed on their own (restored
+exactly as they were: author, ride date, rating, conditions, temperature,
+notes, configuration), and any **setup** deleted before Quick Tune (restored
+with its history). Nothing is permanently
+deleted by the app; see Migration 8 below.
+
+## Photo uploads feature flag
+
+| `SUSPENSION_PHOTO_UPLOADS` | Behaviour |
+|---|---|
+| unset, or anything but `on` (**default; production for now**) | No way to add suspension photos: no "Add reference photos" link, no Photos button on revisions without photos, no photo picker when recording an adjustment (Suspension page, snowmobile page, Garage Board). The server actions also refuse to prepare or record a photo. Photos that already exist are still shown, and owners and editors can still remove them. |
+| `on` | Reference and adjustment photos as described under [Photos](#photos). |
+
+- Server-only (read at request time in `src/lib/suspension/photo-flag.ts`,
+  never sent to the browser as configuration); the interface follows it
+  through the role capabilities (`suspensionCapabilities(role, { photoUploads })`
+  in `src/lib/sleds/permissions.ts`), which default to off.
+- **Turning uploads on later:** set `SUSPENSION_PHOTO_UPLOADS=on` for
+  Production in Vercel and redeploy. No code change. Only after runbook step
+  B9 ([cleanup-release-runbook.md](cleanup-release-runbook.md)) and its own
+  approval.
+- **Limit:** the flag hides the app's upload path. The storage policies are
+  unchanged (by decision), so a signed-in owner, editor or mechanic could
+  still upload a file to their sled's folder with the Storage API directly.
+  Such a file is unreferenced, unlisted in the app, and is reported by the
+  Migration 8 cleanup like any other orphan.
+- **Turning uploads off again** at any time: unset the variable and redeploy;
+  existing photos are unaffected.
+
+## Release blocker for photo uploads: leftover photo files
+
+- Photos are uploaded first, then recorded. The server checks the parent,
+  the permission and the room left before any upload, and a failed record
+  save is retried once. If it still fails, **owners and editors remove the
+  file again; mechanics can't** (storage policy: only owners and editors
+  delete files). Such a file stays in storage, unlisted.
+- Existing storage permissions **must not be weakened** to fix this.
+- **Migration 8** (built; [cleanup.md](cleanup.md)) removes unreferenced
+  files safely (only app photo paths, no record of any state pointing at them,
+  at least 24 hours old, re-checked under a lock before each removal), starts
+  in **report-only** mode, and permanently deletes only after separate
+  approval. Claimed and removed paths are closed to new uploads.
+- The cleanup must be **applied and verified in deletion mode before photo
+  uploads are turned on in production**
+  ([cleanup-release-runbook.md](cleanup-release-runbook.md), steps B1–B9).
+  Until then Phase 6.2 runs with the
+  [feature flag](#photo-uploads-feature-flag) off (Decision 10, amended).
+
+## Known limitations
+
+- **Photo recovery** from Recently Deleted is deferred to a future release.
+- **Photo links** expire after an hour; a page left open longer shows
+  "Photo unavailable" until reloaded (same as issue photos).
+- **History size:** the page loads a sled's newest 500 configurations and
+  shows ten at a time.
+- **Remembered view** is per browser (a cookie), not per account.
+- **Leaving with unsaved changes:** links, view switches and closing the tab
+  ask first; the browser's Back button in the app doesn't.
+- **Older data:** sleds with several setups from before Quick Tune keep them
+  internally; their revisions are numbered into one Trail sequence in the
+  order they were saved, and the active setup's latest revision is the active
+  configuration.
+
+## Tests
+
+- Unit: `src/lib/suspension/*.test.ts`, `src/lib/keyboard/edit.test.ts`.
+  `quick-tune.test.ts` covers sections and left/right pairing, + / − steps,
+  differences, pending changes, equipment, warnings and the template.
+- Database: `supabase/tests/database/010_suspension.test.sql` and
+  `014_suspension_quick_tune.test.sql` (pgTAP); Migration 9 rollback:
+  `scripts/test-migration-9-rollback.sh`.
+- Browser: `e2e/suspension.spec.ts` (desktop and phone, real local Supabase
+  stack in CI): first visit and template, Quick Tune batch saves, discard and
+  left/right, skis and carbides from either screen with history snapshots,
+  activating older configurations (matching and mismatched equipment,
+  cancel), ride evaluations with conditions and temperature, Disliked
+  warnings, comparison, unsaved-change protection, the Suspension Map, roles,
+  snowmobile page, Garage Board and Wall Display, photos off, the leftover
+  photo file case, accessibility (axe), no sideways scrolling, 44 px targets. Playwright
+  starts two servers from the same build: the main one with photo uploads
+  **off** (as in production; includes a test that no upload control is
+  offered anywhere and that existing photos stay visible and removable) and
+  one on the next port with `SUSPENSION_PHOTO_UPLOADS=on` for the photo tests
+  (`test.describe("with photo uploads turned on")`).

@@ -680,28 +680,33 @@ test("Wall Display keyboard: ± only on suspension values; only valid numbers; m
 // Photos (uploads stay off; Migration 8 cleanup behaviour unchanged)
 // ---------------------------------------------------------------------------
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAgAAAAGCAIAAABxZ0isAAAAEUlEQVR4nGOQq7iDFTEMpAQAMUJFYTtzHLAAAAAASUVORK5CYII=", "base64");
-const pngs = (count: number, prefix = "photo") =>
-  Array.from({ length: count }, (_, n) => ({ name: `${prefix}-${n}.png`, mimeType: "image/png", buffer: PNG }));
 const objectPath = (sledId: string, parentId: string) => `${sledId}/${parentId}/${crypto.randomUUID()}.jpg`;
 
 test("photo uploads stay off (the default): no upload control anywhere; existing photos stay visible and removable", async ({ page }) => {
-  const sledId = await sledWithTemplate(page, uniqueEmail("qt-nophoto"));
+  const email = uniqueEmail("qt-nophoto");
+  const sledId = await sledWithTemplate(page, email);
   await tune(page, { [`${FRONT}|${BOTH}`]: "10" });
 
-  // A reference photo added while uploads were on (the second test server, same database).
-  await page.goto(`${PHOTOS_URL}/garage/${sledId}/suspension?view=map`);
-  await suspensionPage(page).getByTestId("zone-panel").getByRole("button", { name: "Reference photos of Compression" }).click();
-  let dialog = page.getByRole("dialog", { name: "Reference photos" });
-  await dialog.locator('input[type="file"]').setInputFiles(pngs(1));
-  await dialog.getByRole("button", { name: "Upload 1 photo" }).click();
-  await expect(dialog.getByText("1 photo added.")).toBeVisible();
+  // An existing reference photo (added before; reference photos are no longer added from the app).
+  const api = await apiAs(email);
+  const { data: setting } = await api
+    .from("suspension_settings")
+    .select("id")
+    .eq("sled_id", sledId)
+    .eq("zone", "front_left_shock")
+    .eq("name", "Compression")
+    .single();
+  const path = objectPath(sledId, setting!.id);
+  expect((await api.storage.from("suspension-photos").upload(path, PNG, { contentType: "image/jpeg" })).error).toBeNull();
+  expect((await api.from("suspension_photos").insert({ sled_id: sledId, setting_id: setting!.id, path })).error).toBeNull();
 
   // Uploads off: Quick Tune, the map, Record adjustment and the history offer no upload.
   await openSuspension(page, sledId, "quick");
   await expect(suspensionPage(page).locator('input[type="file"]')).toHaveCount(0);
   await expect(suspensionPage(page).getByRole("button", { name: /^Photos of Trail/ })).toHaveCount(0);
+  await expect(suspensionPage(page).getByTestId("measurement-photo-button")).toHaveCount(0);
   await section(page, FRONT).getByRole("button", { name: "Reference photos of Compression" }).click();
-  dialog = page.getByRole("dialog", { name: "Reference photos" });
+  const dialog = page.getByRole("dialog", { name: "Reference photos" });
   await expect(dialog.getByTestId("photo-grid").getByTestId("photo")).toHaveCount(1);
   await expect(dialog.getByRole("button", { name: "Add photos" })).toHaveCount(0);
   await expect(dialog.locator('input[type="file"]')).toHaveCount(0);
@@ -711,9 +716,9 @@ test("photo uploads stay off (the default): no upload control anywhere; existing
   await openSuspension(page, sledId, "map");
   await expect(suspensionPage(page).getByText("Add reference photos")).toHaveCount(0);
   await suspensionPage(page).getByTestId("zone-panel").getByRole("button", { name: "Record adjustment" }).click();
-  dialog = page.getByRole("dialog", { name: "Record adjustment" });
-  await expect(dialog.getByText("Photos (optional)")).toHaveCount(0);
-  await expect(dialog.locator('input[type="file"]')).toHaveCount(0);
+  const adjust = page.getByRole("dialog", { name: "Record adjustment" });
+  await expect(adjust.getByText("Photos (optional)")).toHaveCount(0);
+  await expect(adjust.locator('input[type="file"]')).toHaveCount(0);
 });
 
 test("a file whose record can't be saved: owners and editors remove it; a mechanic's stays for the Migration 8 cleanup", async ({
@@ -784,46 +789,28 @@ test("a file whose record can't be saved: owners and editors remove it; a mechan
 test.describe("with photo uploads turned on", () => {
   test.use({ baseURL: PHOTOS_URL });
 
-  test("reference photos (owners and editors) and adjustment photos (also mechanics) still work for when uploads return", async ({
-    page,
-    browser,
-  }) => {
-    const ownerEmail = uniqueEmail("qt-ph-o");
-    const mechanicEmail = uniqueEmail("qt-ph-m");
-    const sledId = await sledWithTemplate(page, ownerEmail);
+  test("only measurement photos can be added: reference and adjustment photo uploads stay off", async ({ page }) => {
+    const sledId = await sledWithTemplate(page, uniqueEmail("qt-ph-o"));
     await tune(page, { [`${FRONT}|${BOTH}`]: "10" });
 
-    // Reference photo from the map's zone panel.
+    // Quick Tune offers measurement photos, nothing else.
+    await expect(section(page, FRONT).getByTestId("measurement-photo-button").first()).toBeVisible();
+    await expect(suspensionPage(page).getByRole("button", { name: /^Reference photos of|^Photos of Trail/ })).toHaveCount(0);
+    await expect(suspensionPage(page).getByText("Add reference photos")).toHaveCount(0);
+
+    // The map and Record adjustment offer no reference or adjustment photo upload.
     await openSuspension(page, sledId, "map");
-    await suspensionPage(page).getByTestId("zone-panel").getByRole("button", { name: "Reference photos of Compression" }).click();
-    let dialog = page.getByRole("dialog", { name: "Reference photos" });
-    await dialog.locator('input[type="file"]').setInputFiles(pngs(2));
-    await dialog.getByRole("button", { name: "Upload 2 photos" }).click();
-    await expect(dialog.getByText("2 photos added.")).toBeVisible();
-    await expect(await violations(axeFor(page, "dialog[open]"))).toEqual([]);
-    await dialog.getByRole("button", { name: "Close" }).click();
-
-    // Adjustment photos while recording an adjustment, then later from the history.
+    await expect(suspensionPage(page).getByText("Add reference photos")).toHaveCount(0);
+    await expect(
+      suspensionPage(page)
+        .getByTestId("zone-panel")
+        .getByRole("button", { name: /^Reference photos of/ }),
+    ).toHaveCount(0);
     await suspensionPage(page).getByTestId("zone-panel").getByRole("button", { name: "Record adjustment" }).click();
-    dialog = page.getByRole("dialog", { name: "Record adjustment" });
-    await label(dialog, "Left ski shock: Compression", true).fill("12");
-    await dialog.locator('input[type="file"]').setInputFiles(pngs(1, "adj"));
-    await dialog.getByRole("button", { name: "Save adjustment" }).click();
-    await expect(dialog).toBeHidden({ timeout: 20_000 });
-    await expect(config(page, 2).getByTestId("revision-photos").getByTestId("photo")).toHaveCount(1);
-
-    const context = await browser.newContext({ baseURL: PHOTOS_URL });
-    const mechanic = await context.newPage();
-    await signUp(mechanic, mechanicEmail);
-    await shareSled(ownerEmail, sledId, mechanicEmail, "mechanic");
-    await openSuspension(mechanic, sledId);
-    await config(mechanic, 1).getByRole("button", { name: "Photos of Trail 1" }).click();
-    dialog = mechanic.getByRole("dialog", { name: "Adjustment photos" });
-    await dialog.locator('input[type="file"]').setInputFiles(pngs(1, "mech"));
-    await dialog.getByRole("button", { name: "Upload 1 photo" }).click();
-    await expect(dialog.getByText("1 photo added.")).toBeVisible();
-    await expect(dialog.getByRole("button", { name: /Remove photo/ })).toHaveCount(0);
-    await context.close();
+    const dialog = page.getByRole("dialog", { name: "Record adjustment" });
+    await expect(dialog.getByText("Photos (optional)")).toHaveCount(0);
+    await expect(dialog.locator('input[type="file"]')).toHaveCount(0);
+    await expect(await violations(axeFor(page, "dialog[open]"))).toEqual([]);
   });
 });
 

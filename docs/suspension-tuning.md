@@ -192,6 +192,13 @@ and one Trail configuration** (not a reference library or instructions).
 - **Who:** everyone on the sled views; owners, editors and mechanics add;
   owners and editors replace and remove. Others can't see the rows or the
   files (Row Level Security and the existing private-bucket policies).
+- **Shared files stay usable (Migration 11):** a file another configuration
+  still uses stays viewable, and can still be carried forward, even if the
+  configuration it was first uploaded to is later purged.
+- **Only measurement photos are added.** The older reference photos (per
+  setting) and adjustment photos (per configuration) are no longer added
+  from the app, whatever the flag says; existing ones stay viewable and
+  removable.
 - **Feature flag:** adding and replacing need `SUSPENSION_PHOTO_UPLOADS=on`,
   the same flag as every other suspension photo (see below; off in
   production). With it off, existing measurement photos are still shown and

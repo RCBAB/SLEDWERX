@@ -18,9 +18,30 @@ below call for it, and preferably after talking it through.
 
 ## Order matters
 
-Roll back the newest migration first: Migration 10, then 9, then 8, then 7, then 6, then 5, then 4, then 3, then 2, then 1. Each
+Roll back the newest migration first: Migration 11, then 10, then 9, then 8, then 7, then 6, then 5, then 4, then 3, then 2, then 1. Each
 older rollback fails safely (changing nothing) while a newer migration that
 depends on it is still applied.
+
+---
+
+## `20261125090000_rollback.sql` (Migration 11)
+
+Undoes `supabase/migrations/20261125090000_measurement_photo_access.sql`: puts
+back Migration 7's `private.suspension_photo_sled_id` and Migration 10's
+`private.tg_sled_measurement_photos_check` exactly as they were. No data,
+policy or file changes.
+
+It **refuses** while any measurement photo row refers to a file whose folder
+configuration is gone (after the rollback nobody could open that file and
+the snowmobile's next save would fail). Migration 10's rollback refuses while
+Migration 11 is applied.
+
+```sql
+set sledwerx.confirm_rollback = '20261125090000';
+-- then run the whole file in the same session.
+```
+
+Tested by `scripts/test-migration-11-rollback.sh` (CI, local stack only).
 
 ---
 

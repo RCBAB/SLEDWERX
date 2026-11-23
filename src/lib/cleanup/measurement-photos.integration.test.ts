@@ -205,23 +205,27 @@ describe.skipIf(!enabled)("measurement photos and the cleanup job on the local S
   it("30 days on, a delete run purges the rows and removes only files no configuration uses any more", async () => {
     // Every row of A, and the old setup with its configuration and photo row, expire.
     const setupId = sql(`select setup_id from public.suspension_revisions where id = '${trail.old}';`);
+    // One transaction: the setup's own cascade backdates its configuration and photo row to the same moment.
     sql(`
+      begin;
       alter table public.suspension_setups disable trigger guard;
       alter table public.suspension_setups disable trigger quick_tune;
       update public.suspension_setups set deleted_at = now() - interval '31 days', version = version where id = '${setupId}';
       alter table public.suspension_setups enable trigger guard;
       alter table public.suspension_setups enable trigger quick_tune;
-      alter table public.suspension_revisions disable trigger guard;
-      update public.suspension_revisions set deleted_at = now() - interval '31 days' where setup_id = '${setupId}';
-      alter table public.suspension_revisions enable trigger guard;
       alter table public.sled_measurement_photos disable trigger guard;
-      update public.sled_measurement_photos set deleted_at = now() - interval '31 days'
-        where path = '${files.a}' or revision_id = '${trail.old}';
+      update public.sled_measurement_photos set deleted_at = now() - interval '31 days' where path = '${files.a}';
       alter table public.sled_measurement_photos enable trigger guard;
       insert into private.cleanup_runs (mode, source, status, started_at, finished_at, records_step_at, files_step_at)
         select 'report', 'scheduled', 'completed', now() - d * interval '1 day', now() - d * interval '1 day', now(), now()
         from generate_series(1, 7) d;
-      select private.authorize_cleanup_deletion('integration test (throwaway stack)');`);
+      select private.authorize_cleanup_deletion('integration test (throwaway stack)');
+      commit;`);
+    expect(
+      sql(
+        `select count(*) from public.sled_measurement_photos where revision_id = '${trail.old}' and deleted_at < now() - interval '30 days';`,
+      ),
+    ).toBe("1");
 
     const report = await runCleanup({ ...deps(), requestedMode: "delete", deadline: later() });
     expect(report).toMatchObject({ status: "completed", mode: "delete" });

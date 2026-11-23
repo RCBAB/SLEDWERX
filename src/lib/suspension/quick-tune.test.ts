@@ -86,6 +86,7 @@ const config = (
   createdByName: "You",
   feedback: [],
   photos: [],
+  measurementPhotos: [],
   ...extra,
 });
 

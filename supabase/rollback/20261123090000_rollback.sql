@@ -32,6 +32,9 @@ begin
   if current_setting('sledwerx.confirm_rollback', true) is distinct from '20261123090000' then
     raise exception 'Rollback not confirmed. Run  set sledwerx.confirm_rollback = ''20261123090000'';  first, in the same session. See supabase/rollback/README.md.';
   end if;
+  if to_regclass('public.sled_measurement_photos') is not null then
+    raise exception 'Rollback aborted: Migration 10 (measurement photos) is applied. Roll back Migration 10 first.';
+  end if;
   if to_regclass('public.sled_suspension_state') is not null then
     select count(*) into v_rows from public.sled_suspension_state where ski_model is not null or carbide_length is not null;
     if v_rows > 0 then

@@ -30,6 +30,13 @@ const SUSPENSION_MESSAGES = [
   "Choose a carbide length.",
   "You do not have permission to change this snowmobile's suspension.",
   "Configuration not found.",
+  // Migration 10 (measurement photos)
+  "At most 2 photos per measurement.",
+  "A measurement photo cannot be changed.",
+  "Photo not found.",
+  "You can't replace this photo.",
+  "This photo is being removed.",
+  "This photo was removed.",
 ];
 
 /** "Trail 4 uses different skis or carbides than the ones installed. ..." */

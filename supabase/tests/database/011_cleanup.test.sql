@@ -246,7 +246,7 @@ select is_empty($$
   'every registered photo column exists and is protected by the claim guard');
 select is_empty($$ select id from storage.buckets where id like '%-photos' except select bucket_id from private.storage_cleanup_buckets $$,
   'every SledWerx photo bucket is registered');
-select is((select string_agg(bucket_id, ',' order by bucket_id) from private.storage_reference_columns),
+select is((select string_agg(distinct bucket_id, ',' order by bucket_id) from private.storage_reference_columns),
   'issue-photos,sled-photos,suspension-photos', 'each bucket has its reference column');
 
 -- ---------------------------------------------------------------------------

@@ -227,13 +227,22 @@ export async function getSuspensionData(sledId: string, userId: string, includeD
   ]);
   if (feedback.error || photos.error) throw new Error("Could not load suspension history.");
 
+  // Measurement photos (Migration 10); without the table, the feature is simply off.
+  const measurement = revisionIds.length
+    ? await supabase
+        .from("sled_measurement_photos")
+        .select("id, revision_id, setting_id, slot, path, version, created_by, created_at")
+        .eq("sled_id", sledId)
+        .is("deleted_at", null)
+    : { data: [], error: null };
+  const measurementPhotos = !isSchemaMissing(measurement.error);
+  if (measurement.error && measurementPhotos) throw new Error("Could not load measurement photos.");
+  const measurementRows = measurement.error ? [] : (measurement.data ?? []);
+
   const photoRows = photos.data ?? [];
   const feedbackRows = feedback.data ?? [];
   const [urls, nameOf] = await Promise.all([
-    signedUrls(
-      supabase,
-      photoRows.map((p) => p.path),
-    ),
+    signedUrls(supabase, [...new Set([...photoRows.map((p) => p.path), ...measurementRows.map((p) => p.path)])]),
     names(
       supabase,
       [
@@ -295,6 +304,20 @@ export async function getSuspensionData(sledId: string, userId: string, includeD
       (a, b) => b.riddenOn.localeCompare(a.riddenOn) || b.createdAt.localeCompare(a.createdAt),
     ),
     photos: photoRows.filter((p) => p.revision_id === r.id).map(photo),
+    measurementPhotos: measurementRows
+      .filter((m) => m.revision_id === r.id)
+      .map((m) => ({
+        id: m.id,
+        revisionId: m.revision_id,
+        settingId: m.setting_id,
+        slot: (m.slot === 2 ? 2 : 1) as 1 | 2,
+        path: m.path,
+        url: urls.get(m.path) ?? null,
+        version: m.version,
+        createdBy: m.created_by,
+        createdAt: m.created_at,
+      }))
+      .sort((a, b) => a.slot - b.slot),
   }));
 
   const setupList: SuspensionSetup[] = (setups.data ?? []).map((s) => ({
@@ -357,6 +380,7 @@ export async function getSuspensionData(sledId: string, userId: string, includeD
     deleted,
     activeRevisionId,
     installed: state.data ? toEquipment(state.data.ski_model, state.data.carbide_length) : NO_EQUIPMENT,
+    measurementPhotos,
   };
 }
 

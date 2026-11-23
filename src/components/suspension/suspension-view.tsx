@@ -253,7 +253,7 @@ export function SuspensionView({
 
         {view === "quick" ? (
           <QuickTune
-            key={`${tuneKey}-${active?.id ?? "none"}`}
+            key={tuneKey}
             sledId={sled.id}
             settings={settings}
             active={active}
@@ -445,6 +445,8 @@ export function SuspensionView({
             onCancel={close}
             onDone={(result) => {
               close();
+              // Unsaved edits belonged to the previous configuration: start Quick Tune afresh.
+              setTuneKey((k) => k + 1);
               if (result.configNumber)
                 setNotice({ tone: "success", text: `${configName(result.configNumber)} is the active configuration now.` });
             }}

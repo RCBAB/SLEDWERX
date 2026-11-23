@@ -221,6 +221,46 @@ test("Quick Tune: several changes save together as Trail 1, Trail 2, ...; saved 
   await expect(activeName(page)).toHaveText("Trail 4");
 });
 
+test("typing right after Save Adjustments keeps every keystroke; making another Trail active starts fresh", async ({ page }) => {
+  const email = uniqueEmail("qt-race");
+  const sledId = await sledWithTemplate(page, email);
+  // Save, then type at once: the page refreshes a moment later and must not drop these edits.
+  await tuneInput(page, FRONT, BOTH).fill("10");
+  await bar(page).getByRole("button", { name: "Save Adjustments" }).click();
+  await expect(bar(page)).toBeHidden({ timeout: 15_000 });
+  // The saved value shows at once, before the refresh (never the value from before the save).
+  await expect(tuneInput(page, FRONT, BOTH)).toHaveValue("10");
+  await tuneInput(page, FRONT, BOTH).fill("12");
+  await tuneInput(page, "springs-limiter", "Limiter strap").fill("3");
+  await expect(activeName(page)).toHaveText("Trail 1"); // the refresh has arrived
+  await expect(tuneInput(page, FRONT, BOTH)).toHaveValue("12");
+  await expect(tuneInput(page, "springs-limiter", "Limiter strap")).toHaveValue("3");
+  await expect(bar(page).getByTestId("change-count")).toHaveText("3 changes");
+  await expect(section(page, FRONT).getByTestId("qt-change").first()).toHaveText("Was 10 clicks · +2");
+  await bar(page).getByRole("button", { name: "Save Adjustments" }).click();
+  await expect(bar(page)).toBeHidden({ timeout: 15_000 });
+  await expect(activeName(page)).toHaveText("Trail 2");
+  expect(await configCount(email, sledId)).toBe(2);
+
+  // The same right after changing skis and carbides (a new Trail arrives from the server).
+  await changeEquipment(page, suspensionPage(page), "Change skis or carbides", "C&A Pro XPT", '6"');
+  await tuneInput(page, "springs-limiter", "Limiter strap").fill("4");
+  await expect(activeName(page)).toHaveText("Trail 3");
+  await expect(tuneInput(page, "springs-limiter", "Limiter strap")).toHaveValue("4");
+  await expect(bar(page).getByTestId("change-count")).toHaveText("1 change");
+  await bar(page).getByRole("button", { name: "Discard Changes" }).click();
+
+  // Unsaved edits don't carry over to a different configuration made active.
+  await tuneInput(page, FRONT, BOTH).fill("14");
+  await config(page, 1).getByRole("button", { name: "Make Trail 1 active" }).click();
+  const dialog = page.getByRole("dialog", { name: "Make active" });
+  await dialog.getByRole("button", { name: "Activate Trail 1" }).click();
+  await expect(dialog).toBeHidden({ timeout: 15_000 });
+  await expect(activeName(page)).toHaveText("Trail 1");
+  await expect(bar(page)).toBeHidden();
+  await expect(tuneInput(page, FRONT, BOTH)).toHaveValue("10");
+});
+
 test("skis and carbides: changed from the snowmobile page or Quick Tune, shown the same on both, kept per configuration", async ({
   page,
 }) => {

@@ -31,9 +31,9 @@ export type QuickTuneRow =
 
 const norm = (text: string | null | undefined) => (text ?? "").trim().toLowerCase();
 
-/** Left and right settings pair up when name, value type and unit match. */
+/** Left and right settings pair up when name, value type, unit and how they're adjusted match. */
 function pairable(a: SuspensionSetting, b: SuspensionSetting) {
-  return norm(a.name) === norm(b.name) && a.valueType === b.valueType && norm(a.unit) === norm(b.unit);
+  return norm(a.name) === norm(b.name) && a.valueType === b.valueType && norm(a.unit) === norm(b.unit) && a.inputMethods === b.inputMethods;
 }
 
 /** The rows of one section, in the settings' own order. */

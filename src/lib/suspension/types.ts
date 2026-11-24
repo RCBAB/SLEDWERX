@@ -1,5 +1,7 @@
 /** Suspension setup & tuning (Phase 6.2, Migration 7). */
 
+import type { TrailTurnsMap } from "./turns";
+
 /** The seven zones of the sled diagram, front to rear (the order used everywhere). */
 export const SUSPENSION_ZONES = [
   "front_left_shock",
@@ -50,12 +52,8 @@ export function isInputMethods(value: unknown): value is InputMethods {
 export function measures(methods: InputMethods): boolean {
   return methods !== "turns";
 }
-/**
- * Turns only and Measurement and Turns can be chosen once Quick Tune supports
- * turns (the second Measurement / Turns PR). Until then they are shown but
- * disabled, so no setting is switched before the interface exists.
- */
-export const TURNS_INPUT_AVAILABLE = false;
+/** Turns only and Measurement and Turns can be chosen (Quick Tune supports turns). */
+export const TURNS_INPUT_AVAILABLE = true;
 
 /** Suggestions for the unit field only. Never settings, never values. */
 export const UNIT_SUGGESTIONS = ["Clicks", "Turns", "mm", "in", "PSI"] as const;
@@ -195,6 +193,10 @@ export type MeasurementPhoto = {
   version: number;
   createdBy: string | null;
   createdAt: string;
+  /** Carried forward from an earlier Trail (a reference copy, not newly captured). */
+  inherited: boolean;
+  /** Carried forward for a setting whose value changed since (Migration 12). */
+  outdated: boolean;
 };
 
 /** A numbered configuration ("Trail N"): one saved revision of the sled's suspension. */
@@ -208,7 +210,12 @@ export type SuspensionRevision = {
   equipment: Equipment;
   /** The configuration this one was made from (if recorded). */
   basedOnId: string | null;
+  /** Its actual values: as saved, with a measurement documented later on this Trail in place of the blank turned value. */
   values: Snapshot;
+  /** What it shows: values, plus outstanding turns as "+2.5 turns" (View, History, Compare, warnings). */
+  display: Snapshot;
+  /** Turns-tracked settings on this Trail (Migration 12). */
+  turns: TrailTurnsMap;
   note: string | null;
   odometer: number | null;
   engineHours: number | null;
@@ -261,6 +268,8 @@ export type ActiveSuspension = {
     configNumber: number;
     changedAt: string;
     values: Snapshot;
+    display: Snapshot;
+    turns: TrailTurnsMap;
     equipment: Equipment;
     latestFeedback: { rating: FeedbackRating; riddenOn: string; conditions: TrailCondition[] } | null;
   } | null;

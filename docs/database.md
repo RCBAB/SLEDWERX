@@ -813,11 +813,11 @@ It covers the expired issue and suspension records, the files of purged
 records, and unreferenced photo files such as a mechanic's upload whose record
 couldn't be saved, without widening any storage permission.
 
-> **Release (Phase 6.2, Decision 10 amended 2026-11-20):** Phase 6.2 may
-> reach production with **suspension photo uploads turned off** (feature flag
-> `SUSPENSION_PHOTO_UPLOADS`, see [suspension-tuning.md](suspension-tuning.md#photo-uploads-feature-flag)).
-> Uploads are turned on only after Migration 8 is verified in deletion mode
-> (runbook steps B1–B9). No schema or storage policy changes.
+> **Release (Decision 10, amended again 2026-11-24):** measurement photo
+> uploads are on in production (`SUSPENSION_PHOTO_UPLOADS`, see
+> [suspension-tuning.md](suspension-tuning.md#photo-uploads-feature-flag)) with
+> the cleanup in report-only mode; they don't wait for deletion. No schema or
+> storage policy changes.
 
 ## Units
 

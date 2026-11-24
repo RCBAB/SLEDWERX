@@ -5,7 +5,7 @@ designed and its open decisions settled before any implementation starts.
 
 | Order | Feature | Status |
 |---|---|---|
-| 1 | [Suspension Measurement / Turns](#1-suspension-measurement--turns) | PR 1 (Migration 12 and the input-method setting) in review |
+| 1 | [Suspension Measurement / Turns](#1-suspension-measurement--turns) | PR 1 merged (Migration 12 applied); PR 2 (interface) in review |
 | 2 | [Maintenance Inspection & Replacement Tracking](#2-maintenance-inspection--replacement-tracking) | Requirements approved; next after Measurement / Turns is complete |
 
 Production context (as of 2026-11-24):

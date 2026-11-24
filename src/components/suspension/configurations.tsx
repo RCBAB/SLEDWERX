@@ -12,9 +12,11 @@ import { formatDate, formatHours, formatMiles } from "@/lib/sleds/format";
 import { canEditSuspensionFeedback, suspensionCapabilities } from "@/lib/sleds/permissions";
 import { describeChange, equipmentChanges, formatValue, revisionChanges } from "@/lib/suspension/diff";
 import { QUICK_TUNE_SECTIONS, baseOf, byNumberDesc, sectionRows } from "@/lib/suspension/quick-tune";
+import { formatTurns, trailReminders } from "@/lib/suspension/turns";
 import { ZONE_LABEL, configName, type SuspensionFeedback, type SuspensionRevision, type SuspensionSetting } from "@/lib/suspension/types";
 
 import { MeasurementPhotoButton } from "./measurement-photos";
+import { ReminderChip } from "./reminders";
 import { PhotoGrid } from "./photos";
 import { ActiveBadge, ConditionChips, EquipmentText, LocalDate, RatingBadge, useRun } from "./shared";
 
@@ -107,13 +109,44 @@ function ConfigurationCard({
 } & HistoryActions) {
   const can = suspensionCapabilities(role, { photoUploads });
   const name = configName(revision.configNumber);
-  const changes = revisionChanges(base?.values ?? null, revision.values, settings);
+  const changes = revisionChanges(base?.display ?? null, revision.display, settings);
   const equipment = base ? equipmentChanges(base.equipment, revision.equipment) : [];
   const [allChanges, setAllChanges] = useState(false);
+  // Migration 12: a turns adjustment reads "+1 turn (total +3 turns)", not a change of shown value.
+  const turned = (id: string) => revision.turns[id]?.adjustment ?? null;
   const lines = [
-    ...changes.map((c) => ({ key: c.settingId, zone: ZONE_LABEL[c.zone], text: describeChange(c), muted: c.kind === "cleared" })),
+    ...changes
+      .filter((c) => turned(c.settingId) === null)
+      .map((c) => ({ key: c.settingId, zone: ZONE_LABEL[c.zone], text: describeChange(c), muted: c.kind === "cleared" })),
+    ...Object.entries(revision.turns)
+      .filter(([, t]) => t.adjustment !== null)
+      .map(([id, t]) => {
+        const setting = settings.find((s) => s.id === id);
+        return {
+          key: `turns-${id}`,
+          zone: setting ? ZONE_LABEL[setting.zone] : null,
+          text: `${setting?.name ?? "Setting removed"}: ${formatTurns(t.adjustment!)}${t.cumulative !== null && t.cumulative !== t.adjustment ? ` (total ${formatTurns(t.cumulative)})` : ""}`,
+          muted: false,
+        };
+      }),
     ...equipment.map((text) => ({ key: text, zone: null, text, muted: false })),
   ];
+  const recorded = Object.entries(revision.turns).flatMap(([id, t]) =>
+    t.records.map((record, n) => {
+      const setting = settings.find((s) => s.id === id);
+      const value = formatValue(record.value, setting?.unit ?? null);
+      return {
+        key: `${id}-${n}`,
+        text:
+          n === 0
+            ? `${setting?.name ?? "Setting removed"} measured ${value}${record.cumulative !== null ? ` after ${formatTurns(record.cumulative)}` : ""}`
+            : `${setting?.name ?? "Setting removed"} corrected to ${value}`,
+        by: record.createdByName,
+        at: record.createdAt,
+      };
+    }),
+  );
+  const reminders = trailReminders(revision.turns, settings, photoUploads);
 
   return (
     <li
@@ -175,6 +208,31 @@ function ConfigurationCard({
           <p className="text-muted">Started blank.</p>
         )}
       </div>
+
+      {recorded.length ? (
+        <ul className="mt-3 space-y-1 text-sm" data-testid="configuration-measurements">
+          {recorded.map((r) => (
+            <li key={r.key} className="flex flex-wrap gap-x-2">
+              <span className="font-medium">{r.text}</span>
+              <span className="text-muted">
+                · <LocalDate value={r.at} withTime /> · {r.by}
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
+      {reminders.length ? (
+        <ul className="mt-3 space-y-1" data-testid="configuration-reminders">
+          {reminders.map((r) => (
+            <li key={r.settingId} className="flex flex-wrap items-center gap-2 text-sm">
+              <span className="text-muted">{r.name}</span>
+              {r.measurementNeeded ? <ReminderChip kind="measurement" /> : null}
+              {r.photoNeeded ? <ReminderChip kind="photo" /> : null}
+            </li>
+          ))}
+        </ul>
+      ) : null}
 
       {revision.note ? (
         <p
@@ -325,6 +383,7 @@ export function ConfigurationDetails({
   role,
   userId,
   measurement,
+  photoUploads = false,
 }: {
   revision: SuspensionRevision;
   settings: SuspensionSetting[];
@@ -333,6 +392,8 @@ export function ConfigurationDetails({
   userId: string;
   /** Measurement photos of this configuration (Migration 10), when available. */
   measurement?: { canAdd: boolean; open: (setting: SuspensionSetting, name: string) => void } | null;
+  /** Photo uploads are on (Photo Needed is shown only then). */
+  photoUploads?: boolean;
 }) {
   const photoCount = (settingId: string) => revision.measurementPhotos.filter((m) => m.settingId === settingId).length;
   // Settings that still exist, in Quick Tune order; then values of settings removed since.
@@ -349,7 +410,7 @@ export function ConfigurationDetails({
     rows.forEach((r) => shownIds.add(r.id));
     return { section, rows };
   });
-  const removed = Object.entries(revision.values).filter(([id]) => !shownIds.has(id));
+  const removed = Object.entries(revision.display).filter(([id]) => !shownIds.has(id));
   return (
     <div className="space-y-4" data-testid="configuration-details">
       <p className="text-sm">
@@ -366,11 +427,26 @@ export function ConfigurationDetails({
             <p className="mb-1.5 text-xs font-semibold uppercase tracking-[0.2em] text-muted">{section.label}</p>
             <ul className="divide-y divide-white/10 rounded-xl border border-white/10">
               {rows.map((r) => {
-                const value = revision.values[r.id]?.value ?? null;
+                const entry = revision.display[r.id];
+                const value = entry?.value ?? null;
+                const t = revision.turns[r.id];
                 return (
                   <li key={r.id} className="flex items-center justify-between gap-4 px-4 py-2.5" data-testid="detail-value">
                     <span className="min-w-0 break-words font-medium">
                       {r.label}
+                      {t?.measurement != null && t.cumulative !== null ? (
+                        <span className="ml-2 text-xs font-normal text-muted">measured after {formatTurns(t.cumulative)}</span>
+                      ) : null}
+                      {t?.measurementNeeded ? (
+                        <span className="ml-2 inline-block align-middle">
+                          <ReminderChip kind="measurement" />
+                        </span>
+                      ) : null}
+                      {t?.photoNeeded && photoUploads ? (
+                        <span className="ml-2 inline-block align-middle">
+                          <ReminderChip kind="photo" />
+                        </span>
+                      ) : null}
                       {measurement && (photoCount(r.id) > 0 || measurement.canAdd) ? (
                         <span className="ml-3 inline-block align-middle">
                           <MeasurementPhotoButton
@@ -383,7 +459,7 @@ export function ConfigurationDetails({
                       ) : null}
                     </span>
                     <span className={cn("shrink-0 font-display text-xl font-bold tabular-nums", value == null && "text-muted")}>
-                      {formatValue(value, r.setting.unit, r.setting.valueType)}
+                      {formatValue(value, entry?.type === "text" ? null : r.setting.unit, entry?.type ?? r.setting.valueType)}
                     </span>
                   </li>
                 );

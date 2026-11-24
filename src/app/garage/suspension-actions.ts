@@ -12,6 +12,7 @@ import { suspensionErrorMessage, type SuspensionSubject } from "@/lib/suspension
 import { isSchemaMissing, parseSnapshot } from "@/lib/suspension/queries";
 import { SUGGESTED_SETTINGS } from "@/lib/suspension/template";
 import { MAX_MEASUREMENT_PHOTOS, isCarbideLength, isSkiModel, isZone, settingsInZone, type SettingValueType } from "@/lib/suspension/types";
+import { parseTurns } from "@/lib/suspension/turns";
 import { adjustmentSchema, checkSettingValue, feedbackSchema, settingSchema, uuidSchema } from "@/lib/suspension/validation";
 import { futureDateError } from "@/lib/sleds/validation";
 import { createClient } from "@/lib/supabase/server";
@@ -261,6 +262,8 @@ export type ConfigurationInput = {
   baseRevisionId: string | null;
   /** Setting id -> new value ("" or null clears it). Only changed settings. */
   changes: Record<string, string | null>;
+  /** Setting id -> turns adjustment (signed, two decimals; Migration 12). 0 is no change. */
+  turns?: Record<string, string | number>;
   ski?: string | null;
   carbide?: string | null;
   note?: string | null;
@@ -312,19 +315,41 @@ async function saveConfigurationCore(input: ConfigurationInput): Promise<Suspens
       else fieldErrors[`${VALUE_FIELD}${id}`] = [check.error];
     }
   }
+  // Migration 12: turns adjustments (checked again by the database).
+  const turns: Record<string, number> = {};
+  const turnIds = Object.keys(input.turns ?? {});
+  if (turnIds.length > 200 || !turnIds.every((id) => uuidSchema.safeParse(id).success)) return { error: "Reload the page and try again." };
+  for (const id of turnIds) {
+    const amount = parseTurns(String(input.turns![id]));
+    if (amount === null) fieldErrors[`${VALUE_FIELD}${id}`] = ["Enter the turns as a number with at most two decimals."];
+    else if (amount !== 0) turns[id] = amount;
+  }
   if (Object.keys(fieldErrors).length) return { fieldErrors, error: Object.values(fieldErrors)[0][0] };
 
-  const { data, error } = await supabase.rpc("save_suspension_configuration", {
-    p_sled_id: sledId.data,
-    ...(base.data ? { p_base_revision_id: base.data } : {}),
-    p_changes: changes,
-    ...(input.ski ? { p_ski_model: input.ski } : {}),
-    ...(input.carbide ? { p_carbide_length: input.carbide } : {}),
-    ...(meta.data.note ? { p_note: meta.data.note } : {}),
-    ...(meta.data.odometer != null ? { p_odometer_mi: meta.data.odometer } : {}),
-    ...(meta.data.engineHours != null ? { p_engine_hours: meta.data.engineHours } : {}),
-    p_idempotency_key: meta.data.idempotencyKey,
-  });
+  const { data, error } = Object.keys(turns).length
+    ? await supabase.rpc("save_suspension_configuration", {
+        p_sled_id: sledId.data,
+        p_base_revision_id: base.data as string,
+        p_changes: changes,
+        p_ski_model: (input.ski ?? null) as string,
+        p_carbide_length: (input.carbide ?? null) as string,
+        p_note: (meta.data.note ?? null) as string,
+        p_odometer_mi: (meta.data.odometer ?? null) as number,
+        p_engine_hours: (meta.data.engineHours ?? null) as number,
+        p_idempotency_key: meta.data.idempotencyKey,
+        p_turns: turns,
+      })
+    : await supabase.rpc("save_suspension_configuration", {
+        p_sled_id: sledId.data,
+        ...(base.data ? { p_base_revision_id: base.data } : {}),
+        p_changes: changes,
+        ...(input.ski ? { p_ski_model: input.ski } : {}),
+        ...(input.carbide ? { p_carbide_length: input.carbide } : {}),
+        ...(meta.data.note ? { p_note: meta.data.note } : {}),
+        ...(meta.data.odometer != null ? { p_odometer_mi: meta.data.odometer } : {}),
+        ...(meta.data.engineHours != null ? { p_engine_hours: meta.data.engineHours } : {}),
+        p_idempotency_key: meta.data.idempotencyKey,
+      });
   const saved = data as { revision_id?: string; config_number?: number } | null;
   if (error || !saved?.revision_id) {
     if (isSchemaMissing(error)) return { error: SCHEMA_MISSING };
@@ -337,6 +362,36 @@ async function saveConfigurationCore(input: ConfigurationInput): Promise<Suspens
 /** Quick Tune: save several changed values at once as the next configuration. */
 export async function saveConfiguration(input: ConfigurationInput): Promise<SuspensionActionState> {
   return saveConfigurationCore({ ...input, ski: null, carbide: null });
+}
+
+/**
+ * Document the actual measurement of a setting on the active Trail after turns
+ * (Migration 12): no new Trail; clears Measurement Needed only. Repeating with
+ * another value is a correction (every record is kept). Owners, editors and
+ * mechanics.
+ */
+export async function recordMeasurement(input: { revisionId: string; settingId: string; value: string }): Promise<SuspensionActionState> {
+  await signedInUser();
+  const revisionId = uuidSchema.safeParse(input.revisionId);
+  const settingId = uuidSchema.safeParse(input.settingId);
+  if (!revisionId.success || !settingId.success) return { error: "Reload the page and try again." };
+  const supabase = await createClient();
+  const { data: setting } = await supabase.from("suspension_settings").select("name").eq("id", settingId.data).maybeSingle();
+  if (!setting) return { error: "Setting not found. Reload the page and try again." };
+  const check = checkSettingValue("number", input.value, setting.name);
+  if (!check.ok) return { fieldErrors: { [`${VALUE_FIELD}${settingId.data}`]: [check.error] }, error: check.error };
+  if (check.value === null) return { error: `Enter the measurement for ${setting.name}.` };
+  const { data, error } = await supabase.rpc("record_suspension_measurement", {
+    p_revision_id: revisionId.data,
+    p_setting_id: settingId.data,
+    p_value: check.value,
+  });
+  if (error || !data) {
+    if (isSchemaMissing(error)) return { error: SCHEMA_MISSING };
+    return { error: suspensionErrorMessage(error, "configuration") };
+  }
+  refresh();
+  return { ok: true, id: revisionId.data, savedAt: Date.now() };
 }
 
 /**
@@ -386,6 +441,20 @@ export async function saveAdjustment(_prev: SuspensionActionState, formData: For
       .maybeSingle();
     if (!base) return { error: "The active configuration was changed by someone else. Reload it and try again.", values };
     current = parseSnapshot(base.setting_values);
+    // Migration 12: a measurement documented on that Trail is its current value.
+    const { data: documented, error: documentedError } = await supabase
+      .from("sled_trail_settings")
+      .select("setting_id, measurement")
+      .eq("revision_id", baseRevisionId)
+      .not("measurement", "is", null);
+    if (documentedError && !isSchemaMissing(documentedError)) return failed(documentedError, "revision", { values });
+    for (const d of documented ?? []) {
+      if (d.measurement != null)
+        current[d.setting_id] = {
+          ...(current[d.setting_id] ?? { name: "", zone: "rear_general", unit: null, type: "number" }),
+          value: d.measurement,
+        };
+    }
   }
   const { data: settingRows, error: settingsError } = await supabase
     .from("suspension_settings")
@@ -590,7 +659,18 @@ export async function prepareMeasurementPhoto(
       .eq("setting_id", settingId)
       .is("deleted_at", null);
     if (error) return none(isSchemaMissing(error) ? SCHEMA_MISSING : "Something went wrong. Please try again.");
-    if ((count ?? 0) >= MAX_MEASUREMENT_PHOTOS) return none(`At most ${MAX_MEASUREMENT_PHOTOS} photos per measurement.`);
+    if ((count ?? 0) >= MAX_MEASUREMENT_PHOTOS) {
+      // Migration 12: a new photo may take the place of an outdated previous-Trail photo.
+      const { count: outdated } = await supabase
+        .from("sled_measurement_photos")
+        .select("id", { count: "exact", head: true })
+        .eq("revision_id", revisionId)
+        .eq("setting_id", settingId)
+        .is("deleted_at", null)
+        .not("carried_from_id", "is", null)
+        .eq("outdated", true);
+      if (!outdated) return none(`At most ${MAX_MEASUREMENT_PHOTOS} photos per measurement.`);
+    }
   }
   return { canRemoveFiles: can.canRemove };
 }

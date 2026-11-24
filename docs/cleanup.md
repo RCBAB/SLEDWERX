@@ -14,9 +14,9 @@ photo files that no record points at. Two parts:
 > administrator dashboard, operational-history retention, release runbook:
 > [cleanup-release-runbook.md](cleanup-release-runbook.md)). **Not applied to production,
 > no cron schedule, no production credentials.** Deletion is **off** and needs
-> two switches plus separate approval. Suspension photo uploads (Phase 6.2) stay
-> turned off until this cleanup has been verified in deletion mode
-> (Decision 10, amended); the rest of Phase 6.2 may be released before.
+> two switches plus separate approval. Measurement photo uploads are on
+> (since 2026-11-24) and don't depend on this cleanup's deletion
+> (Decision 10, amended again 2026-11-24).
 
 ## Approved decisions this follows
 
@@ -574,12 +574,11 @@ database cannot verify; Hobby-plan crons fire within the scheduled hour.
 
 ## Known limitations and release blockers
 
-- **Release blockers:** Migration 8 applied to production; 7 successful daily
-  report runs reviewed; verified database and photo backups; deletion
-  authorized and a delete run verified, all before **suspension photo
-  uploads** are turned on (Decision 10, amended: the rest of Phase 6.2 may be
-  released with uploads off). The cron schedule and production credentials
-  also still need approval.
+- **Before deletion is turned on:** 7 successful daily report runs reviewed;
+  verified database and photo backups; deletion authorized and a delete run
+  verified. Photo uploads no longer wait for these (Decision 10, amended
+  again 2026-11-24: measurement photo uploads are on with the cleanup in
+  report-only mode).
 - **No conditional delete in Storage:** users cannot write to a claimed or
   removed path (restrictive policies); only a service-role write in the last
   moment could still be removed, and it is detected and reported (see above).

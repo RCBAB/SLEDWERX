@@ -77,6 +77,7 @@ export function MeasurementPhotoManager({
   const [message, setMessage] = useState<{ tone: "error" | "success"; text: string } | null>(null);
   const trail = configName(revision.configNumber);
   const target = { sledId, revisionId: revision.id, settingId };
+  const firstOutdated = photos.filter((p) => p.inherited && p.outdated).sort((a, b) => a.slot - b.slot)[0]?.slot ?? null;
 
   const run = async (key: string, work: () => Promise<string | null>, success: string) => {
     setBusy(key);
@@ -146,6 +147,14 @@ export function MeasurementPhotoManager({
               data-filled={photo ? "true" : "false"}
             >
               <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">Photo {slot}</p>
+              {photo?.inherited ? (
+                <p
+                  className={cn("text-xs font-semibold", photo.outdated ? "text-amber-100" : "text-muted")}
+                  data-testid={photo.outdated ? "photo-outdated" : "photo-previous"}
+                >
+                  {photo.outdated ? "Previous Trail photo · outdated (the setting changed since)" : "Previous Trail photo"}
+                </p>
+              ) : null}
               {photo ? (
                 <>
                   <button
@@ -196,6 +205,18 @@ export function MeasurementPhotoManager({
                         <Trash2 aria-hidden className="size-4" />
                         Remove
                       </Button>
+                    ) : null}
+                    {canAdd && photo.inherited && photo.outdated && photos.length >= MAX_MEASUREMENT_PHOTOS && slot === firstOutdated ? (
+                      // Both slots taken: a new photo takes the place of an outdated previous-Trail photo (Migration 12).
+                      <FilePicker
+                        label={`Take a new photo of ${name} in place of the outdated one`}
+                        text="Take new photo"
+                        capture
+                        icon={<Camera aria-hidden className="size-4" />}
+                        busy={busy === `new-${slot}`}
+                        disabled={Boolean(busy)}
+                        onFile={(file) => void run(`new-${slot}`, () => saveMeasurementPhoto(target, file), `New photo added to ${trail}.`)}
+                      />
                     ) : null}
                   </div>
                 </>

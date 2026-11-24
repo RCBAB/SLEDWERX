@@ -35,12 +35,16 @@ export function sameValues(a: Snapshot, b: Snapshot): boolean {
   return true;
 }
 
-/** Saved configurations with exactly these values and equipment. */
+/**
+ * Saved configurations with exactly these values and equipment. Compared as
+ * shown: documented measurements, and outstanding turns as "+2.5 turns"
+ * (Migration 12), so turns count too.
+ */
 export function matchingConfigurations(
   target: { values: Snapshot; equipment: Equipment },
   revisions: SuspensionRevision[],
 ): SuspensionRevision[] {
-  return revisions.filter((r) => sameEquipment(r.equipment, target.equipment) && sameValues(r.values, target.values));
+  return revisions.filter((r) => sameEquipment(r.equipment, target.equipment) && sameValues(r.display, target.values));
 }
 
 /** "Loose Snow", "Loose Snow and Sloppy", "Loose Snow, Sloppy and Hard Pack". */

@@ -1,7 +1,7 @@
 "use client";
 
 import { ArrowDown, ArrowUp, Pencil, Plus, Trash2 } from "lucide-react";
-import { useActionState, useId, useState } from "react";
+import { useActionState, useId, useRef, useState } from "react";
 
 import { deleteSetting, moveSetting, saveSetting, type SuspensionActionState } from "@/app/garage/suspension-actions";
 import { Alert } from "@/components/ui/alert";
@@ -11,11 +11,16 @@ import { Field, SelectField, TextareaField } from "@/components/ui/field";
 import { FormActions } from "@/components/ui/form-actions";
 import { SubmitButton } from "@/components/ui/submit-button";
 import {
+  INPUT_METHOD_LABEL,
+  INPUT_METHODS,
+  TURNS_INPUT_AVAILABLE,
   UNIT_SUGGESTIONS,
   VALUE_TYPE_LABEL,
   ZONE_GROUPS,
   ZONE_LABEL,
+  measures,
   settingsInZone,
+  type InputMethods,
   type SettingValueType,
   type SuspensionSetting,
   type SuspensionZone,
@@ -161,6 +166,17 @@ export function SettingForm({
   const errors = state.fieldErrors ?? {};
   const v = state.values;
   const [valueType, setValueType] = useState<SettingValueType>((v?.valueType as SettingValueType) ?? setting?.valueType ?? "number");
+  const [inputMethods, setInputMethods] = useState<InputMethods>(
+    (INPUT_METHODS as readonly string[]).includes(v?.inputMethods ?? "")
+      ? (v?.inputMethods as InputMethods)
+      : (setting?.inputMethods ?? "measurement"),
+  );
+  const unitRef = useRef<HTMLInputElement>(null);
+  const chooseMethods = (next: InputMethods) => {
+    setInputMethods(next);
+    // A measurement adjusted in turns defaults to inches when no unit is set (it can be changed).
+    if (next !== "measurement" && measures(next) && unitRef.current && !unitRef.current.value.trim()) unitRef.current.value = "in";
+  };
 
   return (
     <form action={action} className="space-y-5" noValidate>
@@ -228,8 +244,53 @@ export function SettingForm({
         {errors.valueType?.[0] ? <p className="mt-1 text-sm text-accent-hot">{errors.valueType[0]}</p> : null}
       </fieldset>
       {valueType === "number" ? (
-        <>
+        <fieldset data-testid="input-methods">
+          <legend className="mb-1.5 text-sm font-medium text-foreground/90">How it&apos;s adjusted</legend>
+          <div className="grid gap-2 sm:grid-cols-3">
+            {INPUT_METHODS.map((value) => {
+              const disabled = !TURNS_INPUT_AVAILABLE && value !== "measurement" && setting?.inputMethods !== value;
+              return (
+                <label
+                  key={value}
+                  className={cn(
+                    "flex min-h-14 flex-col justify-center rounded-lg px-3 py-2 ring-1 has-[:focus-visible]:outline has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-accent",
+                    inputMethods === value ? "bg-accent/10 ring-2 ring-accent" : "bg-white/5 ring-white/10",
+                    disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer",
+                  )}
+                >
+                  <input
+                    type="radio"
+                    name="inputMethods"
+                    value={value}
+                    checked={inputMethods === value}
+                    disabled={disabled}
+                    onChange={() => chooseMethods(value)}
+                    className="sr-only"
+                  />
+                  <span className="text-sm font-bold">{INPUT_METHOD_LABEL[value]}</span>
+                  <span className="text-xs text-muted">
+                    {disabled
+                      ? "Available with Quick Tune Turns"
+                      : value === "measurement"
+                        ? "Enter the value"
+                        : value === "turns"
+                          ? "+/− turns"
+                          : "Either one"}
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+          {errors.inputMethods?.[0] ? <p className="mt-1 text-sm text-accent-hot">{errors.inputMethods[0]}</p> : null}
+        </fieldset>
+      ) : (
+        <input type="hidden" name="inputMethods" value="measurement" />
+      )}
+      {valueType === "number" ? (
+        // Turns only has no measurement unit: hidden, but the stored unit is kept as it is.
+        <div className={cn("space-y-2", !measures(inputMethods) && "hidden")} data-testid="unit-fields">
           <Field
+            ref={unitRef}
             label="Unit (optional)"
             name="unit"
             maxLength={20}
@@ -249,7 +310,7 @@ export function SettingForm({
               <UnitChip key={unit} unit={unit} />
             ))}
           </div>
-        </>
+        </div>
       ) : (
         <input type="hidden" name="unit" value="" />
       )}

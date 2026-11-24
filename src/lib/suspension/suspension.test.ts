@@ -102,6 +102,18 @@ describe("forms", () => {
     expect(settingSchema.safeParse({ name: "X", zone: "rear_general", valueType: "number", unit: "x".repeat(21) }).success).toBe(false);
   });
 
+  it("accepts the three input methods for number settings (Migration 12); left out means unchanged", () => {
+    const base = { name: "Preload", zone: "front_left_shock", valueType: "number", unit: "" };
+    for (const inputMethods of ["measurement", "turns", "both"]) {
+      expect(settingSchema.parse({ ...base, inputMethods }).inputMethods).toBe(inputMethods);
+    }
+    expect(settingSchema.parse({ ...base, inputMethods: "" }).inputMethods).toBeUndefined();
+    expect(settingSchema.parse(base).inputMethods).toBeUndefined();
+    expect(settingSchema.safeParse({ ...base, inputMethods: "sometimes" }).success).toBe(false);
+    expect(settingSchema.safeParse({ ...base, valueType: "text", inputMethods: "both" }).success).toBe(false);
+    expect(settingSchema.safeParse({ ...base, valueType: "text", inputMethods: "measurement" }).success).toBe(true);
+  });
+
   it("checks ride evaluations: new ratings, known conditions, whole-degree temperatures", () => {
     const ride = { rating: "liked", conditions: [], riddenOn: "2026-01-02" };
     expect(feedbackSchema.safeParse(ride).success).toBe(true);
@@ -267,6 +279,25 @@ describe("permissions", () => {
 });
 
 describe("error messages", () => {
+  it("shows Migration 12's turns messages as written, and nothing else", () => {
+    for (const message of [
+      "Record a measurement for Collar on the active Trail before switching it to Measurement only.",
+      "Record the measurement for Preload first.",
+      "Enter either a measurement or turns for Preload, not both.",
+      "Enter the turns for Preload with at most two decimals.",
+      "Compression is not adjusted in turns.",
+      "Collar is adjusted in turns.",
+      "Switch Collar to Measurement and Turns to record a measurement.",
+      "Make this Trail active before recording a measurement on it.",
+      "There are no turns to document for Preload on this Trail.",
+    ]) {
+      expect(suspensionErrorMessage({ code: "22023", message }, "setting")).toBe(message);
+    }
+    expect(suspensionErrorMessage({ code: "22023", message: 'syntax error at or near "is adjusted in turns"' }, "setting")).not.toContain(
+      "syntax",
+    );
+  });
+
   it("shows the database's own messages and friendly ones for codes", () => {
     expect(suspensionErrorMessage({ code: "23514", message: "Make another setup active before deleting this one." }, "setup")).toBe(
       "Make another setup active before deleting this one.",

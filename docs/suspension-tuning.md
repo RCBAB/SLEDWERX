@@ -160,6 +160,13 @@ on a history card compares it with the active one.
 - Owners and editors can rename settings, change units and type, add, reorder
   and remove settings at any time. Saved configurations keep their values
   (with the names and units of the time).
+- **How it's adjusted (Migration 12):** Measurement only (every existing
+  setting), Turns only, or Measurement and Turns, for number settings.
+  Choosing a turns option fills in "in" as the unit when none is set (it can
+  be changed); Turns only shows no unit (the stored one is kept). The two
+  turns options are shown but disabled until Quick Tune supports turns (the
+  second Measurement / Turns PR). See
+  [development-plan.md](development-plan.md) for the full design.
 
 ## Measurement photos (Migration 10)
 

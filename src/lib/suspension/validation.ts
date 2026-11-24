@@ -2,7 +2,15 @@ import { z } from "zod";
 
 import { optionalText, pastOrToday, requiredText, toNumber } from "@/lib/sleds/validation";
 
-import { MAX_SETTING_VALUE, RIDE_RATINGS, SUSPENSION_ZONES, TRAIL_CONDITIONS, VALUE_TYPES, type SettingValueType } from "./types";
+import {
+  INPUT_METHODS,
+  MAX_SETTING_VALUE,
+  RIDE_RATINGS,
+  SUSPENSION_ZONES,
+  TRAIL_CONDITIONS,
+  VALUE_TYPES,
+  type SettingValueType,
+} from "./types";
 
 /** What the database accepts for a number setting (Migration 7). */
 export const NUMBER_VALUE = /^-?[0-9]+(\.[0-9]+)?$/;
@@ -45,13 +53,23 @@ export function checkSettingValue(type: SettingValueType, raw: unknown, settingN
   return { ok: true, value: text };
 }
 
-export const settingSchema = z.object({
-  name: requiredText(80, "Name"),
-  zone: z.enum(SUSPENSION_ZONES, { error: "Choose where it is on the sled." }),
-  valueType: z.enum(VALUE_TYPES, { error: "Choose number or text." }),
-  unit: optionalText(20, "Unit"),
-  notes: optionalText(2000, "Notes"),
-});
+export const settingSchema = z
+  .object({
+    name: requiredText(80, "Name"),
+    zone: z.enum(SUSPENSION_ZONES, { error: "Choose where it is on the sled." }),
+    valueType: z.enum(VALUE_TYPES, { error: "Choose number or text." }),
+    // Migration 12. Left out: measurement only (or unchanged, when editing).
+    inputMethods: z.preprocess(
+      (value) => (value === "" || value == null ? undefined : value),
+      z.enum(INPUT_METHODS, { error: "Choose Measurement only, Turns only, or both." }).optional(),
+    ),
+    unit: optionalText(20, "Unit"),
+    notes: optionalText(2000, "Notes"),
+  })
+  .refine((s) => s.valueType === "number" || s.inputMethods === undefined || s.inputMethods === "measurement", {
+    message: "Turns need a number setting.",
+    path: ["inputMethods"],
+  });
 
 /** A ride evaluation: rating, any trail conditions, ride date, optional day's high (degF) and notes. */
 export const feedbackSchema = z.object({

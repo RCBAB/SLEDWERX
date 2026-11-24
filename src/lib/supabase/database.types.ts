@@ -327,14 +327,14 @@ isOneToOne: false
                   ]
                 },"sled_measurement_photos": {
                   Row: {
-                    "carried_from_id": string | null,"created_at": string,"created_by": string | null,"deleted_at": string | null,"deleted_by": string | null,"id": string,"path": string,"revision_id": string,"setting_id": string,"sled_id": string,"slot": number,"updated_at": string,"updated_by": string | null,"version": number
+                    "carried_from_id": string | null,"created_at": string,"created_by": string | null,"deleted_at": string | null,"deleted_by": string | null,"id": string,"outdated": boolean,"path": string,"revision_id": string,"setting_id": string,"sled_id": string,"slot": number,"updated_at": string,"updated_by": string | null,"version": number
                   }
                   ComputedFields: never
                   Insert: {
-                    "carried_from_id"?: string | null,"created_at"?: string,"created_by"?: string | null,"deleted_at"?: string | null,"deleted_by"?: string | null,"id"?: string,"path": string,"revision_id": string,"setting_id": string,"sled_id": string,"slot": number,"updated_at"?: string,"updated_by"?: string | null,"version"?: number
+                    "carried_from_id"?: string | null,"created_at"?: string,"created_by"?: string | null,"deleted_at"?: string | null,"deleted_by"?: string | null,"id"?: string,"outdated"?: boolean,"path": string,"revision_id": string,"setting_id": string,"sled_id": string,"slot": number,"updated_at"?: string,"updated_by"?: string | null,"version"?: number
                   }
                   Update: {
-                    "carried_from_id"?: string | null,"created_at"?: string,"created_by"?: string | null,"deleted_at"?: string | null,"deleted_by"?: string | null,"id"?: string,"path"?: string,"revision_id"?: string,"setting_id"?: string,"sled_id"?: string,"slot"?: number,"updated_at"?: string,"updated_by"?: string | null,"version"?: number
+                    "carried_from_id"?: string | null,"created_at"?: string,"created_by"?: string | null,"deleted_at"?: string | null,"deleted_by"?: string | null,"id"?: string,"outdated"?: boolean,"path"?: string,"revision_id"?: string,"setting_id"?: string,"sled_id"?: string,"slot"?: number,"updated_at"?: string,"updated_by"?: string | null,"version"?: number
                   }
                   Relationships: [
                     {
@@ -351,6 +351,38 @@ isOneToOne: false
       referencedColumns: ["id"]
     },{
       foreignKeyName: "sled_measurement_photos_sled_id_fkey"
+      columns: ["sled_id"]
+isOneToOne: false
+      referencedRelation: "sleds"
+      referencedColumns: ["id"]
+    }
+                  ]
+                },"sled_measurement_records": {
+                  Row: {
+                    "created_at": string,"created_by": string | null,"cumulative_turns": number | null,"id": string,"revision_id": string,"setting_id": string,"sled_id": string,"value": string
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "created_at"?: string,"created_by"?: string | null,"cumulative_turns"?: number | null,"id"?: string,"revision_id": string,"setting_id": string,"sled_id": string,"value": string
+                  }
+                  Update: {
+                    "created_at"?: string,"created_by"?: string | null,"cumulative_turns"?: number | null,"id"?: string,"revision_id"?: string,"setting_id"?: string,"sled_id"?: string,"value"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "sled_measurement_records_revision_id_fkey"
+      columns: ["revision_id"]
+isOneToOne: false
+      referencedRelation: "suspension_revisions"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "sled_measurement_records_setting_id_fkey"
+      columns: ["setting_id"]
+isOneToOne: false
+      referencedRelation: "suspension_settings"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "sled_measurement_records_sled_id_fkey"
       columns: ["sled_id"]
 isOneToOne: false
       referencedRelation: "sleds"
@@ -419,6 +451,70 @@ isOneToOne: false
       foreignKeyName: "sled_suspension_state_sled_id_fkey"
       columns: ["sled_id"]
 isOneToOne: true
+      referencedRelation: "sleds"
+      referencedColumns: ["id"]
+    }
+                  ]
+                },"sled_trail_settings": {
+                  Row: {
+                    "cumulative_turns": number | null,"measured_at": string | null,"measured_by": string | null,"measurement": string | null,"measurement_needed": boolean,"photo_required": boolean,"revision_id": string,"setting_id": string,"sled_id": string,"updated_at": string
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "cumulative_turns"?: number | null,"measured_at"?: string | null,"measured_by"?: string | null,"measurement"?: string | null,"measurement_needed"?: boolean,"photo_required"?: boolean,"revision_id": string,"setting_id": string,"sled_id": string,"updated_at"?: string
+                  }
+                  Update: {
+                    "cumulative_turns"?: number | null,"measured_at"?: string | null,"measured_by"?: string | null,"measurement"?: string | null,"measurement_needed"?: boolean,"photo_required"?: boolean,"revision_id"?: string,"setting_id"?: string,"sled_id"?: string,"updated_at"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "sled_trail_settings_revision_id_fkey"
+      columns: ["revision_id"]
+isOneToOne: false
+      referencedRelation: "suspension_revisions"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "sled_trail_settings_setting_id_fkey"
+      columns: ["setting_id"]
+isOneToOne: false
+      referencedRelation: "suspension_settings"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "sled_trail_settings_sled_id_fkey"
+      columns: ["sled_id"]
+isOneToOne: false
+      referencedRelation: "sleds"
+      referencedColumns: ["id"]
+    }
+                  ]
+                },"sled_turn_adjustments": {
+                  Row: {
+                    "amount": number,"created_at": string,"created_by": string | null,"id": string,"revision_id": string,"setting_id": string,"sled_id": string
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "amount": number,"created_at"?: string,"created_by"?: string | null,"id"?: string,"revision_id": string,"setting_id": string,"sled_id": string
+                  }
+                  Update: {
+                    "amount"?: number,"created_at"?: string,"created_by"?: string | null,"id"?: string,"revision_id"?: string,"setting_id"?: string,"sled_id"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "sled_turn_adjustments_revision_id_fkey"
+      columns: ["revision_id"]
+isOneToOne: false
+      referencedRelation: "suspension_revisions"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "sled_turn_adjustments_setting_id_fkey"
+      columns: ["setting_id"]
+isOneToOne: false
+      referencedRelation: "suspension_settings"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "sled_turn_adjustments_sled_id_fkey"
+      columns: ["sled_id"]
+isOneToOne: false
       referencedRelation: "sleds"
       referencedColumns: ["id"]
     }
@@ -535,14 +631,14 @@ isOneToOne: false
                   ]
                 },"suspension_settings": {
                   Row: {
-                    "created_at": string,"created_by": string | null,"deleted_at": string | null,"deleted_by": string | null,"id": string,"name": string,"notes": string | null,"position": number,"sled_id": string,"unit": string | null,"updated_at": string,"updated_by": string | null,"value_type": string,"version": number,"zone": string
+                    "created_at": string,"created_by": string | null,"deleted_at": string | null,"deleted_by": string | null,"id": string,"input_methods": string,"name": string,"notes": string | null,"position": number,"sled_id": string,"unit": string | null,"updated_at": string,"updated_by": string | null,"value_type": string,"version": number,"zone": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "created_at"?: string,"created_by"?: string | null,"deleted_at"?: string | null,"deleted_by"?: string | null,"id"?: string,"name": string,"notes"?: string | null,"position"?: number,"sled_id": string,"unit"?: string | null,"updated_at"?: string,"updated_by"?: string | null,"value_type"?: string,"version"?: number,"zone": string
+                    "created_at"?: string,"created_by"?: string | null,"deleted_at"?: string | null,"deleted_by"?: string | null,"id"?: string,"input_methods"?: string,"name": string,"notes"?: string | null,"position"?: number,"sled_id": string,"unit"?: string | null,"updated_at"?: string,"updated_by"?: string | null,"value_type"?: string,"version"?: number,"zone": string
                   }
                   Update: {
-                    "created_at"?: string,"created_by"?: string | null,"deleted_at"?: string | null,"deleted_by"?: string | null,"id"?: string,"name"?: string,"notes"?: string | null,"position"?: number,"sled_id"?: string,"unit"?: string | null,"updated_at"?: string,"updated_by"?: string | null,"value_type"?: string,"version"?: number,"zone"?: string
+                    "created_at"?: string,"created_by"?: string | null,"deleted_at"?: string | null,"deleted_by"?: string | null,"id"?: string,"input_methods"?: string,"name"?: string,"notes"?: string | null,"position"?: number,"sled_id"?: string,"unit"?: string | null,"updated_at"?: string,"updated_by"?: string | null,"value_type"?: string,"version"?: number,"zone"?: string
                   }
                   Relationships: [
                     {
@@ -708,7 +804,9 @@ isOneToOne: false
 "reactivate_sled_share":
 { Args: { "p_share_id": string }; Returns: undefined
                            },
-"replace_suspension_measurement_photo":
+"record_suspension_measurement":
+{ Args: { "p_revision_id": string,"p_setting_id": string,"p_value": string }; Returns: Json
+                           },"replace_suspension_measurement_photo":
 { Args: { "p_path": string,"p_photo_id": string,"p_version": number }; Returns: Json
                            },
 "restore_record_version":
@@ -728,11 +826,16 @@ isOneToOne: false
                            },
 "save_suspension_configuration":
 { Args: { "p_base_revision_id"?: string,"p_carbide_length"?: string,"p_changes"?: Json,"p_engine_hours"?: number,"p_idempotency_key"?: string,"p_note"?: string,"p_odometer_mi"?: number,"p_ski_model"?: string,"p_sled_id": string }; Returns: Json
+                           }|{ Args: { "p_base_revision_id": string,"p_carbide_length": string,"p_changes": Json,"p_engine_hours": number,"p_idempotency_key": string,"p_note": string,"p_odometer_mi": number,"p_ski_model": string,"p_sled_id": string,"p_turns": Json }; Returns: Json
                            },
 "save_suspension_revision":
 { Args: { "p_base_revision_id": string,"p_changes": Json,"p_engine_hours"?: number,"p_idempotency_key"?: string,"p_note"?: string,"p_odometer_mi"?: number,"p_setup_id": string }; Returns: Json
                            },
-"update_maintenance_entry":
+"suspension_trail_status":
+{ Args: { "p_revision_ids": (string)[] }; Returns: {
+              "cumulative_turns": number,"measured_at": string,"measurement": string,"measurement_needed": boolean,"photo_needed": boolean,"revision_id": string,"setting_id": string
+            }[]
+                           },"update_maintenance_entry":
 { Args: { "p_category"?: string,"p_done_by"?: string,"p_entry_id": string,"p_labor_cost"?: number,"p_notes"?: string,"p_other_cost"?: number,"p_parts"?: Json,"p_performed_on": string,"p_reading"?: Json,"p_tasks"?: Json,"p_title": string,"p_version": number }; Returns: Json
                            },
 "update_sled_share_role":

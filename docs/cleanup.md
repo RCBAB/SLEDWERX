@@ -14,8 +14,9 @@ photo files that no record points at. Two parts:
 > administrator dashboard, operational-history retention, release runbook:
 > [cleanup-release-runbook.md](cleanup-release-runbook.md)). **Not applied to production,
 > no cron schedule, no production credentials.** Deletion is **off** and needs
-> two switches plus separate approval. Phase 6.2 (suspension photos) must not
-> be released before this cleanup has been verified in deletion mode.
+> two switches plus separate approval. Suspension photo uploads (Phase 6.2) stay
+> turned off until this cleanup has been verified in deletion mode
+> (Decision 10, amended); the rest of Phase 6.2 may be released before.
 
 ## Approved decisions this follows
 
@@ -33,7 +34,13 @@ photo files that no record points at. Two parts:
 8. Verified database and Storage-photo backups before deletion is enabled.
 9. A read-only monitoring dashboard for the SledWerx administrator (later
    checkpoint).
-10. Verified in deletion mode before Phase 6.2 is released.
+10. Verified in deletion mode before **suspension photo uploads** are turned
+    on in production. *Amended 2026-11-20 (Option C):* Phase 6.2 may be
+    released before that with photo uploads turned off (server-only feature
+    flag `SUSPENSION_PHOTO_UPLOADS`, off unless `on`; see
+    [suspension-tuning.md](suspension-tuning.md#photo-uploads-feature-flag)).
+    The cleanup stays report-only with deletion off until the runbook's
+    deletion steps are approved.
 11. **Oversized groups:** a deletion group larger than 200 rows is skipped
     whole, recorded (id, size, reason) and flagged for review. The limit is
     never raised automatically.
@@ -181,6 +188,10 @@ recorded) when:
 | Any file in the bucket has incomplete metadata | that bucket |
 | The bucket has files and records point at it, but **no** file matches any record (the reference lookup is not trusted) | that bucket |
 | More than 10% of the files would be removed | buckets of **100 files or more** only (Decision 12) |
+
+Migration 9 (Quick Tune) adds `sled_suspension_state` (no Recently Deleted; removed with its sled) and gives it the `cleanup_count_deletes` trigger, so the registry stays complete. Its pgTAP test checks `cleanup_registry_problems()` is empty.
+
+Migration 10 (measurement photos) registers `sled_measurement_photos` (purged 30 days after Recently Deleted, children first) and its `path` column as a reference of the `suspension-photos` bucket, with the claim guard. Several rows can share one file; the file stays while any of them exists. Tested end to end with shared files, removed rows and a purged configuration in `016_measurement_photo_cleanup.test.sql` and `src/lib/cleanup/measurement-photos.integration.test.ts` (Migration 11 keeps such files viewable and carryable).
 
 In buckets under 100 files the percentage does not apply, but the
 100-files-per-run limit, the 24-hour age, the reference checks, the
@@ -565,8 +576,10 @@ database cannot verify; Hobby-plan crons fire within the scheduled hour.
 
 - **Release blockers:** Migration 8 applied to production; 7 successful daily
   report runs reviewed; verified database and photo backups; deletion
-  authorized and a delete run verified, all before Phase 6.2 is released. The
-  cron schedule and production credentials also still need approval.
+  authorized and a delete run verified, all before **suspension photo
+  uploads** are turned on (Decision 10, amended: the rest of Phase 6.2 may be
+  released with uploads off). The cron schedule and production credentials
+  also still need approval.
 - **No conditional delete in Storage:** users cannot write to a claimed or
   removed path (restrictive policies); only a service-role write in the last
   moment could still be removed, and it is detected and reported (see above).

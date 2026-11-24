@@ -10,6 +10,13 @@ export function uniqueEmail(label: string) {
   return `e2e-${label}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@example.com`;
 }
 
+/**
+ * The second test server, with suspension photo uploads turned on
+ * (SUSPENSION_PHOTO_UPLOADS=on; see playwright.config.ts). The main server
+ * runs with them off, as production does for now.
+ */
+export const PHOTOS_URL = `http://127.0.0.1:${Number(process.env.PORT ?? 3000) + 1}`;
+
 export async function signUp(page: Page, email: string, name?: string) {
   await page.goto("/signup");
   if (name) await page.getByLabel("Name (optional)").filter({ visible: true }).fill(name);

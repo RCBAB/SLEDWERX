@@ -368,7 +368,7 @@ only; Migrations 1 and 2 are unchanged.
   audit history and uses the row version (conflicts are refused).
 - **Known limitation:** when a sled is permanently deleted (after 30 days in
   Recently Deleted, or by `permanently_delete_sled`), its photo file stays in
-  the bucket until the Phase 7 cleanup, which removes files through the
+  the bucket until the Migration 8 cleanup, which removes files through the
   Storage API. Such files are unreachable: no sled matches their path.
 
 ## Service records (Migration 4)
@@ -645,11 +645,128 @@ Storage policies (`suspension-photos`): view = anyone who can view the sled;
 upload = whoever may add that kind of photo (`private.can_add_suspension_photo`);
 remove = owners and editors.
 
+### Photo uploads and leftover files
+
+Photos are added by the app in this order (`addSuspensionPhotos` in
+`src/lib/suspension/photo-upload.ts`):
+
+1. **Check first** (server): the setting or revision still exists, the user
+   may add this kind of photo, and how many more fit (6). If not, nothing is
+   uploaded.
+2. **Resize** in the browser (non-images are refused here, before upload).
+3. **Upload** the file, then **save its record**. A failed save is tried
+   once more (a repeat of a save that did go through is recognised).
+4. If the record still can't be saved, **owners and editors** remove the file
+   again. **Mechanics can't**: the storage policy lets only owners and editors
+   delete files, and that is deliberately not widened. Their file stays in
+   the bucket, unlisted and unreachable from the app, and the app says so.
+
+A record without a file can't happen (the record is saved only after the
+upload). A file without a record (a mechanic's, after step 4, or any file
+whose record was later purged) is removed by the Migration 8 cleanup
+([cleanup.md](cleanup.md); decision: option A, no storage policy change). Tests:
+`src/lib/suspension/photo-upload.test.ts` (order, retry, cleanup by role) and
+the photo tests in `e2e/suspension.spec.ts` (real storage policies: the
+owner/editor cleanup works, a mechanic's file stays unreferenced).
+
+Restoring removed photos from the app is deferred to a future release
+(Checkpoint 7 decision); removed photos stay in Recently Deleted in the
+database for 30 days. The features, roles and screens are described in
+[suspension-tuning.md](suspension-tuning.md).
+
 Not included (future phase): test sessions and manual ride logs. See also
 the purge gap under "Recently Deleted".
 
 Tests: `supabase/tests/database/010_suspension.test.sql`; rollback test
 `scripts/test-migration-7-rollback.sh`.
+
+## Suspension Quick Tune (Migration 9)
+
+`20261123090000_suspension_quick_tune.sql`, additive, **not applied to
+production** (needs approval; the app shows a notice until it is). Product
+behaviour: [suspension-tuning.md](suspension-tuning.md).
+
+| Object | What |
+|---|---|
+| `suspension_revisions.config_number` | Sled-wide number ("Trail N"), assigned by the `number` trigger under a per-sled lock; unique per sled; never reused. Existing revisions are numbered in save order by the migration. |
+| `suspension_revisions.ski_model`, `carbide_length` | Equipment snapshot (`ca_pro_xpt` / `ca_pro_xcs`; `6` / `7.5` / `9`); null = not recorded. Defaults to the installed equipment. Immutable like the rest of a revision. |
+| `suspension_revisions.based_on_revision_id` | What a configuration was made from (no foreign key, so purges never touch history). |
+| `sled_suspension_state` | One row per sled: `active_revision_id` and the installed `ski_model` / `carbide_length`. RLS: everyone on the sled reads it; nobody writes it directly. Backfilled for existing sleds (active setup's latest revision). |
+| `suspension_feedback.conditions`, `high_temp_f` | Trail conditions (subset of five) and the day's high in °F (−60 to 120). Rating check widened to `liked`/`neutral`/`disliked` plus the earlier three. |
+| `save_suspension_configuration(sled, base, changes, ski, carbide, note, odometer, hours, key)` | Next configuration from the active one (must equal `base`, else PT409); refuses "Nothing changed."; idempotent by key; updates the state. Owners, editors, mechanics. |
+| `activate_suspension_configuration(revision, equipment_installed)` | Makes an existing configuration active; never creates one; other equipment needs `equipment_installed = true` (else error hint `equipment_mismatch`), then the installed equipment follows. Owners, editors, mechanics. |
+| `quick_tune` trigger on `suspension_setups` | The setup holding the active configuration can't go to Recently Deleted. |
+
+Both functions are `SECURITY DEFINER` (mechanics may record and switch
+configurations but may not write the state row or setups directly): each
+checks `auth.uid()` and the sled permission first, and the revision triggers,
+Migration 1's guard included, still run for the caller. `anon` can execute
+neither. Migration 7's functions keep working (their revisions are numbered
+too). Migration 8: `sled_suspension_state` gets the `cleanup_count_deletes`
+trigger, so the cleanup registry stays complete.
+
+Tests: `supabase/tests/database/014_suspension_quick_tune.test.sql`; rollback
+`supabase/rollback/20261123090000_rollback.sql` and
+`scripts/test-migration-9-rollback.sh` (also checks the numbering of existing
+data on re-apply).
+
+## Measurement photos (Migration 10)
+
+`20261124090000_suspension_measurement_photos.sql`, additive, **not applied
+to production** (needs approval). Product behaviour:
+[suspension-tuning.md](suspension-tuning.md#measurement-photos-migration-10).
+
+| Object | What |
+|---|---|
+| `sled_measurement_photos` | One row per (configuration `revision_id`, `setting_id`, `slot` 1/2); `path` of an immutable file in `suspension-photos` (`<sled>/<revision it was uploaded to>/<uuid>.jpg`; several rows may share it); `carried_from_id` (informational). Record-table pattern; unique active slot per measurement. |
+| `add_suspension_measurement_photo(revision, setting, path)` | Next free slot; refuses a third (`At most 2 photos per measurement.`); a repeat with the same file returns the saved row. Owners, editors, mechanics. |
+| `replace_suspension_measurement_photo(photo, version, path)` | Old row to Recently Deleted, new row in the same slot; other configurations untouched. Owners and editors. |
+| `save_suspension_configuration` (re-created) | Same as Migration 9, plus: copies the base configuration's active photo rows to the new configuration. |
+| `cascade_measurement_photos` trigger | A configuration moved to Recently Deleted with its setup takes its photo rows along (and back). |
+| Migration 8 registries | `sled_measurement_photos` is purged (expiry `deleted_at`), counted, and its `path` is a reference column with the claim guard. |
+
+Storage policies are unchanged: uploads use the configuration's folder, which
+the existing policies already allow (everyone on the sled views; owners,
+editors and mechanics upload; owners and editors remove). Tests:
+`supabase/tests/database/015_measurement_photos.test.sql`; rollback
+`supabase/rollback/20261124090000_rollback.sql` and
+`scripts/test-migration-10-rollback.sh`.
+
+## Measurement photo access (Migration 11)
+
+`20261125090000_measurement_photo_access.sql`, **not applied to production**
+(needs approval). Replaces two functions; no table, policy or data changes.
+
+- `private.suspension_photo_sled_id(name)` (used by the suspension-photos
+  storage policies) also resolves a file that a measurement photo row of the
+  same snowmobile refers to. Without it, a file carried forward from a
+  configuration that is later purged could no longer be opened. Access is
+  not widened: still that snowmobile, still its sharing permissions.
+- `private.tg_sled_measurement_photos_check()` accepts such a file too.
+  Without it, carrying photos forward from that configuration would make
+  every later save of the snowmobile fail.
+
+Reachable today only through direct API calls (the app always saves a new
+configuration into its base's setup, and a setup's configurations are only
+ever deleted together); fixed before photo uploads and cleanup deletion are
+turned on. Tests: `016_measurement_photo_cleanup.test.sql` (fails without
+this migration), `src/lib/cleanup/measurement-photos.integration.test.ts`;
+rollback `supabase/rollback/20261125090000_rollback.sql` and
+`scripts/test-migration-11-rollback.sh`.
+
+## Migration 8: cleanup (built; see cleanup.md)
+
+The Recently Deleted & storage cleanup is described in [cleanup.md](cleanup.md)
+and released with [cleanup-release-runbook.md](cleanup-release-runbook.md).
+It covers the expired issue and suspension records, the files of purged
+records, and unreferenced photo files such as a mechanic's upload whose record
+couldn't be saved, without widening any storage permission.
+
+> **Release (Phase 6.2, Decision 10 amended 2026-11-20):** Phase 6.2 may
+> reach production with **suspension photo uploads turned off** (feature flag
+> `SUSPENSION_PHOTO_UPLOADS`, see [suspension-tuning.md](suspension-tuning.md#photo-uploads-feature-flag)).
+> Uploads are turned on only after Migration 8 is verified in deletion mode
+> (runbook steps B1–B9). No schema or storage policy changes.
 
 ## Units
 

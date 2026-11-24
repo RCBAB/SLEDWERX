@@ -37,6 +37,43 @@ export function serviceCapabilities(role: SledRole, recordCreatedBy: string | nu
   };
 }
 
+/**
+ * What the interface offers for suspension tuning (Phase 6.2). Mirrors the
+ * Migration 7 rules; Row Level Security and the database triggers enforce them.
+ * - Owners and editors manage setups and the settings list, add reference
+ *   photos, remove feedback and photos, and restore from Recently Deleted.
+ * - Mechanics record adjustments, restore revisions, add feedback and
+ *   adjustment photos, and edit their own feedback.
+ * - Viewers only read.
+ *
+ * Adding photos also needs the photo-upload feature flag (server-only
+ * SUSPENSION_PHOTO_UPLOADS, see lib/suspension/photo-flag.ts). It defaults to
+ * off here, so a caller that doesn't pass it never offers uploads.
+ */
+export function suspensionCapabilities(role: SledRole, { photoUploads = false }: { photoUploads?: boolean } = {}) {
+  const manages = role === "owner" || role === "editor";
+  const adjusts = manages || role === "mechanic";
+  return {
+    canManage: manages,
+    canAdjust: adjusts,
+    canAddFeedback: adjusts,
+    // Reference and adjustment photos (Migration 7) are no longer added, even
+    // with photo uploads on: measurement photos replace them. Existing ones
+    // can still be viewed, and removed by owners and editors.
+    canAddReferencePhotos: false,
+    canAddAdjustmentPhotos: false,
+    /** Measurement photos (Migration 10): add (owners, editors, mechanics), replace (owners, editors). */
+    canAddMeasurementPhotos: adjusts && photoUploads,
+    canReplaceMeasurementPhotos: manages && photoUploads,
+    canRemove: manages,
+  };
+}
+
+/** Owners and editors can edit any feedback; mechanics only their own. */
+export function canEditSuspensionFeedback(role: SledRole, createdBy: string | null, userId: string): boolean {
+  return serviceCapabilities(role, createdBy, userId).canEdit;
+}
+
 export const ROLE_LABELS: Record<SledRole, string> = {
   owner: "Owner",
   editor: "Editor",

@@ -8,7 +8,10 @@ explicit approval before it is executed; stop at the first failed check.
   production.
 - **Part B — Execution** changes production, one approved step at a time.
 
-Phase 6.2 (suspension photos, PR #17) is released only at step B9.
+Phase 6.2 (PR #17) may be released **with suspension photo uploads turned
+off** before this runbook is finished (Decision 10, amended 2026-11-20;
+feature flag `SUSPENSION_PHOTO_UPLOADS` unset). Photo uploads are turned on
+only at step B9.
 
 ---
 
@@ -19,7 +22,8 @@ Phase 6.2 (suspension photos, PR #17) is released only at step B9.
 - [ ] PR #18 reviewed; all eight CI checks green on its final commit.
 - [ ] Written approval for each of: B1 (apply migration), B2 (first
       administrator), B3 (deploy report-only), B6 (backups), B7 (authorize
-      deletion), B8 (operational-history retention), B9 (release Phase 6.2).
+      deletion), B8 (operational-history retention), B9 (turn on Phase 6.2
+      photo uploads).
 - [ ] Who is on call for the first two weeks, and who may switch deletion off.
 
 ### A2. Credentials to prepare (do not add them yet)
@@ -139,13 +143,52 @@ After each of the first few delete runs:
       `select private.authorize_retention_maintenance('<approval reference>');`
       and check its preview first: `select private.retention_counts();`.
 
-### B9. Confirm readiness to release Phase 6.2 (approval required)
+### B9. Turn on measurement photo uploads (approval required)
 
-- [ ] At least one delete run verified (B8), including a photo removal.
-- [ ] No unresolved replaced or failed removals, no warnings.
-- [ ] Mechanics' orphaned uploads are found and removed (or known and
-      expected).
-Then Phase 6.2 (PR #17) may be merged and released under its own approval.
+Only **measurement photos** (Migration 10) are added from the app. The older
+reference and adjustment photo uploads stay off in the code whatever the
+flag says; existing ones remain viewable and removable.
+
+Before (all must hold):
+- [ ] Migration 11 (`20261125090000_measurement_photo_access.sql`) applied
+      and verified (shared photos stay viewable and can still be carried
+      forward after an old configuration is purged).
+- [ ] At least one delete run verified (B8), **including a photo removal**:
+      for example a controlled test orphan uploaded to the Photo Test
+      snowmobile's folder without a record, reported after 24 hours, then
+      removed, while every Photo Test photo still loads.
+- [ ] No unresolved replaced or failed removals, no warnings, registry
+      problems `{}`.
+- [ ] Read-only check: every active measurement photo row points at an
+      existing file, and every file in `suspension-photos` is either referenced
+      or listed by the latest report:
+      ```sql
+      select count(*) as rows_without_file from public.sled_measurement_photos m
+      where m.deleted_at is null and not exists (
+        select 1 from storage.objects o where o.bucket_id = 'suspension-photos' and o.name = m.path);
+      select f.status, count(*) from private.storage_file_candidates() f
+      where f.bucket_id = 'suspension-photos' group by 1;
+      ```
+      Expected: `rows_without_file = 0`; statuses only `referenced`,
+      `too_new`, and the orphans the report listed.
+
+Then, under its own approval:
+1. Set `SUSPENSION_PHOTO_UPLOADS=on` for **Production only** in Vercel and
+   redeploy (leave Preview and Development unset unless testing).
+2. Smoke test on Photo Test, as the owner: add a photo, add a second, see
+   that a third can't be added, view one enlarged, replace one, remove one,
+   save an adjustment and see the photos carried to the new Trail, replace a
+   photo there and check the previous Trail still shows its own. Then, as a
+   mechanic shared on Photo Test: add a photo; Replace and Remove are not
+   offered.
+3. Check that no "Add reference photos", Record-adjustment photo picker or
+   History "Photos" upload appears.
+4. Watch the next daily runs: no warnings; new photos counted as referenced;
+   only true orphans (for example a mechanic's upload whose save failed)
+   listed and, in deletion mode, removed after 24 hours.
+
+To turn uploads off again: delete the variable and redeploy. Photos already
+added stay visible and removable.
 
 ---
 

@@ -52,7 +52,7 @@ test("turns, Record Measurement, reminders, photos, History and the dashboards",
   await editor.getByRole("button", { name: "Edit Track tension" }).click();
   const edit = page.getByRole("dialog", { name: "Edit setting" });
   await edit.getByTestId("input-methods").getByText("Measurement and Turns").click();
-  await expect(edit.getByRole("textbox", { name: "Unit (optional)" })).toHaveValue("in");
+  await expect(edit.getByRole("combobox", { name: "Unit (optional)" })).toHaveValue("in");
   await edit.getByRole("button", { name: "Save setting" }).click();
   await expect(edit).toBeHidden({ timeout: 15_000 });
   await expect(tension(page)).toHaveAttribute("data-input-methods", "both");

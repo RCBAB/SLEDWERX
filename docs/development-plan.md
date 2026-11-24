@@ -214,14 +214,15 @@ unnecessary complexity, reuse what exists.
   - `maintenance_plans.tracks` (`replacement` default for every existing
     schedule / `inspection` / `both`); an inspection schedule beside the
     existing (replacement) one: miles, hours, days, once a season, every
-    mileage update; "replace as needed"; season labels; an inspection
+    mileage update (mileage readings only; an engine-hours-only reading
+    doesn't count); "replace as needed"; season labels; an inspection
     starting point; a "known" or "tracking start" kind for both starting
     points (a tracking start is never shown as a replacement);
   - `save_maintenance_inspection`: one Inspection service record for one or
     many checks (Quick Check), through `save_maintenance_entry`;
   - `maintenance_board` re-created with new columns at the end: last
-    checked / replaced, Needs Replacement (derived: the newest check said so
-    and nothing was replaced since), each schedule's next due and status
+    checked / replaced, Needs Replacement (derived: a check said so and
+    nothing was replaced since; a later Good check does not clear it), each schedule's next due and status
     (whichever condition comes first), initial check needed, miles on the
     component. Replaced resets both schedules; Checked only the inspection one.
 - **PR 1:** Migration 13, its rollback and tests, generated types, app

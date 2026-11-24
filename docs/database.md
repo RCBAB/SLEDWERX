@@ -821,7 +821,9 @@ replacement only and is calculated exactly as before. Plan and decisions:
 - **`maintenance_plans`**: `tracks` (`replacement` default / `inspection` /
   `both`); the inspection schedule `inspect_interval_mi/hours/days`,
   `inspect_season_month/day` with `inspect_season_kind`, and
-  `inspect_each_reading` (Every Mileage Update, Decision C); the existing
+  `inspect_each_reading` (Every Mileage Update, Decision C: due once a
+  mileage reading newer than the last check exists; engine-hours-only
+  readings don't count); the existing
   interval columns stay the replacement schedule, with `replace_as_needed`
   and `season_kind` (`season` / `preseason` / `postseason`, Decision B); an
   inspection starting point `inspect_baseline_on/mi/hours`; and a kind for
@@ -829,8 +831,8 @@ replacement only and is calculated exactly as before. Plan and decisions:
   as a replacement).
 - **`maintenance_board`** keeps its columns and adds: `replace_status`
   (`as_needed` when replaced as needed), `last_checked_*`,
-  `last_check_outcome`, `needs_replacement` (the newest check said so and
-  nothing was replaced since), the inspection schedule's due and remaining
+  `last_check_outcome`, `needs_replacement` (a check said Needs Replacement
+  and nothing was replaced since; a later Good check does not clear it), the inspection schedule's due and remaining
   values, `inspect_due_on_reading`, `inspect_status` (`overdue`, `due`,
   `initial_check`, `upcoming`, `mileage_unknown`, `good`, `unscheduled`,
   `paused`), `item_rank` (Needs Replacement first) and `component_mi` /

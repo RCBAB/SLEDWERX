@@ -22,8 +22,8 @@
 --   item with an outcome (a Check) is not a completion.
 --   - Replaced resets both schedules; Checked resets only the inspection one.
 --   - Inspection only items (Decision D): earlier completions count as checks.
---   - Needs Replacement: the newest check said so and nothing was replaced
---     since (derived, never stored).
+--   - Needs Replacement: a check said so and nothing was replaced since; a
+--     later Good check does not clear it (derived, never stored).
 --
 -- Additive; existing data is not changed.
 -- Rollback (manual only): supabase/rollback/20261127090000_rollback.sql
@@ -75,7 +75,7 @@ alter table public.maintenance_plans
 comment on column public.maintenance_plans.tracks is
   'Migration 13: replacement (the existing interval columns), inspection (the inspect_* columns), or both.';
 comment on column public.maintenance_plans.inspect_each_reading is
-  'Migration 13: an inspection is due once a reading newer than the last check exists (Every Mileage Update).';
+  'Migration 13: an inspection is due once a mileage reading newer than the last check exists (Every Mileage Update; engine-hours-only readings do not count).';
 
 -- The inspection starting point cannot be in the future either (same rule as last_done_on).
 create function private.tg_maintenance_plans_inspect_date_check()
@@ -215,6 +215,17 @@ checks as (
     and e.deleted_at is null and e.completed
   order by et.sled_id, et.task_id, e.performed_on desc, e.created_at desc, e.id desc
 ),
+-- Migration 13: the newest Needs Replacement check of each task (a later Good
+-- check does not clear it; only a replacement does).
+flagged as (
+  select distinct on (et.sled_id, et.task_id)
+         et.sled_id, et.task_id, e.performed_on, e.created_at as entry_created_at
+  from public.maintenance_entry_tasks et
+  join public.maintenance_entries e on e.id = et.entry_id
+  where et.deleted_at is null and et.done and et.task_id is not null and et.outcome = 'needs_replacement'
+    and e.deleted_at is null and e.completed
+  order by et.sled_id, et.task_id, e.performed_on desc, e.created_at desc, e.id desc
+),
 last_done as (
   select p.id as plan_id,
          case
@@ -311,9 +322,11 @@ inspect_basis as (
   select c.*,
          ck.entry_id as check_entry_id, ck.outcome as check_outcome, ck.performed_on as check_on,
          ck.entry_created_at as check_created_at,
+         fl.performed_on as flagged_on, fl.entry_created_at as flagged_created_at,
          b.source as basis_source, b.on_date as basis_on, b.created as basis_created, b.mi as basis_mi, b.hours as basis_hours
   from classified c
   left join checks ck on ck.sled_id = c.sled_id and ck.task_id = c.task_id
+  left join flagged fl on fl.sled_id = c.sled_id and fl.task_id = c.task_id
   left join lateral (
     select v.source, v.on_date, v.created, v.mi, v.hours
     from (values
@@ -349,16 +362,18 @@ inspect_due as (
          case when i.inspect_interval_mi is not null and i.basis_mi is not null then i.basis_mi + i.inspect_interval_mi end as i_due_mi,
          case when i.inspect_interval_hours is not null and i.basis_hours is not null then i.basis_hours + i.inspect_interval_hours end
            as i_due_hours,
-         -- Every Mileage Update: a reading newer than what the schedule counts from.
+         -- Every Mileage Update: a mileage reading newer than what the schedule
+         -- counts from (an engine-hours-only reading doesn't count).
          (i.inspect_each_reading and i.basis_on is not null and exists (
            select 1 from public.sled_readings r
-           where r.sled_id = i.sled_id and r.deleted_at is null
+           where r.sled_id = i.sled_id and r.deleted_at is null and r.odometer_mi is not null
              and (r.read_on > i.basis_on or (r.read_on = i.basis_on and i.basis_created is not null and r.created_at > i.basis_created))
          )) as i_reading_due,
-         -- Needs Replacement: the newest check said so and nothing was replaced since.
-         (i.check_outcome = 'needs_replacement' and not coalesce(
+         -- Needs Replacement: a check said so and nothing was replaced since
+         -- (a later Good check does not clear it).
+         (i.flagged_on is not null and not coalesce(
            i.last_done_source = 'service'
-           and (i.done_on > i.check_on or (i.done_on = i.check_on and i.done_created_at > i.check_created_at)),
+           and (i.done_on > i.flagged_on or (i.done_on = i.flagged_on and i.done_created_at > i.flagged_created_at)),
            false
          )) as i_needs_replacement
   from inspect_basis i

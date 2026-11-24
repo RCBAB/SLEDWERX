@@ -10,7 +10,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set search_path = public, extensions;
 
-select plan(67);
+select plan(83);
 
 insert into auth.users (id, email, email_confirmed_at) values
   ('b1111111-1111-1111-1111-111111111111', 'mi-owner@example.com', now()),
@@ -60,7 +60,7 @@ select pg_temp.as_user('b1111111-1111-1111-1111-111111111111');
 
 with created as (
   insert into public.maintenance_tasks (name)
-  select n from unnest(array['Oil', 'Belt', 'Track', 'Plugs', 'Skid', 'Carbides', 'Clutch', 'Legacy', 'Wear']) n
+  select n from unnest(array['Oil', 'Belt', 'Track', 'Plugs', 'Skid', 'Carbides', 'Clutch', 'Legacy', 'Wear', 'Hours', 'Flag']) n
   returning id, name
 )
 insert into t select 'task_' || name, id::text from created;
@@ -134,10 +134,14 @@ select is((select category || ' / ' || title from public.maintenance_entries whe
 select is((pg_temp.row_of('Belt')).inspect_status, 'overdue', 'every 30 days: overdue');
 select is((pg_temp.row_of('Belt')).last_checked_mi, 300.0, 'last checked at 300 mi');
 select is((pg_temp.row_of('Belt')).last_check_outcome, 'good', 'outcome Good');
-select lives_ok($$ select pg_temp.check_(array['Belt'], 'needs_replacement', 1) $$, 'checked again: Needs Replacement');
+select lives_ok($$ select pg_temp.check_(array['Belt'], 'needs_replacement', 2) $$, 'checked again 2 days ago: Needs Replacement');
 select is((pg_temp.row_of('Belt')).needs_replacement, true, 'the item is flagged');
 select is((pg_temp.row_of('Belt')).item_rank, -1, 'and comes first on the board');
 select is((pg_temp.row_of('Belt')).inspect_status, 'good', 'the inspection schedule itself is reset');
+select lives_ok($$ select pg_temp.check_(array['Belt'], 'good', 1) $$, 'checked again yesterday: Good');
+select is((pg_temp.row_of('Belt')).last_check_outcome, 'good', 'the newest check is Good');
+select is((pg_temp.row_of('Belt')).needs_replacement, true, 'a later Good check does not clear Needs Replacement');
+select is((pg_temp.row_of('Belt')).item_rank, -1, 'it stays first on the board');
 select lives_ok($$ select pg_temp.replaced('Belt', 0) $$, 'the belt is replaced');
 select is((pg_temp.row_of('Belt')).needs_replacement, false, 'the flag clears once replaced');
 select is((pg_temp.row_of('Belt')).last_checked_source, 'service', 'an inspection only item counts the completion as its last check');
@@ -196,6 +200,28 @@ update public.maintenance_plans set tracks = 'inspection', inspect_interval_days
 select is((pg_temp.row_of('Legacy')).last_checked_source, 'service', 'after conversion, the completion counts as a check');
 select is((pg_temp.row_of('Legacy')).last_checked_on, current_date - 12, 'with its date');
 select is((pg_temp.row_of('Legacy')).inspect_status, 'good', 'next check in 18 days');
+
+-- Engine-hours-only readings don't trigger Every Mileage Update; mileage readings do.
+insert into public.maintenance_plans (sled_id, task_id, tracks, inspect_each_reading)
+  values (pg_temp.v('sled')::uuid, pg_temp.v('task_Hours')::uuid, 'inspection', true);
+select lives_ok($$ select pg_temp.check_(array['Hours'], 'good', 0) $$, 'checked today');
+select lives_ok($$ insert into public.sled_readings (sled_id, read_on, engine_hours) values (pg_temp.v('sled')::uuid, current_date + 1, 101) $$,
+  'an engine-hours-only reading after the check');
+select is((pg_temp.row_of('Hours')).inspect_status, 'good', 'an hours-only reading does not make the check due');
+select lives_ok($$ insert into public.sled_readings (sled_id, read_on, odometer_mi) values (pg_temp.v('sled')::uuid, current_date + 1, 1001) $$,
+  'a mileage reading after the check');
+select is((pg_temp.row_of('Hours')).inspect_status, 'due', 'a mileage update makes it due');
+
+-- Needs Replacement on an item tracking both: Good afterwards keeps the flag; Replaced clears it.
+insert into public.maintenance_plans (sled_id, task_id, tracks, interval_days, inspect_interval_days)
+  values (pg_temp.v('sled')::uuid, pg_temp.v('task_Flag')::uuid, 'both', 365, 30);
+select lives_ok($$ select pg_temp.check_(array['Flag'], 'needs_replacement', 3) $$, 'Needs Replacement 3 days ago');
+select lives_ok($$ select pg_temp.check_(array['Flag'], 'good', 2) $$, 'then Good 2 days ago');
+select is((pg_temp.row_of('Flag')).needs_replacement, true, 'still flagged after the Good check');
+select lives_ok($$ select pg_temp.replaced('Flag', 1) $$, 'replaced yesterday');
+select is((pg_temp.row_of('Flag')).needs_replacement, false, 'the replacement clears the flag');
+select lives_ok($$ select pg_temp.check_(array['Flag'], 'good', 0) $$, 'a Good check after the replacement');
+select is((pg_temp.row_of('Flag')).needs_replacement, false, 'and it stays cleared');
 
 -- ---------------------------------------------------------------------------
 -- Refusals and access

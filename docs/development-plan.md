@@ -61,7 +61,7 @@ Production context (as of 2026-11-24):
 
 ### Implementation outline
 
-- **Migration 12** (additive; the same SQL Editor process as Migrations 9–11:
+- **Migration 12** (approved; additive; the same SQL Editor process as Migrations 9–11:
   preflight, trial with ROLLBACK, apply, read-only verification):
   - `suspension_settings.input_methods` (existing settings: measurement only);
   - per-adjustment turns rows, written with the new Trail and never changed;
@@ -74,7 +74,7 @@ Production context (as of 2026-11-24):
 - **Photo Needed** is always stored. It is hidden only if
   `SUSPENSION_PHOTO_UPLOADS` is switched off again (it can't be cleared then);
   Measurement Needed always shows.
-- **Delivery:** two PRs, (a) database and the input-method setting, then
+- **Delivery (approved):** two PRs, (a) database and the input-method setting, then
   (b) Quick Tune, History/View/Compare, and the reminder summaries. Nothing
   changes for anyone until a setting is switched to Turns or Both, so it is
   tested end to end on Photo Test.
@@ -85,7 +85,7 @@ Production context (as of 2026-11-24):
 
 | # | Decision | Status |
 |---|---|---|
-| 1 | "Task" means a suspension setting; existing settings start as Measurement only | Recommended, awaiting confirmation |
+| 1 | "Task" means an individual suspension setting (not a maintenance task). Measurement only / Turns only / Both is chosen when creating or editing a setting; existing settings default to Measurement only | **Decided** |
 | 2 | "Not needed" dismiss for Photo Needed | Open |
 | 3 | Units for measurement-capable settings | Open |
 | 4 | Turns − / + step size | Open |

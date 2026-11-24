@@ -93,6 +93,12 @@ isOneToOne: false
       foreignKeyName: "maintenance_entry_parts_entry_id_fkey"
       columns: ["entry_id"]
 isOneToOne: false
+      referencedRelation: "maintenance_board"
+      referencedColumns: ["last_check_entry_id"]
+    },{
+      foreignKeyName: "maintenance_entry_parts_entry_id_fkey"
+      columns: ["entry_id"]
+isOneToOne: false
       referencedRelation: "maintenance_entries"
       referencedColumns: ["id"]
     },{
@@ -122,6 +128,12 @@ isOneToOne: false
                   }
                   Relationships: [
                     {
+      foreignKeyName: "maintenance_entry_tasks_entry_id_fkey"
+      columns: ["entry_id"]
+isOneToOne: false
+      referencedRelation: "maintenance_board"
+      referencedColumns: ["last_check_entry_id"]
+    },{
       foreignKeyName: "maintenance_entry_tasks_entry_id_fkey"
       columns: ["entry_id"]
 isOneToOne: false
@@ -306,6 +318,12 @@ isOneToOne: false
                   }
                   Relationships: [
                     {
+      foreignKeyName: "sled_issues_resolved_entry_id_fkey"
+      columns: ["resolved_entry_id"]
+isOneToOne: false
+      referencedRelation: "maintenance_board"
+      referencedColumns: ["last_check_entry_id"]
+    },{
       foreignKeyName: "sled_issues_resolved_entry_id_fkey"
       columns: ["resolved_entry_id"]
 isOneToOne: false

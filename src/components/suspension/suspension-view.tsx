@@ -13,6 +13,7 @@ import type { SledRole } from "@/lib/sleds/constants";
 import { ROLE_LABELS, suspensionCapabilities } from "@/lib/sleds/permissions";
 import { VIEW_COOKIE, baseOf, byNumberDesc, type SuspensionViewMode } from "@/lib/suspension/quick-tune";
 import { SUGGESTED_SETTINGS } from "@/lib/suspension/template";
+import { trailReminders } from "@/lib/suspension/turns";
 import {
   SUSPENSION_ZONES,
   ZONE_LABEL,
@@ -34,6 +35,7 @@ import { EvaluationForm } from "./evaluation-form";
 import { MeasurementPhotoManager } from "./measurement-photos";
 import { PhotoManager } from "./photos";
 import { QuickTune } from "./quick-tune";
+import { ReminderList } from "./reminders";
 import { SettingForm, SettingsEditor } from "./settings-editor";
 import { ActiveBadge, ConditionChips, EquipmentText, LocalDate, Panel, RatingBadge, SectionTitle, useRun } from "./shared";
 import { SledDiagram } from "./sled-diagram";
@@ -205,6 +207,10 @@ export function SuspensionView({
         onView={(revision) => show({ kind: "view", revision })}
       />
 
+      {active ? (
+        <ReminderList reminders={trailReminders(active.turns, settings, photoUploads)} configName={configName(active.configNumber)} />
+      ) : null}
+
       {notice ? (
         <div data-testid="suspension-notice">
           <Alert tone={notice.tone}>{notice.text}</Alert>
@@ -264,6 +270,8 @@ export function SuspensionView({
             odometer={sled.odometer}
             engineHours={sled.engineHours}
             onSaved={(result) => saved(result)}
+            onRecorded={(text) => setNotice({ tone: "success", text })}
+            photoUploads={photoUploads}
             onDirtyChange={onDirtyChange}
             onAddSetting={(z) => show({ kind: "add-setting", zone: z })}
             onPhotos={(setting) => show({ kind: "photos", parent: "setting", id: setting.id })}
@@ -283,7 +291,7 @@ export function SuspensionView({
                 <ZonePanel
                   zone={zone}
                   settings={settings}
-                  values={active?.values ?? {}}
+                  values={active?.display ?? {}}
                   hasSetup={settings.length > 0}
                   canAdjust={can.canAdjust}
                   canManage={can.canManage}
@@ -297,7 +305,7 @@ export function SuspensionView({
                 />
               </Panel>
               <Panel>
-                <ZoneList selected={zone} onSelect={setZone} settings={settings} values={active?.values ?? {}} />
+                <ZoneList selected={zone} onSelect={setZone} settings={settings} values={active?.display ?? {}} />
               </Panel>
             </div>
           </div>
@@ -397,6 +405,7 @@ export function SuspensionView({
             configName={active ? configName(active.configNumber) : null}
             baseRevisionId={active?.id ?? null}
             values={active?.values ?? {}}
+            turns={active?.turns}
             sledId={sled.id}
             settings={settings}
             focusZone={zone}
@@ -469,6 +478,7 @@ export function SuspensionView({
               role={role}
               userId={userId}
               measurement={measurementFor(viewed)}
+              photoUploads={photoUploads}
             />
             {can.canAdjust && sheet.revision.id !== activeRevisionId ? (
               <Button type="button" size="lg" className="w-full" onClick={() => show({ kind: "activate", revision: sheet.revision })}>
@@ -512,7 +522,7 @@ export function SuspensionView({
             activeRevisionId={active?.id ?? null}
             activeName={active ? configName(active.configNumber) : null}
             installed={installed}
-            values={active?.values ?? {}}
+            values={active?.display ?? {}}
             revisions={revisions}
             onDone={(result) => saved(result, "New skis or carbides saved as")}
           />

@@ -38,7 +38,7 @@ export function CompareConfigurations({
   const label = (r: SuspensionRevision) => `${configName(r.configNumber)}${r.id === activeId ? " (active)" : ""}`;
   const options = byNumberDesc(revisions);
 
-  const rows = a && b ? compareSnapshots(a.values, b.values, settings) : [];
+  const rows = a && b ? compareSnapshots(a.display, b.display, settings) : [];
   const equipment = a && b ? equipmentChanges(a.equipment, b.equipment) : [];
   const changed = rows.filter((r) => r.changed);
   const same = rows.filter((r) => !r.changed);
@@ -196,7 +196,6 @@ function EvaluationSummary({ revision }: { revision: SuspensionRevision }) {
 }
 
 function CompareRow({ row }: { row: ComparisonRow }) {
-  const unit = row.type === "text" ? null : row.unit;
   return (
     <li
       className={cn(
@@ -217,12 +216,12 @@ function CompareRow({ row }: { row: ComparisonRow }) {
           className={cn("break-words tabular-nums sm:text-right", row.changed && "text-muted line-through decoration-white/30")}
           data-testid="compare-a"
         >
-          {formatValue(row.a, unit)}
+          {formatValue(row.a, row.aUnit)}
         </span>
         <ArrowRight aria-hidden className="size-4 shrink-0 text-muted" />
         <span className="sr-only">to</span>
         <span className={cn("break-words font-semibold tabular-nums", row.changed && "text-accent-hot")} data-testid="compare-b">
-          {formatValue(row.b, unit)}
+          {formatValue(row.b, row.bUnit)}
         </span>
       </div>
     </li>

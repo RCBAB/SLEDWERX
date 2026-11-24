@@ -78,6 +78,8 @@ const config = (
   equipment,
   basedOnId: null,
   values,
+  display: values,
+  turns: {},
   note: null,
   odometer: null,
   engineHours: null,

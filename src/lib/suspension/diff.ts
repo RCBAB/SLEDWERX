@@ -100,6 +100,9 @@ export type ComparisonRow = {
   type: SnapshotEntry["type"];
   a: string | null;
   b: string | null;
+  /** Each side's unit (null for text, and for turns shown as "+2.5 turns"). */
+  aUnit: string | null;
+  bUnit: string | null;
   changed: boolean;
 };
 
@@ -115,7 +118,19 @@ export function compareSnapshots(a: Snapshot, b: Snapshot, settings: Pick<Suspen
     const entry = (b[id] ?? a[id])!;
     const av = a[id]?.value ?? null;
     const bv = b[id]?.value ?? null;
-    rows.push({ settingId: id, name: entry.name, zone: entry.zone, unit: entry.unit, type: entry.type, a: av, b: bv, changed: av !== bv });
+    const unitOf = (e: SnapshotEntry | undefined) => (e && e.type !== "text" ? e.unit : null);
+    rows.push({
+      settingId: id,
+      name: entry.name,
+      zone: entry.zone,
+      unit: entry.unit,
+      type: entry.type,
+      a: av,
+      b: bv,
+      aUnit: unitOf(a[id]),
+      bUnit: unitOf(b[id]),
+      changed: av !== bv,
+    });
   }
   return rows.sort(byDiagram(settings));
 }

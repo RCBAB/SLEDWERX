@@ -5,6 +5,7 @@ import { formatDate } from "@/lib/sleds/format";
 import { createClient } from "@/lib/supabase/server";
 
 import { latestFeedback } from "./diff";
+import { currentValues, displayValues, type TrailTurnsMap } from "./turns";
 import {
   FEEDBACK_SHORT,
   NO_EQUIPMENT,
@@ -162,6 +163,75 @@ async function loadSettings(supabase: Client, sledIds: string[]): Promise<Map<st
   return bySled;
 }
 
+type TurnsRows = {
+  status: {
+    revision_id: string;
+    setting_id: string;
+    cumulative_turns: number | null;
+    measurement: string | null;
+    measured_at: string | null;
+    measurement_needed: boolean;
+    photo_needed: boolean;
+  }[];
+  adjustments: { revision_id: string; setting_id: string; amount: number }[];
+  records: {
+    revision_id: string;
+    setting_id: string;
+    value: string;
+    cumulative_turns: number | null;
+    created_at: string;
+    created_by: string | null;
+  }[];
+};
+
+/**
+ * Turns status of some Trails (Migration 12), with each Trail's own
+ * adjustment and, optionally, its documented measurements. Empty before
+ * Migration 12 is applied.
+ */
+async function loadTurnsRows(supabase: Client, revisionIds: string[], withRecords: boolean): Promise<TurnsRows> {
+  const empty: TurnsRows = { status: [], adjustments: [], records: [] };
+  if (!revisionIds.length) return empty;
+  const [status, adjustments, records] = await Promise.all([
+    supabase.rpc("suspension_trail_status", { p_revision_ids: revisionIds }),
+    supabase.from("sled_turn_adjustments").select("revision_id, setting_id, amount").in("revision_id", revisionIds),
+    withRecords
+      ? supabase
+          .from("sled_measurement_records")
+          .select("revision_id, setting_id, value, cumulative_turns, created_at, created_by")
+          .in("revision_id", revisionIds)
+          .order("created_at", { ascending: true })
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+  if (isSchemaMissing(status.error) || isSchemaMissing(adjustments.error) || isSchemaMissing(records.error)) return empty;
+  if (status.error || adjustments.error || records.error) throw new Error("Could not load suspension turns.");
+  return {
+    status: (status.data ?? []).map((r) => ({ ...r, cumulative_turns: r.cumulative_turns == null ? null : Number(r.cumulative_turns) })),
+    adjustments: (adjustments.data ?? []).map((a) => ({ ...a, amount: Number(a.amount) })),
+    records: (records.data ?? []).map((r) => ({ ...r, cumulative_turns: r.cumulative_turns == null ? null : Number(r.cumulative_turns) })),
+  };
+}
+
+/** One Trail's turns-tracked settings, from the loaded rows. */
+function turnsOf(rows: TurnsRows, revisionId: string, nameOf: (id: string | null) => string): TrailTurnsMap {
+  const map: TrailTurnsMap = {};
+  for (const s of rows.status) {
+    if (s.revision_id !== revisionId) continue;
+    map[s.setting_id] = {
+      cumulative: s.cumulative_turns,
+      measurement: s.measurement,
+      measuredAt: s.measured_at,
+      measurementNeeded: s.measurement_needed,
+      photoNeeded: s.photo_needed,
+      adjustment: rows.adjustments.find((a) => a.revision_id === revisionId && a.setting_id === s.setting_id)?.amount ?? null,
+      records: rows.records
+        .filter((r) => r.revision_id === revisionId && r.setting_id === s.setting_id)
+        .map((r) => ({ value: r.value, cumulative: r.cumulative_turns, createdAt: r.created_at, createdByName: nameOf(r.created_by) })),
+    };
+  }
+  return map;
+}
+
 /**
  * Everything the Suspension page shows: the settings list (with reference
  * photos), the setups, every revision of the sled (with feedback and
@@ -250,6 +320,13 @@ export async function getSuspensionData(sledId: string, userId: string, includeD
   const measurementPhotos = !isSchemaMissing(measurement.error);
   if (measurement.error && measurementPhotos) throw new Error("Could not load measurement photos.");
   const measurementRows = measurement.error ? [] : (measurement.data ?? []);
+  // Migration 12: which photos were carried forward, and which are outdated.
+  const photoLabels = measurementRows.length
+    ? await supabase.from("sled_measurement_photos").select("id, carried_from_id, outdated").eq("sled_id", sledId).is("deleted_at", null)
+    : { data: [], error: null };
+  if (photoLabels.error && !isSchemaMissing(photoLabels.error)) throw new Error("Could not load measurement photos.");
+  const labelOf = new Map((photoLabels.error ? [] : (photoLabels.data ?? [])).map((p) => [p.id, p]));
+  const turnsRows = await loadTurnsRows(supabase, revisionIds, true);
 
   const photoRows = photos.data ?? [];
   const feedbackRows = feedback.data ?? [];
@@ -261,6 +338,7 @@ export async function getSuspensionData(sledId: string, userId: string, includeD
         ...revisionRows.map((r) => r.created_by),
         ...feedbackRows.map((f) => f.created_by),
         ...(deletedFeedback.data ?? []).map((f) => f.created_by),
+        ...turnsRows.records.map((r) => r.created_by),
       ],
       userId,
     ),
@@ -295,42 +373,50 @@ export async function getSuspensionData(sledId: string, userId: string, includeD
     feedbackByRevision.set(f.revision_id, list);
   }
 
-  const revisionList: SuspensionRevision[] = revisionRows.map((r) => ({
-    id: r.id,
-    setupId: r.setup_id,
-    number: r.revision_number,
-    configNumber: r.config_number,
-    equipment: toEquipment(r.ski_model, r.carbide_length),
-    basedOnId: r.based_on_revision_id,
-    values: parseSnapshot(r.setting_values),
-    note: r.note,
-    odometer: r.odometer_mi == null ? null : Number(r.odometer_mi),
-    engineHours: r.engine_hours == null ? null : Number(r.engine_hours),
-    restoredFrom: r.restored_from_revision_id
-      ? { id: r.restored_from_revision_id, number: numberById.get(r.restored_from_revision_id) ?? 0 }
-      : null,
-    createdAt: r.created_at,
-    createdBy: r.created_by,
-    createdByName: nameOf(r.created_by),
-    feedback: (feedbackByRevision.get(r.id) ?? []).sort(
-      (a, b) => b.riddenOn.localeCompare(a.riddenOn) || b.createdAt.localeCompare(a.createdAt),
-    ),
-    photos: photoRows.filter((p) => p.revision_id === r.id).map(photo),
-    measurementPhotos: measurementRows
-      .filter((m) => m.revision_id === r.id)
-      .map((m) => ({
-        id: m.id,
-        revisionId: m.revision_id,
-        settingId: m.setting_id,
-        slot: (m.slot === 2 ? 2 : 1) as 1 | 2,
-        path: m.path,
-        url: urls.get(m.path) ?? null,
-        version: m.version,
-        createdBy: m.created_by,
-        createdAt: m.created_at,
-      }))
-      .sort((a, b) => a.slot - b.slot),
-  }));
+  const revisionList: SuspensionRevision[] = revisionRows.map((r) => {
+    const saved = parseSnapshot(r.setting_values);
+    const turns = turnsOf(turnsRows, r.id, nameOf);
+    return {
+      id: r.id,
+      setupId: r.setup_id,
+      number: r.revision_number,
+      configNumber: r.config_number,
+      equipment: toEquipment(r.ski_model, r.carbide_length),
+      basedOnId: r.based_on_revision_id,
+      values: currentValues(saved, turns, settings),
+      display: displayValues(saved, turns, settings),
+      turns,
+      note: r.note,
+      odometer: r.odometer_mi == null ? null : Number(r.odometer_mi),
+      engineHours: r.engine_hours == null ? null : Number(r.engine_hours),
+      restoredFrom: r.restored_from_revision_id
+        ? { id: r.restored_from_revision_id, number: numberById.get(r.restored_from_revision_id) ?? 0 }
+        : null,
+      createdAt: r.created_at,
+      createdBy: r.created_by,
+      createdByName: nameOf(r.created_by),
+      feedback: (feedbackByRevision.get(r.id) ?? []).sort(
+        (a, b) => b.riddenOn.localeCompare(a.riddenOn) || b.createdAt.localeCompare(a.createdAt),
+      ),
+      photos: photoRows.filter((p) => p.revision_id === r.id).map(photo),
+      measurementPhotos: measurementRows
+        .filter((m) => m.revision_id === r.id)
+        .map((m) => ({
+          id: m.id,
+          revisionId: m.revision_id,
+          settingId: m.setting_id,
+          slot: (m.slot === 2 ? 2 : 1) as 1 | 2,
+          path: m.path,
+          url: urls.get(m.path) ?? null,
+          version: m.version,
+          createdBy: m.created_by,
+          createdAt: m.created_at,
+          inherited: Boolean(labelOf.get(m.id)?.carried_from_id),
+          outdated: Boolean(labelOf.get(m.id)?.outdated),
+        }))
+        .sort((a, b) => a.slot - b.slot),
+    };
+  });
 
   const setupList: SuspensionSetup[] = (setups.data ?? []).map((s) => ({
     id: s.id,
@@ -432,6 +518,7 @@ export async function getActiveSuspensions(sledIds: string[]): Promise<Map<strin
       : Promise.resolve({ data: [], error: null }),
   ]);
   if (revisions.error || feedback.error) throw new Error("Could not load suspension setups.");
+  const turnsRows = await loadTurnsRows(supabase, activeIds, false);
 
   for (const sledId of sledIds) {
     const state = (states ?? []).find((s) => s.sled_id === sledId);
@@ -448,19 +535,24 @@ export async function getActiveSuspensions(sledIds: string[]): Promise<Map<strin
             })),
         )
       : undefined;
+    const settings = settingsBySled.get(sledId) ?? [];
+    const saved = revision ? parseSnapshot(revision.setting_values) : {};
+    const turns = revision ? turnsOf(turnsRows, revision.id, () => "") : {};
     result.set(sledId, {
       active: revision
         ? {
             revisionId: revision.id,
             configNumber: revision.config_number,
             changedAt: revision.created_at,
-            values: parseSnapshot(revision.setting_values),
+            values: currentValues(saved, turns, settings),
+            display: displayValues(saved, turns, settings),
+            turns,
             equipment: toEquipment(revision.ski_model, revision.carbide_length),
             latestFeedback: newest ? { rating: newest.rating, riddenOn: newest.riddenOn, conditions: newest.conditions } : null,
           }
         : null,
       installed: state ? toEquipment(state.ski_model, state.carbide_length) : NO_EQUIPMENT,
-      settings: settingsBySled.get(sledId) ?? [],
+      settings,
     });
   }
   return result;

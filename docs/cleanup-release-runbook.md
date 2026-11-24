@@ -8,10 +8,13 @@ explicit approval before it is executed; stop at the first failed check.
   production.
 - **Part B — Execution** changes production, one approved step at a time.
 
-Phase 6.2 (PR #17) may be released **with suspension photo uploads turned
-off** before this runbook is finished (Decision 10, amended 2026-11-20;
-feature flag `SUSPENSION_PHOTO_UPLOADS` unset). Photo uploads are turned on
-only at step B9.
+**Measurement photo uploads are on in production** (since 2026-11-24;
+`SUSPENSION_PHOTO_UPLOADS=on`). They were separated from this runbook by
+decision (Decision 10, amended again 2026-11-24): photo uploads, viewing,
+replacement, removal and carry-forward work with the cleanup in report-only
+mode, and do not wait for deletion to be verified. Step B9 below is kept as
+the record of the original plan. Deletion and retention stay off and are a
+separate decision.
 
 ---
 
@@ -143,7 +146,12 @@ After each of the first few delete runs:
       `select private.authorize_retention_maintenance('<approval reference>');`
       and check its preview first: `select private.retention_counts();`.
 
-### B9. Turn on measurement photo uploads (approval required)
+### B9. Turn on measurement photo uploads (done 2026-11-24, without B6–B8)
+
+> Done: uploads were turned on after Migration 11 was applied and verified, a
+> production read-only check, and a live smoke test, with the cleanup in
+> report-only mode (Decision 10, amended again 2026-11-24). The prerequisites
+> below that involve deletion (B8) no longer apply to photo uploads.
 
 Only **measurement photos** (Migration 10) are added from the app. The older
 reference and adjustment photo uploads stay off in the code whatever the

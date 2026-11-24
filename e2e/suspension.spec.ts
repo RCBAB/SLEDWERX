@@ -136,11 +136,11 @@ test("first visit: suggested settings or blank; Quick Tune is the default and th
   if (!(await editor.isVisible())) await suspensionPage(page).locator("summary", { hasText: "Customize settings" }).click();
   await editor.getByRole("button", { name: "Edit Track tension" }).click();
   const edit = page.getByRole("dialog", { name: "Edit setting" });
-  // Migration 12: how it's adjusted. Measurement only until Quick Tune supports turns.
+  // Migration 12: how it's adjusted. Existing settings are Measurement only; all three can be chosen.
   const methods = edit.getByTestId("input-methods");
   await expect(methods.getByRole("radio", { name: /Measurement only/ })).toBeChecked();
-  await expect(methods.getByRole("radio", { name: /Turns only/ })).toBeDisabled();
-  await expect(methods.getByRole("radio", { name: /Measurement and Turns/ })).toBeDisabled();
+  await expect(methods.getByRole("radio", { name: /Turns only/ })).toBeEnabled();
+  await expect(methods.getByRole("radio", { name: /Measurement and Turns/ })).toBeEnabled();
   await label(edit, "Setting name").fill("Track tension (sag)");
   await label(edit, "Unit (optional)").fill("mm");
   await edit.getByRole("button", { name: "Save setting" }).click();

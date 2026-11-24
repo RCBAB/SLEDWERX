@@ -11,15 +11,13 @@ equipment, ride evaluations); see [database.md](database.md).
 > page and Garage Board show "Suspension: Not available yet". Nothing else
 > is affected. Applying it needs separate approval.
 
-> **Release (Decision 10, amended 2026-11-20):** Phase 6.2 is released with
-> **suspension photo uploads turned off** (feature flag
-> `SUSPENSION_PHOTO_UPLOADS`, off by default). Everything else (setups,
-> settings, adjustments, feedback, comparison, history, restore, Recently
-> Deleted) works as described. Uploads are turned back on only after the
-> **Migration 8** cleanup ([cleanup.md](cleanup.md)) has been verified in
-> deletion mode, because a mechanic's photo file can stay in storage when its
-> upload succeeds but saving its record fails.
-> See [Photo uploads feature flag](#photo-uploads-feature-flag).
+> **Release (Decision 10, amended again 2026-11-24):** measurement photo
+> uploads are **on** in production (feature flag `SUSPENSION_PHOTO_UPLOADS=on`).
+> They don't depend on the Migration 8 cleanup's deletion: with the cleanup in
+> report-only mode, files of replaced or removed photos (and a mechanic's
+> upload whose record couldn't be saved) simply stay in storage and are
+> listed by the daily report. Reference and adjustment photo uploads stay off
+> in the code. See [Photo uploads feature flag](#photo-uploads-feature-flag).
 
 ## Where to find it
 
@@ -163,10 +161,54 @@ on a history card compares it with the active one.
 - **How it's adjusted (Migration 12):** Measurement only (every existing
   setting), Turns only, or Measurement and Turns, for number settings.
   Choosing a turns option fills in "in" as the unit when none is set (it can
-  be changed); Turns only shows no unit (the stored one is kept). The two
-  turns options are shown but disabled until Quick Tune supports turns (the
-  second Measurement / Turns PR). See
+  be changed); Turns only shows no unit (the stored one is kept). See
+  [Measurement and Turns](#measurement-and-turns) and
   [development-plan.md](development-plan.md) for the full design.
+
+## Measurement and Turns
+
+- **Turns are adjustments,** not totals: in Quick Tune, a Turns only setting,
+  or a Measurement and Turns setting switched to **Turns**, gets − / + (half
+  a turn per tap) and a field for any amount with up to two decimals (+1,
+  −0.5, 2.25). 0 is no change. More than 20 turns in one adjustment asks for
+  a second tap (**Save Anyway**). Turns field on the wall keyboard: the ± key works.
+- **Each Save Adjustments with turns is the next Trail.** The setting's
+  measurement is blank on that Trail; Quick Tune shows the cumulative turns
+  ("+2.5 turns · measurement blank"). Turns add up across Trails until the
+  measurement is documented; then they start again from 0.
+- **Record Measurement** (Measurement and Turns settings, Measurement
+  selected, active Trail only): type the measured value in the row and tap
+  **Record Measurement**. It updates the same Trail (no new Trail number),
+  replaces the turns shown with the measurement and clears Measurement
+  Needed. **Correct recorded measurement** saves a correction the same way;
+  every record stays in History. To document an older Trail, make it active
+  first; newer Trails are never changed. After that, changing the
+  measurement is an ordinary adjustment (the next Trail).
+- **Reminders** (Measurement and Turns settings only): turns raise
+  **Measurement Needed** and **Photo Needed**. A measurement clears
+  Measurement Needed; one new photo on that Trail clears Photo Needed (photos
+  carried from an earlier Trail don't count). Removing the last new photo
+  brings Photo Needed back; restoring or replacing it clears it. Each Trail
+  keeps its own reminders; making a Trail active shows that Trail's. Shown
+  beside the setting in Quick Tune, at the top of the Suspension page, on the
+  snowmobile page (per setting) and on the Garage Board and wall display
+  (counts; they open the Suspension page). Photo Needed is hidden while photo
+  uploads are off.
+- **Photos:** a photo carried forward for a setting whose value changed
+  (turns or a new measurement) is labelled **Previous Trail photo ·
+  outdated**. When both slots hold photos and one is an outdated previous-Trail
+  photo, **Take new photo** puts the new one in its place (only that Trail's
+  copy; the earlier Trail keeps its photo).
+- **History, View and Compare** show turns as "+2.5 turns", each adjustment
+  ("+1 turn (total +3 turns)"), documented measurements and corrections, and
+  each Trail's reminders. Disliked warnings compare turns too.
+- **Record adjustment** (Suspension Map, snowmobile page, Garage Board):
+  Turns only settings, and Measurement and Turns settings showing turns, are
+  read-only there, with **Use Quick Tune**.
+- **Switching how a setting is adjusted:** Turns only → Measurement and Turns
+  → Record Measurement → Measurement only works and keeps the history. A
+  setting can't go back to Measurement only while its active Trail shows
+  turns instead of a measurement.
 
 ## Measurement photos (Migration 10)
 
@@ -279,17 +321,15 @@ deleted by the app; see Migration 8 below.
 
 | `SUSPENSION_PHOTO_UPLOADS` | Behaviour |
 |---|---|
-| unset, or anything but `on` (**default; production for now**) | No way to add suspension photos: no "Add reference photos" link, no Photos button on revisions without photos, no photo picker when recording an adjustment (Suspension page, snowmobile page, Garage Board). The server actions also refuse to prepare or record a photo. Photos that already exist are still shown, and owners and editors can still remove them. |
-| `on` | Reference and adjustment photos as described under [Photos](#photos). |
+| unset, or anything but `on` (default) | No way to add suspension photos: no "Add reference photos" link, no Photos button on revisions without photos, no photo picker when recording an adjustment (Suspension page, snowmobile page, Garage Board). The server actions also refuse to prepare or record a photo. Photos that already exist are still shown, and owners and editors can still remove them. |
+| `on` (**production since 2026-11-24**) | Measurement photos (Migration 10). Reference and adjustment photo uploads stay off in the code. With the flag off, Photo Needed reminders are hidden (Measurement Needed still shows). |
 
 - Server-only (read at request time in `src/lib/suspension/photo-flag.ts`,
   never sent to the browser as configuration); the interface follows it
   through the role capabilities (`suspensionCapabilities(role, { photoUploads })`
   in `src/lib/sleds/permissions.ts`), which default to off.
-- **Turning uploads on later:** set `SUSPENSION_PHOTO_UPLOADS=on` for
-  Production in Vercel and redeploy. No code change. Only after runbook step
-  B9 ([cleanup-release-runbook.md](cleanup-release-runbook.md)) and its own
-  approval.
+- **Turning uploads on:** set `SUSPENSION_PHOTO_UPLOADS=on` for Production in
+  Vercel and redeploy. No code change.
 - **Limit:** the flag hides the app's upload path. The storage policies are
   unchanged (by decision), so a signed-in owner, editor or mechanic could
   still upload a file to their sled's folder with the Storage API directly.
@@ -311,11 +351,9 @@ deleted by the app; see Migration 8 below.
   at least 24 hours old, re-checked under a lock before each removal), starts
   in **report-only** mode, and permanently deletes only after separate
   approval. Claimed and removed paths are closed to new uploads.
-- The cleanup must be **applied and verified in deletion mode before photo
-  uploads are turned on in production**
-  ([cleanup-release-runbook.md](cleanup-release-runbook.md), steps B1–B9).
-  Until then Phase 6.2 runs with the
-  [feature flag](#photo-uploads-feature-flag) off (Decision 10, amended).
+- Photo uploads no longer wait for the cleanup's deletion (Decision 10,
+  amended again 2026-11-24). With deletion off, leftover files stay in
+  storage; the daily report lists them.
 
 ## Known limitations
 

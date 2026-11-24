@@ -47,9 +47,9 @@ export function ActivateForm({
   const [error, setError] = useState<string | null>(null);
   const name = configName(revision.configNumber);
   const mismatch = equipmentMismatch(revision.equipment, installed);
-  const changes = revisionChanges(active?.values ?? null, revision.values, settings);
+  const changes = revisionChanges(active?.display ?? null, revision.display, settings);
   const equipment = active ? equipmentChanges(active.equipment, revision.equipment) : [];
-  const warning = dislikeWarning(matchingConfigurations(revision, revisions));
+  const warning = dislikeWarning(matchingConfigurations({ values: revision.display, equipment: revision.equipment }, revisions));
 
   const activate = async () => {
     setBusy(true);

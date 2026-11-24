@@ -121,7 +121,9 @@ export function ZonePanel({
       {list.length ? (
         <ul className="divide-y divide-white/10 rounded-xl border border-white/10 bg-background/40">
           {list.map((setting) => {
-            const value = values[setting.id]?.value ?? null;
+            const entry = values[setting.id];
+            const value = entry?.value ?? null;
+            const unit = entry?.type === "text" ? null : setting.unit;
             return (
               <li key={setting.id} className="flex items-start justify-between gap-4 px-4 py-3" data-testid="zone-setting">
                 <div className="min-w-0">
@@ -149,10 +151,10 @@ export function ZonePanel({
                   data-testid="zone-setting-value"
                 >
                   {value ?? "—"}
-                  {value != null && setting.valueType === "number" && setting.unit ? (
-                    <span className="ml-1 font-sans text-sm font-medium text-muted">{setting.unit}</span>
+                  {value != null && setting.valueType === "number" && unit ? (
+                    <span className="ml-1 font-sans text-sm font-medium text-muted">{unit}</span>
                   ) : null}
-                  <span className="sr-only">{value == null ? "No value" : formatValue(value, setting.unit, setting.valueType)}</span>
+                  <span className="sr-only">{value == null ? "No value" : formatValue(value, unit, entry?.type ?? setting.valueType)}</span>
                 </p>
               </li>
             );

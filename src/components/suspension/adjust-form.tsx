@@ -1,6 +1,7 @@
 "use client";
 
 import { ChevronDown, RefreshCw } from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useActionState, useEffect, useRef, useState } from "react";
 
@@ -11,7 +12,8 @@ import { cn } from "@/components/ui/cn";
 import { Field, TextareaField } from "@/components/ui/field";
 import { FormActions } from "@/components/ui/form-actions";
 import { SubmitButton } from "@/components/ui/submit-button";
-import { describeChange, revisionChanges } from "@/lib/suspension/diff";
+import { describeChange, formatValue, revisionChanges } from "@/lib/suspension/diff";
+import { formatTurns, turnsOutstanding, type TrailTurnsMap } from "@/lib/suspension/turns";
 import {
   ZONE_GROUPS,
   ZONE_LABEL,
@@ -53,6 +55,7 @@ export function AdjustForm({
   odometer,
   engineHours,
   photoUploads,
+  turns = {},
   onDone,
 }: {
   sledId: string;
@@ -67,8 +70,13 @@ export function AdjustForm({
   engineHours: number | null;
   /** Offer adjustment photos (role and the photo-upload feature flag). */
   photoUploads: boolean;
+  /** The active Trail's turns status (Migration 12): turns settings are changed in Quick Tune only. */
+  turns?: TrailTurnsMap;
   onDone: (result: SuspensionActionState) => void;
 }) {
+  /** Turns only settings, and Both settings showing turns, are read-only here (decision 8). */
+  const locked = (setting: SuspensionSetting) =>
+    setting.inputMethods === "turns" || (setting.inputMethods === "both" && turnsOutstanding(turns[setting.id]));
   const router = useRouter();
   const [key] = useState(randomUuid);
   const [edited, setEdited] = useState<Record<string, string>>({});
@@ -129,6 +137,10 @@ export function AdjustForm({
   /** Values typed so far that the database would refuse (shown right away; the server checks again). */
   const invalid: Record<string, string> = {};
   for (const setting of settings) {
+    if (locked(setting)) {
+      if (values[setting.id]) preview[setting.id] = values[setting.id];
+      continue;
+    }
     const raw = edited[setting.id] ?? values[setting.id]?.value ?? "";
     const check = checkSettingValue(setting.valueType, raw, setting.name);
     if (!check.ok) {
@@ -227,6 +239,27 @@ export function AdjustForm({
               </button>
               <div id={panelId} hidden={!open} className="space-y-3 px-4 pb-4">
                 {list.map((setting) => {
+                  if (locked(setting)) {
+                    const t = turns[setting.id];
+                    return (
+                      <div key={setting.id} className="flex items-center gap-3" data-testid="adjust-turns-setting">
+                        <span className="min-w-0 flex-1 break-words text-sm font-medium text-foreground/90">{setting.name}</span>
+                        <span className="shrink-0 text-right text-sm">
+                          <span className="block font-semibold tabular-nums">
+                            {turnsOutstanding(t) ? formatTurns(t.cumulative) : formatValue(values[setting.id]?.value ?? null, null)}
+                            {t?.measurementNeeded ? <span className="ml-2 text-xs text-amber-100">Measurement Needed</span> : null}
+                          </span>
+                          <Link
+                            href={`/garage/${sledId}/suspension#tune`}
+                            className="inline-flex min-h-11 items-center text-xs font-semibold text-accent-hot underline-offset-4 hover:underline"
+                            aria-label={`Adjust ${setting.name} in Quick Tune`}
+                          >
+                            Use Quick Tune
+                          </Link>
+                        </span>
+                      </div>
+                    );
+                  }
                   const name = `value.${setting.id}`;
                   const before = values[setting.id]?.value ?? "";
                   const now = edited[setting.id] ?? before;

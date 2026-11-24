@@ -13,8 +13,10 @@ import { suspensionCapabilities } from "@/lib/sleds/permissions";
 import { formatValue } from "@/lib/suspension/diff";
 import { QUICK_TUNE_SECTIONS, sectionRows } from "@/lib/suspension/quick-tune";
 import { configName, type ActiveSuspension } from "@/lib/suspension/types";
+import { trailReminders } from "@/lib/suspension/turns";
 
 import { AdjustForm } from "./adjust-form";
+import { ReminderCounts, ReminderList } from "./reminders";
 import { EquipmentForm } from "./equipment";
 import { EvaluationForm } from "./evaluation-form";
 import { ConditionChips, EquipmentText, RatingBadge } from "./shared";
@@ -73,6 +75,8 @@ export function SuspensionSummary({
   const zone = summary?.settings[0]?.zone ?? null;
   const name = active ? configName(active.configNumber) : null;
   const description = name ? `${sledName} · ${name}` : sledName;
+  // Migration 12: the active Trail's reminders only (switching Trails updates them).
+  const reminders = summary && active ? trailReminders(active.turns, summary.settings, photoUploads) : [];
 
   return (
     <div className="space-y-3" data-testid="suspension-summary" data-sled-id={sledId}>
@@ -131,6 +135,14 @@ export function SuspensionSummary({
             </Button>
           ) : null}
         </div>
+      ) : null}
+
+      {reminders.length ? (
+        variant === "page" ? (
+          <ReminderList reminders={reminders} href={`${page}#tune`} configName={name ?? undefined} />
+        ) : (
+          <ReminderCounts reminders={reminders} href={page} sledName={sledName} />
+        )
       ) : null}
 
       {notice ? <Alert tone={notice.tone}>{notice.text}</Alert> : null}
@@ -198,6 +210,7 @@ export function SuspensionSummary({
             configName={name}
             baseRevisionId={active?.revisionId ?? null}
             values={active?.values ?? {}}
+            turns={active?.turns}
             settings={summary.settings}
             focusZone={zone}
             odometer={odometer}
@@ -236,7 +249,7 @@ export function SuspensionSummary({
             activeRevisionId={active?.revisionId ?? null}
             activeName={name}
             installed={summary.installed}
-            values={active?.values ?? {}}
+            values={active?.display ?? {}}
             onDone={(result) => {
               close();
               if (result.configNumber)
@@ -251,7 +264,7 @@ export function SuspensionSummary({
 
 /** The active configuration's values in Quick Tune order (read-only). */
 function ActiveValues({ summary }: { summary: ActiveSuspension }) {
-  const values = summary.active?.values ?? {};
+  const values = summary.active?.display ?? {};
   const sections = QUICK_TUNE_SECTIONS.map((section) => ({
     section,
     rows: sectionRows(summary.settings, section.id).flatMap((row) =>
@@ -276,12 +289,13 @@ function ActiveValues({ summary }: { summary: ActiveSuspension }) {
           <p className="mb-1.5 text-xs font-semibold uppercase tracking-[0.2em] text-muted">{section.label}</p>
           <ul className="divide-y divide-white/10 rounded-xl border border-white/10">
             {rows.map((r) => {
-              const value = values[r.setting.id]?.value ?? null;
+              const entry = values[r.setting.id];
+              const value = entry?.value ?? null;
               return (
                 <li key={r.id} className="flex items-center justify-between gap-4 px-4 py-3" data-testid="active-value">
                   <span className="min-w-0 break-words font-medium">{r.label}</span>
                   <span className={cn("shrink-0 font-display text-xl font-bold tabular-nums", value == null && "text-muted")}>
-                    {formatValue(value, r.setting.unit, r.setting.valueType)}
+                    {formatValue(value, entry?.type === "text" ? null : r.setting.unit, entry?.type ?? r.setting.valueType)}
                   </span>
                 </li>
               );

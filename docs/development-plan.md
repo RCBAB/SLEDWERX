@@ -87,7 +87,7 @@ Production context (as of 2026-11-24):
 |---|---|---|
 | 1 | "Task" means an individual suspension setting (not a maintenance task). Measurement only / Turns only / Both is chosen when creating or editing a setting; existing settings default to Measurement only | **Decided** |
 | 2 | No "Not needed" dismiss: Photo Needed is cleared only by uploading one new photo for that setting on that Trail (can be added later if needed) | **Decided** |
-| 3 | Units for measurement-capable settings | Open |
+| 3 | Units stay customizable and existing units are preserved; inches is the default only when no unit is set (editable). Turns always display as turns, independent of the unit; Turns only settings show no measurement unit. No conversions or data changes | **Decided** |
 | 4 | Turns − / + step size | Open |
 | 5 | A measurement entered while Measurement Needed is on counts as documentation | Open |
 | 6 | Ordinary value changes mark photos outdated; removing the clearing photo | Open |

@@ -806,7 +806,8 @@ isOneToOne: false
                            },
 "record_suspension_measurement":
 { Args: { "p_revision_id": string,"p_setting_id": string,"p_value": string }; Returns: Json
-                           },"replace_suspension_measurement_photo":
+                           },
+"replace_suspension_measurement_photo":
 { Args: { "p_path": string,"p_photo_id": string,"p_version": number }; Returns: Json
                            },
 "restore_record_version":
@@ -826,7 +827,8 @@ isOneToOne: false
                            },
 "save_suspension_configuration":
 { Args: { "p_base_revision_id"?: string,"p_carbide_length"?: string,"p_changes"?: Json,"p_engine_hours"?: number,"p_idempotency_key"?: string,"p_note"?: string,"p_odometer_mi"?: number,"p_ski_model"?: string,"p_sled_id": string }; Returns: Json
-                           }|{ Args: { "p_base_revision_id": string,"p_carbide_length": string,"p_changes": Json,"p_engine_hours": number,"p_idempotency_key": string,"p_note": string,"p_odometer_mi": number,"p_ski_model": string,"p_sled_id": string,"p_turns": Json }; Returns: Json
+                           } |
+{ Args: { "p_base_revision_id": string,"p_carbide_length": string,"p_changes": Json,"p_engine_hours": number,"p_idempotency_key": string,"p_note": string,"p_odometer_mi": number,"p_ski_model": string,"p_sled_id": string,"p_turns": Json }; Returns: Json
                            },
 "save_suspension_revision":
 { Args: { "p_base_revision_id": string,"p_changes": Json,"p_engine_hours"?: number,"p_idempotency_key"?: string,"p_note"?: string,"p_odometer_mi"?: number,"p_setup_id": string }; Returns: Json
@@ -835,7 +837,8 @@ isOneToOne: false
 { Args: { "p_revision_ids": (string)[] }; Returns: {
               "cumulative_turns": number,"measured_at": string,"measurement": string,"measurement_needed": boolean,"photo_needed": boolean,"revision_id": string,"setting_id": string
             }[]
-                           },"update_maintenance_entry":
+                           },
+"update_maintenance_entry":
 { Args: { "p_category"?: string,"p_done_by"?: string,"p_entry_id": string,"p_labor_cost"?: number,"p_notes"?: string,"p_other_cost"?: number,"p_parts"?: Json,"p_performed_on": string,"p_reading"?: Json,"p_tasks"?: Json,"p_title": string,"p_version": number }; Returns: Json
                            },
 "update_sled_share_role":

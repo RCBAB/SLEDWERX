@@ -18,9 +18,29 @@ below call for it, and preferably after talking it through.
 
 ## Order matters
 
-Roll back the newest migration first: Migration 12, then 11, then 10, then 9, then 8, then 7, then 6, then 5, then 4, then 3, then 2, then 1. Each
+Roll back the newest migration first: Migration 13, then 12, then 11, then 10, then 9, then 8, then 7, then 6, then 5, then 4, then 3, then 2, then 1. Each
 older rollback fails safely (changing nothing) while a newer migration that
 depends on it is still applied.
+
+---
+
+## `20261127090000_rollback.sql` (Migration 13)
+
+Undoes `supabase/migrations/20261127090000_maintenance_inspections.sql`:
+removes `save_maintenance_inspection`, the inspection columns of
+`maintenance_plans` and `maintenance_entry_tasks.outcome`, and puts back
+Migration 5's `maintenance_board` exactly as it was.
+
+It **refuses** while any Check exists (an item with an outcome) or any
+schedule uses inspection tracking, so no inspection history is lost.
+Migration 12's rollback refuses while Migration 13 is applied.
+
+```sql
+set sledwerx.confirm_rollback = '20261127090000';
+-- then run the whole file in the same session.
+```
+
+Tested by `scripts/test-migration-13-rollback.sh` (CI, local stack only).
 
 ---
 

@@ -30,6 +30,7 @@ const base: BoardRow = {
   remainingHours: null,
   remainingDays: null,
   status: "good",
+  tracking: null,
 };
 const row = (change: Partial<BoardRow>): BoardRow => ({ ...base, ...change });
 

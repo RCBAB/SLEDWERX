@@ -31,6 +31,10 @@ begin
   if current_setting('sledwerx.confirm_rollback', true) is distinct from '20261126090000' then
     raise exception 'Rollback not confirmed. Run  set sledwerx.confirm_rollback = ''20261126090000'';  first, in the same session. See supabase/rollback/README.md.';
   end if;
+  if exists (select 1 from information_schema.columns where table_schema = 'public'
+             and table_name = 'maintenance_plans' and column_name = 'tracks') then
+    raise exception 'Rollback aborted: Migration 13 (maintenance inspections) is applied. Roll back Migration 13 first.';
+  end if;
   if to_regclass('public.sled_trail_settings') is not null then
     select (select count(*) from public.sled_turn_adjustments) + (select count(*) from public.sled_trail_settings)
            + (select count(*) from public.sled_measurement_records) into v_rows;

@@ -88,7 +88,7 @@ Production context (as of 2026-11-24):
 | 1 | "Task" means an individual suspension setting (not a maintenance task). Measurement only / Turns only / Both is chosen when creating or editing a setting; existing settings default to Measurement only | **Decided** |
 | 2 | No "Not needed" dismiss: Photo Needed is cleared only by uploading one new photo for that setting on that Trail (can be added later if needed) | **Decided** |
 | 3 | Units stay customizable and existing units are preserved; inches is the default only when no unit is set (editable). Turns always display as turns, independent of the unit; Turns only settings show no measurement unit. No conversions or data changes | **Decided** |
-| 4 | Turns − / + step size | Open |
+| 4 | Each − / + tap is ±0.5 turns (no per-setting step option); typed amounts up to two decimals; signed adjustments and cumulative totals are displayed; 0 means no change and creates no adjustment; a single adjustment beyond ±20 turns asks for confirmation but is allowed; no limit on the cumulative total | **Decided** |
 | 5 | A measurement entered while Measurement Needed is on counts as documentation | Open |
 | 6 | Ordinary value changes mark photos outdated; removing the clearing photo | Open |
 | 7 | Dashboard: snowmobile page only, or the Garage Board too | Open |

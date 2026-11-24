@@ -40,6 +40,7 @@ const setting = (
   unit,
   valueType,
   position: n * 10,
+  inputMethods: "measurement",
   notes: null,
   version: 1,
   photos: [],

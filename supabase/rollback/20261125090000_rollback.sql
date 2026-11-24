@@ -23,6 +23,9 @@ begin
   if current_setting('sledwerx.confirm_rollback', true) is distinct from '20261125090000' then
     raise exception 'Rollback not confirmed. Run  set sledwerx.confirm_rollback = ''20261125090000'';  first, in the same session. See supabase/rollback/README.md.';
   end if;
+  if to_regclass('public.sled_trail_settings') is not null then
+    raise exception 'Rollback aborted: Migration 12 (suspension turns) is applied. Roll back Migration 12 first.';
+  end if;
   select count(*) into v_rows from public.sled_measurement_photos m
   where not exists (select 1 from public.suspension_revisions r
                     where r.id::text = split_part(m.path, '/', 2) and r.sled_id = m.sled_id);

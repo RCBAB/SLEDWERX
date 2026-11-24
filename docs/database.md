@@ -734,8 +734,7 @@ editors and mechanics upload; owners and editors remove). Tests:
 
 ## Measurement photo access (Migration 11)
 
-`20261125090000_measurement_photo_access.sql`, **not applied to production**
-(needs approval). Replaces two functions; no table, policy or data changes.
+`20261125090000_measurement_photo_access.sql`, applied to production. Replaces two functions; no table, policy or data changes.
 
 - `private.suspension_photo_sled_id(name)` (used by the suspension-photos
   storage policies) also resolves a file that a measurement photo row of the
@@ -753,6 +752,58 @@ turned on. Tests: `016_measurement_photo_cleanup.test.sql` (fails without
 this migration), `src/lib/cleanup/measurement-photos.integration.test.ts`;
 rollback `supabase/rollback/20261125090000_rollback.sql` and
 `scripts/test-migration-11-rollback.sh`.
+
+## Suspension Measurement / Turns (Migration 12)
+
+`20261126090000_suspension_turns.sql`, **not applied to production** (needs
+approval). Additive; compatible with the app before and after it (apply it
+before merging the code that uses it). Plan and decisions:
+[development-plan.md](development-plan.md).
+
+- `suspension_settings.input_methods`: `measurement` (default, every
+  existing setting) | `turns` | `both`; turns need a number setting. Trigger
+  `turns_guard`: a setting can't go back to Measurement only while its active
+  Trail shows turns instead of a measurement (Turns only → Both → record the
+  measurement → Measurement only works, keeping the history).
+- `sled_turn_adjustments` (one signed amount per Trail per setting, never
+  changed), `sled_trail_settings` (per Trail, per turns-tracked setting:
+  cumulative turns, documented measurement, Measurement Needed, photo
+  required), `sled_measurement_records` (each documented measurement and
+  correction, never changed). Readable by everyone on the snowmobile;
+  written only by the functions below; no anonymous access. Removed with
+  their Trail, setting or snowmobile (counted by the Migration 8 cleanup).
+- `sled_measurement_photos.outdated`: set on a photo carried forward for a
+  setting whose value changed (measurement or turns) in that save.
+- `save_suspension_configuration(…, p_turns)` (new 10-argument function;
+  the 9-argument one now calls it with no turns). Turns: setting → signed
+  amount, two decimals, 0 = no change. Refuses a value and turns for the same
+  setting, turns on Measurement only settings, values for Turns only
+  settings, and a new value while turns are outstanding. A turned setting's
+  value is blank; cumulative turns add up (restarting after a documented
+  measurement); Both settings get Measurement Needed and a photo
+  requirement. Unchanged settings carry their status forward (a photo
+  requirement only while unmet); a documented measurement becomes the next
+  Trail's value.
+- `record_suspension_measurement(trail, setting, value)`: the active Trail
+  only, Both settings with turns on that Trail; adds a record, clears
+  Measurement Needed; corrections allowed; never creates or changes another
+  Trail. Owners, editors and mechanics.
+- `suspension_trail_status(trail ids)` (SECURITY INVOKER): per setting,
+  cumulative turns, measurement, Measurement Needed and Photo Needed. Photo
+  Needed is derived: a photo requirement and no active photo of the Trail's
+  own (not carried forward) for that setting, so removing the last one
+  brings it back and restoring or replacing clears it.
+- `add_suspension_measurement_photo`: when both slots are full, a new photo
+  takes the place of an outdated inherited photo, through
+  `private.add_photo_in_outdated_slot`, which removes that row and adds the
+  new one together (never a removal on its own). Only that Trail's reference
+  copy goes; the Trail it came from, any Trail carried from it
+  (`carried_from_id` has no foreign key) and the file are untouched.
+  Otherwise unchanged; still at most 2 photos per measurement.
+
+Tests: `017_suspension_turns.test.sql`; rollback
+`supabase/rollback/20261126090000_rollback.sql` and
+`scripts/test-migration-12-rollback.sh`.
 
 ## Migration 8: cleanup (built; see cleanup.md)
 

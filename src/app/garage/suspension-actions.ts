@@ -38,7 +38,7 @@ export type SuspensionActionState = {
 
 const SCHEMA_MISSING = "Suspension Quick Tune needs a database update that hasn't been applied yet.";
 
-type DbError = { code?: string; message?: string } | null | undefined;
+type DbError = { code?: string; message?: string; hint?: string } | null | undefined;
 
 const PHOTO_PATH = /^[0-9a-f-]{36}\/[0-9a-f-]{36}\/[0-9a-f-]{36}\.(jpg|webp)$/;
 /** Prefix of the form fields that carry setting values ("value.<setting id>"). */
@@ -111,14 +111,26 @@ export async function restoreSetup(setupId: string, version: number): Promise<Su
 /** Add a setting to the sled's list, or edit one. Owners and editors. */
 export async function saveSetting(_prev: SuspensionActionState, formData: FormData): Promise<SuspensionActionState> {
   await signedInUser();
-  const raw = formValues(formData, ["name", "zone", "valueType", "unit", "notes"] as const);
+  const raw = formValues(formData, ["name", "zone", "valueType", "inputMethods", "unit", "notes"] as const);
   const parsed = settingSchema.safeParse(raw);
   if (!parsed.success) return { fieldErrors: fieldErrorsOf(parsed.error), values: raw };
   const input = parsed.data;
-  const fields = { name: input.name, zone: input.zone, value_type: input.valueType, unit: input.unit ?? null, notes: input.notes ?? null };
+  const fields = {
+    name: input.name,
+    zone: input.zone,
+    value_type: input.valueType,
+    unit: input.unit ?? null,
+    notes: input.notes ?? null,
+    // Migration 12: only sent when chosen, so the form works before it is applied.
+    ...(input.inputMethods ? { input_methods: input.valueType === "text" ? "measurement" : input.inputMethods } : {}),
+  };
   const supabase = await createClient();
   const nameError = (error: DbError) =>
-    error?.code === "23505" ? { fieldErrors: { name: [suspensionErrorMessage(error, "setting")] }, values: raw } : { values: raw };
+    error?.code === "23505"
+      ? { fieldErrors: { name: [suspensionErrorMessage(error, "setting")] }, values: raw }
+      : error?.hint === "turns_outstanding"
+        ? { fieldErrors: { inputMethods: [suspensionErrorMessage(error, "setting")] }, values: raw }
+        : { values: raw };
 
   const settingId = idFrom(formData, "settingId");
   if (settingId) {

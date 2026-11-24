@@ -17,6 +17,7 @@ import {
   daysLeftToRestore,
   SUSPENSION_PHOTO_BUCKET,
   ZONE_LABEL,
+  isInputMethods,
   isZone,
   sortSettings,
   type ActiveSuspension,
@@ -44,6 +45,8 @@ type Client = Awaited<ReturnType<typeof createClient>>;
 export const REVISION_LIMIT = 500;
 
 const SETTING_COLUMNS = "id, sled_id, name, zone, value_type, unit, position, notes, version";
+/** With Migration 12's input methods (falls back to SETTING_COLUMNS before it is applied). */
+const SETTING_COLUMNS_12 = `${SETTING_COLUMNS}, input_methods`;
 const REVISION_COLUMNS =
   "id, setup_id, revision_number, config_number, ski_model, carbide_length, based_on_revision_id, setting_values, note, odometer_mi, engine_hours, restored_from_revision_id, created_at, created_by";
 const FEEDBACK_COLUMNS = "id, revision_id, ridden_on, rating, conditions, high_temp_f, note, created_by, created_at, version";
@@ -112,6 +115,8 @@ async function names(supabase: Client, ids: (string | null)[], userId: string): 
   return (id) => (id === userId ? "You" : (id && map.get(id)) || "Someone with access");
 }
 
+type SettingRow = Parameters<typeof toSetting>[0] & { sled_id: string };
+
 function toSetting(row: {
   id: string;
   name: string;
@@ -121,6 +126,7 @@ function toSetting(row: {
   position: number;
   notes: string | null;
   version: number;
+  input_methods?: string | null;
 }): SuspensionSetting | null {
   if (!isZone(row.zone)) return null;
   return {
@@ -128,6 +134,7 @@ function toSetting(row: {
     name: row.name,
     zone: row.zone,
     valueType: (row.value_type === "text" ? "text" : "number") as SettingValueType,
+    inputMethods: isInputMethods(row.input_methods) ? row.input_methods : "measurement",
     unit: row.unit,
     position: row.position,
     notes: row.notes,
@@ -140,7 +147,12 @@ function toSetting(row: {
 async function loadSettings(supabase: Client, sledIds: string[]): Promise<Map<string, SuspensionSetting[]>> {
   const bySled = new Map<string, SuspensionSetting[]>(sledIds.map((id) => [id, []]));
   if (!sledIds.length) return bySled;
-  const { data, error } = await supabase.from("suspension_settings").select(SETTING_COLUMNS).in("sled_id", sledIds).is("deleted_at", null);
+  const load = async (columns: string) => {
+    const { data, error } = await supabase.from("suspension_settings").select(columns).in("sled_id", sledIds).is("deleted_at", null);
+    return { data: data as unknown as SettingRow[] | null, error };
+  };
+  let { data, error } = await load(SETTING_COLUMNS_12);
+  if (isSchemaMissing(error)) ({ data, error } = await load(SETTING_COLUMNS));
   if (error) throw new Error("Could not load suspension settings.");
   for (const row of data ?? []) {
     const setting = toSetting(row);

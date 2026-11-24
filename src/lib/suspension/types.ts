@@ -35,6 +35,28 @@ export const VALUE_TYPES = ["number", "text"] as const;
 export type SettingValueType = (typeof VALUE_TYPES)[number];
 export const VALUE_TYPE_LABEL: Record<SettingValueType, string> = { number: "Number", text: "Text" };
 
+/** How a setting is adjusted (Migration 12). Turns need a number setting. Existing settings are measurement only. */
+export const INPUT_METHODS = ["measurement", "turns", "both"] as const;
+export type InputMethods = (typeof INPUT_METHODS)[number];
+export const INPUT_METHOD_LABEL: Record<InputMethods, string> = {
+  measurement: "Measurement only",
+  turns: "Turns only",
+  both: "Measurement and Turns",
+};
+export function isInputMethods(value: unknown): value is InputMethods {
+  return typeof value === "string" && (INPUT_METHODS as readonly string[]).includes(value);
+}
+/** Whether a setting has a measurement (and so a measurement unit). */
+export function measures(methods: InputMethods): boolean {
+  return methods !== "turns";
+}
+/**
+ * Turns only and Measurement and Turns can be chosen once Quick Tune supports
+ * turns (the second Measurement / Turns PR). Until then they are shown but
+ * disabled, so no setting is switched before the interface exists.
+ */
+export const TURNS_INPUT_AVAILABLE = false;
+
 /** Suggestions for the unit field only. Never settings, never values. */
 export const UNIT_SUGGESTIONS = ["Clicks", "Turns", "mm", "in", "PSI"] as const;
 
@@ -129,6 +151,8 @@ export type SuspensionSetting = {
   name: string;
   zone: SuspensionZone;
   valueType: SettingValueType;
+  /** Measurement only, Turns only, or both (Migration 12; measurement before it). */
+  inputMethods: InputMethods;
   unit: string | null;
   position: number;
   notes: string | null;

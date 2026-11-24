@@ -18,9 +18,31 @@ below call for it, and preferably after talking it through.
 
 ## Order matters
 
-Roll back the newest migration first: Migration 11, then 10, then 9, then 8, then 7, then 6, then 5, then 4, then 3, then 2, then 1. Each
+Roll back the newest migration first: Migration 12, then 11, then 10, then 9, then 8, then 7, then 6, then 5, then 4, then 3, then 2, then 1. Each
 older rollback fails safely (changing nothing) while a newer migration that
 depends on it is still applied.
+
+---
+
+## `20261126090000_rollback.sql` (Migration 12)
+
+Undoes `supabase/migrations/20261126090000_suspension_turns.sql`: removes the
+three turns tables, the turns functions and guard, `input_methods` and the
+photos' `outdated` label; puts back Migration 10's
+`save_suspension_configuration` and `add_suspension_measurement_photo`
+exactly as they were.
+
+It **refuses** while any turns data exists (an adjustment, a Trail status row
+or a documented measurement) or any setting uses Turns, so no turns history is
+lost. Only the "outdated" photo labels are dropped (every photo and file
+stays). Migration 11's rollback refuses while Migration 12 is applied.
+
+```sql
+set sledwerx.confirm_rollback = '20261126090000';
+-- then run the whole file in the same session.
+```
+
+Tested by `scripts/test-migration-12-rollback.sh` (CI, local stack only).
 
 ---
 

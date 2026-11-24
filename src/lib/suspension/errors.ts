@@ -37,7 +37,17 @@ const SUSPENSION_MESSAGES = [
   "You can't replace this photo.",
   "This photo is being removed.",
   "This photo was removed.",
+  // Migration 12 (Measurement / Turns)
+  "Record a measurement for ",
+  "Record the measurement for ",
+  "Enter either a measurement or turns for ",
+  "Enter the turns for ",
+  "Make this Trail active before recording a measurement on it.",
+  "There are no turns to document for ",
 ];
+
+/** Migration 12 messages that start with a setting's name, or name it mid-sentence. */
+const TURNS_MESSAGES = [/^.{1,80} is (not )?adjusted in turns\.$/, /^Switch .{1,80} to Measurement and Turns to record a measurement\.$/];
 
 /** "Trail 4 uses different skis or carbides than the ones installed. ..." */
 const EQUIPMENT_MISMATCH = /^Trail \d+ uses different skis or carbides than the ones installed\./;
@@ -47,7 +57,12 @@ export type SuspensionSubject = "setup" | "setting" | "revision" | "configuratio
 /** Friendly messages for suspension changes. Never echoes raw SQL errors. */
 export function suspensionErrorMessage(error: DbError, subject: SuspensionSubject): string {
   const message = error?.message ?? "";
-  if (SUSPENSION_MESSAGES.some((known) => message.startsWith(known)) || EQUIPMENT_MISMATCH.test(message)) return message;
+  if (
+    SUSPENSION_MESSAGES.some((known) => message.startsWith(known)) ||
+    EQUIPMENT_MISMATCH.test(message) ||
+    TURNS_MESSAGES.some((pattern) => pattern.test(message))
+  )
+    return message;
   if (error?.code === "23505") {
     return subject === "setting"
       ? "There's already a setting with that name in this part of the sled."

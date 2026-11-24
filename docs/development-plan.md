@@ -5,8 +5,8 @@ designed and its open decisions settled before any implementation starts.
 
 | Order | Feature | Status |
 |---|---|---|
-| 1 | [Suspension Measurement / Turns](#1-suspension-measurement--turns) | PR 1 merged (Migration 12 applied); PR 2 (interface) in review |
-| 2 | [Maintenance Inspection & Replacement Tracking](#2-maintenance-inspection--replacement-tracking) | Requirements approved; next after Measurement / Turns is complete |
+| 1 | [Suspension Measurement / Turns](#1-suspension-measurement--turns) | Complete: both PRs merged, production testing passed |
+| 2 | [Maintenance Inspection & Replacement Tracking](#2-maintenance-inspection--replacement-tracking) | Plan approved; PR 1 (Migration 13) in progress |
 
 Production context (as of 2026-11-24):
 - Measurement photo uploads are live (`SUSPENSION_PHOTO_UPLOADS=on`,
@@ -193,5 +193,45 @@ tracking both component life and inspection intervals.
 15. Checks and replacements can be recorded at any time, due or not.
 
 Principles: keep it simple, preserve existing maintenance functionality, avoid
-unnecessary complexity. A technical review of the existing maintenance tables
-and board, and any open design decisions, come before implementation.
+unnecessary complexity, reuse what exists.
+
+### Design decisions (final)
+
+| # | Decision |
+|---|---|
+| A | A Check is an ordinary service record (category Inspection) whose items carry an outcome (Good / Needs Replacement). It reuses readings, editing, Recently Deleted, the audit log, permissions and the service history; inspections appear in the history as Inspection records. No new table. |
+| B | Preseason, postseason and every season are the existing "once a season, due by a date" schedule with a label: preseason by Dec 1, postseason by Apr 15, every season by a chosen date (all editable). |
+| C | **Every Mileage Update** is a scheduling option (due once a reading newer than the last check exists). A mileage update is not a ride: **Every Logged Ride** is added separately once a Ride Log exists. |
+| D | Converting an item to inspection only: its earlier completions count as checks with the outcome not recorded. No history is lost. |
+
+### Implementation plan (approved)
+
+- **Migration 13** (additive; existing schedules and history behave exactly as
+  today; applied with the usual five-step SQL Editor process before PR 1 is
+  merged):
+  - `maintenance_entry_tasks.outcome` (`good` / `needs_replacement`; empty =
+    a Replaced / done item as today);
+  - `maintenance_plans.tracks` (`replacement` default for every existing
+    schedule / `inspection` / `both`); an inspection schedule beside the
+    existing (replacement) one: miles, hours, days, once a season, every
+    mileage update (mileage readings only; an engine-hours-only reading
+    doesn't count); "replace as needed"; season labels; an inspection
+    starting point; a "known" or "tracking start" kind for both starting
+    points (a tracking start is never shown as a replacement);
+  - `save_maintenance_inspection`: one Inspection service record for one or
+    many checks (Quick Check), through `save_maintenance_entry`;
+  - `maintenance_board` re-created with new columns at the end: last
+    checked / replaced, Needs Replacement (derived: a check said so and
+    nothing was replaced since; a later Good check does not clear it), each schedule's next due and status
+    (whichever condition comes first), initial check needed, miles on the
+    component. Replaced resets both schedules; Checked only the inspection one.
+- **PR 1:** Migration 13, its rollback and tests, generated types, app
+  queries reading the new columns (falling back before Migration 13). No
+  visible change.
+- **PR 2:** the maintenance card (both schedules, Checked / Replaced), Quick
+  Check with Mark All as Good, the offer after a mileage update (Later
+  leaves checks outstanding), the schedule dialog (what's tracked, both
+  schedules, starting points), Garage Board and wall display chips and Quick
+  Check. Replaced keeps the existing Mark Done / service record form.
+- Service records have no receipts or photos today; requirement 12 keeps the
+  existing documentation unchanged, so none are added.

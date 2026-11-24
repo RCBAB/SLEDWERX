@@ -755,8 +755,7 @@ rollback `supabase/rollback/20261125090000_rollback.sql` and
 
 ## Suspension Measurement / Turns (Migration 12)
 
-`20261126090000_suspension_turns.sql`, **not applied to production** (needs
-approval). Additive; compatible with the app before and after it (apply it
+`20261126090000_suspension_turns.sql`, applied to production. Additive; compatible with the app before and after it (apply it
 before merging the code that uses it). Plan and decisions:
 [development-plan.md](development-plan.md).
 
@@ -804,6 +803,46 @@ before merging the code that uses it). Plan and decisions:
 Tests: `017_suspension_turns.test.sql`; rollback
 `supabase/rollback/20261126090000_rollback.sql` and
 `scripts/test-migration-12-rollback.sh`.
+
+## Maintenance inspection & replacement tracking (Migration 13)
+
+`20261127090000_maintenance_inspections.sql`, **not applied to production**
+(needs approval). Additive; every existing schedule keeps tracking
+replacement only and is calculated exactly as before. Plan and decisions:
+[development-plan.md](development-plan.md#2-maintenance-inspection--replacement-tracking).
+
+- **A Check is a service record** (Decision A): category `inspection`,
+  title "Inspection", whose items carry `maintenance_entry_tasks.outcome`
+  (`good` / `needs_replacement`; only on done items). An item without an
+  outcome is done / **Replaced**, as before. `save_maintenance_inspection(key,
+  sled, date, checks, reading, notes, done_by)` saves one record for one or
+  many checks (Quick Check) through `save_maintenance_entry`, as the caller:
+  readings, idempotency, RLS, audit, editing and Recently Deleted all apply.
+- **`maintenance_plans`**: `tracks` (`replacement` default / `inspection` /
+  `both`); the inspection schedule `inspect_interval_mi/hours/days`,
+  `inspect_season_month/day` with `inspect_season_kind`, and
+  `inspect_each_reading` (Every Mileage Update, Decision C: due once a
+  mileage reading newer than the last check exists; engine-hours-only
+  readings don't count); the existing
+  interval columns stay the replacement schedule, with `replace_as_needed`
+  and `season_kind` (`season` / `preseason` / `postseason`, Decision B); an
+  inspection starting point `inspect_baseline_on/mi/hours`; and a kind for
+  both starting points (`known` / `tracking`: a tracking start is never shown
+  as a replacement).
+- **`maintenance_board`** keeps its columns and adds: `replace_status`
+  (`as_needed` when replaced as needed), `last_checked_*`,
+  `last_check_outcome`, `needs_replacement` (a check said Needs Replacement
+  and nothing was replaced since; a later Good check does not clear it), the inspection schedule's due and remaining
+  values, `inspect_due_on_reading`, `inspect_status` (`overdue`, `due`,
+  `initial_check`, `upcoming`, `mileage_unknown`, `good`, `unscheduled`,
+  `paused`), `item_rank` (Needs Replacement first) and `component_mi` /
+  `component_since`. Replaced resets both schedules; Checked only the
+  inspection one. For an inspection only item, earlier completions count as
+  checks (Decision D). Everything is calculated when read; nothing is stored.
+
+Tests: `018_maintenance_inspections.test.sql`; rollback
+`supabase/rollback/20261127090000_rollback.sql` and
+`scripts/test-migration-13-rollback.sh`.
 
 ## Migration 8: cleanup (built; see cleanup.md)
 

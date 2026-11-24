@@ -54,7 +54,7 @@ fingerprint() {
       from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname in ('public','private')
     order by 1;"
 }
-M12_OBJECTS='input_methods|outdated|sled_turn_adjustments|sled_trail_settings|sled_measurement_records|record_suspension_measurement|suspension_trail_status|take_outdated_photo_slot|turns_guard|save_suspension_configuration|add_suspension_measurement_photo'
+M12_OBJECTS='input_methods|outdated|sled_turn_adjustments|sled_trail_settings|sled_measurement_records|record_suspension_measurement|suspension_trail_status|add_photo_in_outdated_slot|turns_guard|save_suspension_configuration|add_suspension_measurement_photo'
 SAVE9="public.save_suspension_configuration(uuid,uuid,jsonb,text,text,text,numeric,numeric,uuid)"
 ADD="public.add_suspension_measurement_photo(uuid,uuid,text)"
 

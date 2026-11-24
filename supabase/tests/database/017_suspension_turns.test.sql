@@ -8,7 +8,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set search_path = public, extensions;
 
-select plan(113);
+select plan(115);
 
 insert into auth.users (id, email, email_confirmed_at) values
   ('e1111111-1111-1111-1111-111111111111', 'tn-owner@example.com', now()),
@@ -242,6 +242,9 @@ select is(pg_temp.st('r5', 'pre'), '2.50|11.5|false|false', 'replacing it keeps 
 insert into t select 'ph2', pg_temp.add_photo('r5', 'pre');
 select is(pg_temp.photos('r5', 'pre'), '2,0', 'the new photo replaced the outdated inherited copy');
 select is(pg_temp.photos('r4', 'pre'), '0,1', 'the earlier Trail keeps its photo');
+select throws_ok($$ select private.add_photo_in_outdated_slot(pg_temp.v('r2')::uuid, pg_temp.v('comp')::uuid, pg_temp.path('r2')) $$,
+  '23514', 'At most 2 photos per measurement.', 'the slot helper refuses while a slot is free (it never just removes a photo)');
+select is(pg_temp.photos('r2', 'comp'), '0,0', 'and changes nothing');
 select throws_ok($$ select pg_temp.add_photo('r5', 'pre') $$, '23514', 'At most 2 photos per measurement.',
   'with two current photos a third is still refused');
 update public.sled_measurement_photos set deleted_at = now(), version = version where id = pg_temp.v('ph1_new')::uuid;

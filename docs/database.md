@@ -794,8 +794,11 @@ before merging the code that uses it). Plan and decisions:
   own (not carried forward) for that setting, so removing the last one
   brings it back and restoring or replacing clears it.
 - `add_suspension_measurement_photo`: when both slots are full, a new photo
-  takes the place of an outdated inherited photo (only that Trail's
-  reference copy goes; the earlier Trail keeps its photo and the file).
+  takes the place of an outdated inherited photo, through
+  `private.add_photo_in_outdated_slot`, which removes that row and adds the
+  new one together (never a removal on its own). Only that Trail's reference
+  copy goes; the Trail it came from, any Trail carried from it
+  (`carried_from_id` has no foreign key) and the file are untouched.
   Otherwise unchanged; still at most 2 photos per measurement.
 
 Tests: `017_suspension_turns.test.sql`; rollback

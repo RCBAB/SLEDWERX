@@ -27,7 +27,8 @@
 --   photo and has no active photo of its own (carried_from_id is null) for
 --   that setting. Replace, remove and restore therefore need no change; add
 --   lets a new photo take the place of an outdated inherited one when both
---   slots are full (part 7).
+--   slots are full (part 7; the removal only ever happens together with the
+--   new photo).
 --
 -- Reminders (Both settings only): turns raise Measurement Needed and the
 -- photo requirement; a measurement clears Measurement Needed only.
@@ -538,8 +539,11 @@ to authenticated;
 --    Without this, a mechanic (who can add but not remove photos) could never
 --    clear Photo Needed on a Trail that inherited two outdated photos.
 -- -----------------------------------------------------------------------------
-create function private.take_outdated_photo_slot(p_revision_id uuid, p_setting_id uuid)
-returns smallint
+-- Only ever removes an outdated inherited row TOGETHER WITH adding the new
+-- photo in its slot (one statement block, so both happen or neither does), and
+-- only while both slots are taken. It can't be used to just remove a photo.
+create function private.add_photo_in_outdated_slot(p_revision_id uuid, p_setting_id uuid, p_path text)
+returns jsonb
 language plpgsql
 volatile
 security definer
@@ -547,21 +551,34 @@ set search_path = ''
 as $$
 declare
   v_photo record;
+  v_id uuid;
 begin
+  perform pg_advisory_xact_lock(hashtextextended('sledwerx.measurement_photos:' || p_revision_id::text || ':' || p_setting_id::text, 0));
   select m.id, m.slot, m.sled_id into v_photo from public.sled_measurement_photos m
   where m.revision_id = p_revision_id and m.setting_id = p_setting_id and m.deleted_at is null
     and m.carried_from_id is not null and m.outdated
   order by m.slot limit 1;
-  if not found or not private.has_sled_permission(v_photo.sled_id, 'add_records') then
-    return null;
+  if not found
+     or (select count(*) from public.sled_measurement_photos m
+         where m.revision_id = p_revision_id and m.setting_id = p_setting_id and m.deleted_at is null) < 2 then
+    raise exception 'At most 2 photos per measurement.' using errcode = '23514';
   end if;
+  if not private.has_sled_permission(v_photo.sled_id, 'add_records') then
+    raise exception 'You do not have permission to add photos to this snowmobile.' using errcode = '42501';
+  end if;
+  -- Only this Trail's reference copy: the row it was carried from, any row
+  -- carried from it (no foreign key) and the file are untouched.
   delete from public.sled_measurement_photos where id = v_photo.id;
-  return v_photo.slot;
+  -- The new photo, with every check of a normal add (guard, folder, claim).
+  insert into public.sled_measurement_photos (sled_id, revision_id, setting_id, path, slot)
+  values (v_photo.sled_id, p_revision_id, p_setting_id, p_path, v_photo.slot)
+  returning id into v_id;
+  return jsonb_build_object('id', v_id, 'slot', v_photo.slot, 'duplicate', false);
 end;
 $$;
 
-revoke all on function private.take_outdated_photo_slot(uuid, uuid) from public, anon;
-grant execute on function private.take_outdated_photo_slot(uuid, uuid) to authenticated;
+revoke all on function private.add_photo_in_outdated_slot(uuid, uuid, text) from public, anon;
+grant execute on function private.add_photo_in_outdated_slot(uuid, uuid, text) to authenticated;
 
 create or replace function public.add_suspension_measurement_photo(p_revision_id uuid, p_setting_id uuid, p_path text)
 returns jsonb
@@ -589,11 +606,8 @@ begin
                     where m.revision_id = p_revision_id and m.setting_id = p_setting_id and m.slot = s and m.deleted_at is null)
   order by s limit 1;
   if v_slot is null then
-    -- Migration 12: take the place of an outdated inherited photo, if any.
-    v_slot := private.take_outdated_photo_slot(p_revision_id, p_setting_id);
-  end if;
-  if v_slot is null then
-    raise exception 'At most 2 photos per measurement.' using errcode = '23514';
+    -- Migration 12: the new photo takes an outdated inherited photo's slot, if any.
+    return private.add_photo_in_outdated_slot(p_revision_id, p_setting_id, p_path);
   end if;
   insert into public.sled_measurement_photos (sled_id, revision_id, setting_id, path, slot)
   values ((select r.sled_id from public.suspension_revisions r where r.id = p_revision_id), p_revision_id, p_setting_id, p_path, v_slot)

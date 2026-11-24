@@ -226,7 +226,7 @@ $$;
 drop function if exists public.save_suspension_configuration(uuid, uuid, jsonb, text, text, text, numeric, numeric, uuid, jsonb);
 drop function if exists public.record_suspension_measurement(uuid, uuid, text);
 drop function if exists public.suspension_trail_status(uuid[]);
-drop function if exists private.take_outdated_photo_slot(uuid, uuid);
+drop function if exists private.add_photo_in_outdated_slot(uuid, uuid, text);
 drop trigger if exists turns_guard on public.suspension_settings;
 drop function if exists private.tg_suspension_settings_turns_guard();
 drop table if exists public.sled_measurement_records;
@@ -248,7 +248,7 @@ begin
                 and ((table_name = 'suspension_settings' and column_name = 'input_methods')
                      or (table_name = 'sled_measurement_photos' and column_name = 'outdated')))
      or exists (select 1 from pg_proc where proname in ('record_suspension_measurement', 'suspension_trail_status',
-                                                        'take_outdated_photo_slot', 'tg_suspension_settings_turns_guard'))
+                                                        'add_photo_in_outdated_slot', 'tg_suspension_settings_turns_guard'))
      or (select count(*) from pg_proc where proname = 'save_suspension_configuration') <> 1
      or position('Migration 12' in pg_get_functiondef('public.save_suspension_configuration(uuid,uuid,jsonb,text,text,text,numeric,numeric,uuid)'::regprocedure)) > 0
      or position('Migration 12' in pg_get_functiondef('public.add_suspension_measurement_photo(uuid,uuid,text)'::regprocedure)) > 0

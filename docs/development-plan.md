@@ -5,8 +5,8 @@ designed and its open decisions settled before any implementation starts.
 
 | Order | Feature | Status |
 |---|---|---|
-| 1 | [Suspension Measurement / Turns](#1-suspension-measurement--turns) | Design decisions in progress |
-| 2 | [Maintenance Inspection & Replacement Tracking](#2-maintenance-inspection--replacement-tracking) | Requirements approved; design after feature 1 |
+| 1 | [Suspension Measurement / Turns](#1-suspension-measurement--turns) | Design final; PR 1 scope awaiting approval |
+| 2 | [Maintenance Inspection & Replacement Tracking](#2-maintenance-inspection--replacement-tracking) | Requirements approved; next after Measurement / Turns is complete |
 
 Production context (as of 2026-11-24):
 - Measurement photo uploads are live (`SUSPENSION_PHOTO_UPLOADS=on`,
@@ -59,40 +59,90 @@ Production context (as of 2026-11-24):
    measurement photos and the two-photo limit, existing measurements, and the
    PR #20 Quick Tune timing fixes. No existing data is lost.
 
-### Implementation outline
+### Design decisions (all final)
 
-- **Migration 12** (approved; additive; the same SQL Editor process as Migrations 9–11:
-  preflight, trial with ROLLBACK, apply, read-only verification):
-  - `suspension_settings.input_methods` (existing settings: measurement only);
-  - per-adjustment turns rows, written with the new Trail and never changed;
-  - a per-Trail, per-setting row for cumulative turns, the documented
-    measurement and both reminders, copied forward on save;
-  - an `outdated` marker on carried-forward measurement photos;
-  - `save_suspension_configuration` re-created with a turns parameter;
-  - a separate "Record measurement" function (updates the same Trail);
-  - the add and replace photo functions clear Photo Needed for that Trail.
-- **Photo Needed** is always stored. It is hidden only if
-  `SUSPENSION_PHOTO_UPLOADS` is switched off again (it can't be cleared then);
-  Measurement Needed always shows.
-- **Delivery (approved):** two PRs, (a) database and the input-method setting, then
-  (b) Quick Tune, History/View/Compare, and the reminder summaries. Nothing
-  changes for anyone until a setting is switched to Turns or Both, so it is
-  tested end to end on Photo Test.
-- Same PR: bring Decision 10, runbook B9 and `photo-flag.ts` up to date (photo
-  uploads no longer wait for cleanup deletion).
+| # | Decision |
+|---|---|
+| 1 | "Task" means an individual suspension setting (not a maintenance task). Measurement only / Turns only / Both is chosen when creating or editing a setting; existing settings default to Measurement only. |
+| 2 | No "Not needed" dismiss: Photo Needed is cleared only by uploading one new photo for that setting on that Trail (can be added later if needed). |
+| 3 | Units stay customizable and existing units are preserved; inches is the default only when no unit is set (editable). Turns always display as turns, independent of the unit; Turns only settings show no measurement unit. No conversions or data changes. |
+| 4 | Each − / + tap is ±0.5 turns (no per-setting step option); typed amounts up to two decimals; signed adjustments and cumulative totals are displayed; 0 means no change and creates no adjustment; a single adjustment beyond ±20 turns asks for confirmation but is allowed; no limit on the cumulative total. |
+| 5 | While Measurement Needed is on, entering a measurement in Quick Tune (same row, existing Measurement / Turns selector; no separate form, popup or navigation) and tapping Record Measurement documents the active Trail without a new Trail: clears Measurement Needed, keeps Photo Needed until a new photo, keeps all turns adjustments in History. A documented measurement can be corrected on the same Trail, keeping the correction history. Later physical adjustments create a new Trail as normal. |
+| 6 | (a) Any value change in a save (Measurement mode or turns) marks that setting's carried-forward photos outdated; ordinary measurement changes raise no Photo Needed; unchanged settings keep their photo status. (b) Photo Needed is derived: on while a turns-flagged Trail has no active new (non-inherited) photo for that setting. Removing the last qualifying photo reactivates it; restoring or replacing clears it; with two new photos, removing one keeps it cleared. All photo statuses and reminders are per setting and per Trail. |
+| 7 | Reminders on both the snowmobile page (each setting needing a measurement or photo listed) and the Garage Board including the wall display (compact counts that don't enlarge the card; selecting them opens that snowmobile's Suspension page). Active Trail only; switching Trails updates them immediately. Reuse the shared `SuspensionSummary` component and active-Trail query. |
+| 8 | Quick Tune is the interface for turns and Record Measurement, and stays fully usable in Garage Mode and on the wall touchscreen. Record adjustment is unchanged wherever applicable; Turns only settings and Both settings with outstanding turns are read-only there, with a direct link to Quick Tune. Recording a measurement on an older Trail requires activating it first; newer Trails are never affected. |
 
-### Design decisions
+### Implementation plan (approved: Migration 12, two PRs)
 
-| # | Decision | Status |
-|---|---|---|
-| 1 | "Task" means an individual suspension setting (not a maintenance task). Measurement only / Turns only / Both is chosen when creating or editing a setting; existing settings default to Measurement only | **Decided** |
-| 2 | No "Not needed" dismiss: Photo Needed is cleared only by uploading one new photo for that setting on that Trail (can be added later if needed) | **Decided** |
-| 3 | Units stay customizable and existing units are preserved; inches is the default only when no unit is set (editable). Turns always display as turns, independent of the unit; Turns only settings show no measurement unit. No conversions or data changes | **Decided** |
-| 4 | Each − / + tap is ±0.5 turns (no per-setting step option); typed amounts up to two decimals; signed adjustments and cumulative totals are displayed; 0 means no change and creates no adjustment; a single adjustment beyond ±20 turns asks for confirmation but is allowed; no limit on the cumulative total | **Decided** |
-| 5 | While Measurement Needed is on, entering a measurement in Quick Tune (same row, existing Measurement / Turns selector; no separate form, popup or navigation) and tapping Record Measurement documents the active Trail without a new Trail: clears Measurement Needed, keeps Photo Needed until a new photo, keeps all turns adjustments in History. A documented measurement can be corrected on the same Trail, keeping the correction history. Later physical adjustments create a new Trail as normal | **Decided** |
-| 6 | (a) Any value change in a save (Measurement mode or turns) marks that setting's carried-forward photos outdated; ordinary measurement changes raise no Photo Needed; unchanged settings keep their photo status. (b) Photo Needed is derived: on while a turns-flagged Trail has no active new (non-inherited) photo for that setting. Removing the last qualifying photo reactivates it; restoring or replacing clears it; with two new photos, removing one keeps it cleared. All photo statuses and reminders are per setting and per Trail | **Decided** |
-| 7 | Reminders on both the snowmobile page (each setting needing a measurement or photo listed) and the Garage Board including the wall display (compact counts that don't enlarge the card; selecting them opens that snowmobile's Suspension page). Active Trail only; switching Trails updates them immediately. Reuse the shared `SuspensionSummary` component and active-Trail query | **Decided** |
-| 8 | Turns and documentation in Quick Tune only at first | Open |
+**PR 1: database and the input-method setting.** Detailed scope below. After
+merge, Migration 12 is applied with the usual SQL Editor process (preflight,
+trial with ROLLBACK, apply, read-only verification).
+
+**PR 2: interface.**
+- Quick Tune: Measurement / Turns selector on Both settings (Measurement by
+  default), signed turns control (±0.5 taps, typed to two decimals, ±20
+  confirmation), cumulative turns shown instead of a blank measurement, Record
+  Measurement on the same row, reminder badges per setting, outdated labels in
+  the photo dialog. Wall keyboard: the turns field gets the ± key
+  (`data-allow-negative`); large touch targets as today.
+- Record adjustment: read-only rows plus a Quick Tune link (decision 8).
+- History / View / Compare: each turns adjustment, measurement records and
+  corrections, per-Trail reminder status; disliked warnings and compare
+  include cumulative turns and documented measurements.
+- Reminder summaries: top of the Suspension page, snowmobile page (per
+  setting) and Garage Board / wall display (counts), via `SuspensionSummary`.
+- Docs: Decision 10, runbook B9 and the `photo-flag.ts` comment brought up to
+  date (photo uploads no longer wait for cleanup deletion).
+- Photo Needed is hidden only if `SUSPENSION_PHOTO_UPLOADS` is ever switched
+  off again; Measurement Needed always shows.
+- Tested end to end on Photo Test.
+
+### PR 1 scope
+
+Migration 12 (`supabase/migrations/2026112…_suspension_turns.sql`), additive:
+- `suspension_settings.input_methods`: `measurement` | `turns` | `both`, not
+  null, default `measurement` (every existing setting).
+- `suspension_turn_adjustments`: one row per turns adjustment (Trail,
+  setting, signed amount with two decimals, never 0), written only by the save
+  function, never changed.
+- `suspension_trail_settings`: one row per Trail per turns-tracked setting:
+  cumulative turns, documented measurement, Measurement Needed, and whether
+  that Trail requires a new photo. Created only for settings with turns
+  history, so existing Trails need no backfill.
+- `suspension_measurement_records`: each Record Measurement and correction
+  (value, who, when), never changed; the latest one is the Trail's measurement.
+- `sled_measurement_photos.outdated` (default false), set when a photo is
+  carried forward for a setting that changed in that save, or was already
+  outdated.
+- `save_suspension_configuration` re-created with a turns parameter (setting
+  → signed amount). It refuses a value and turns for the same setting, turns
+  on a Measurement only setting, and 0. Turned settings: cumulative = base
+  cumulative (or 0 after a documented measurement) + amount, value blank,
+  Measurement Needed on (Both only), new photo required (Both only). Other
+  turns-tracked settings copy forward; a photo requirement carries forward
+  only while unmet on the base Trail.
+- `record_suspension_measurement(trail, setting, value)`: active Trail only,
+  Turns-capable settings with Measurement; adds a record, clears Measurement
+  Needed; corrections allowed. Never creates a Trail or touches other Trails.
+- Read function for the active Trail's reminders (per setting), for PR 2.
+- Photo Needed is derived from active photos with no `carried_from_id`, so
+  add, replace, remove and restore need no change.
+- Changing input methods: a setting can't lose Turns while its active Trail
+  shows turns instead of a measurement (record the measurement first).
+- Row Level Security as before (view by sled permission; writes only through
+  the functions); no anonymous access; registered with the Migration 8
+  cleanup like Migration 10. Rollback script and rollback test.
+- Tests: pgTAP `017_suspension_turns`, rollback test in CI, generated types.
+
+App:
+- Settings editor: Measurement only / Turns only / Both when creating or
+  editing a setting (at least one). Unit is pre-filled with "in" when blank
+  for measurement-capable settings and hidden for Turns only.
+- Until PR 2 ships, Turns only and Both are shown but disabled ("Available
+  with Quick Tune Turns"), so no setting can be switched before the interface
+  exists. PR 2 enables them.
+- Existing Quick Tune, Record adjustment, History and photos behave exactly
+  as today. Full CI (unit, pgTAP, rollback tests, e2e).
 
 ---
 

@@ -846,8 +846,8 @@ Tests: `018_maintenance_inspections.test.sql`; rollback
 
 ## Inspection starting point time (Migration 14)
 
-`20261128090000_inspection_baseline_time.sql`, **not applied to production**
-(needs approval). Additive, and limited to Every Mileage Update:
+`20261128090000_inspection_baseline_time.sql`, **applied to production**
+(PR #26). Additive, and limited to Every Mileage Update:
 
 - **`maintenance_plans.inspect_baseline_at`**: when the inspection starting
   point (`inspect_baseline_on/mi/hours/kind`) was last set. A trigger

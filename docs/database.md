@@ -806,8 +806,8 @@ Tests: `017_suspension_turns.test.sql`; rollback
 
 ## Maintenance inspection & replacement tracking (Migration 13)
 
-`20261127090000_maintenance_inspections.sql`, **not applied to production**
-(needs approval). Additive; every existing schedule keeps tracking
+`20261127090000_maintenance_inspections.sql`, **applied to production**
+(PR #24). Additive; every existing schedule keeps tracking
 replacement only and is calculated exactly as before. Plan and decisions:
 [development-plan.md](development-plan.md#2-maintenance-inspection--replacement-tracking).
 
@@ -843,6 +843,30 @@ replacement only and is calculated exactly as before. Plan and decisions:
 Tests: `018_maintenance_inspections.test.sql`; rollback
 `supabase/rollback/20261127090000_rollback.sql` and
 `scripts/test-migration-13-rollback.sh`.
+
+## Inspection starting point time (Migration 14)
+
+`20261128090000_inspection_baseline_time.sql`, **not applied to production**
+(needs approval). Additive, and limited to Every Mileage Update:
+
+- **`maintenance_plans.inspect_baseline_at`**: when the inspection starting
+  point (`inspect_baseline_on/mi/hours/kind`) was last set. A trigger
+  (`inspect_baseline_time`) sets it to the transaction time whenever the
+  starting point is set or changed, keeps it on any other edit (schedule,
+  pausing, notes, re-saving the same starting point) and clears it when the
+  starting point is removed. Clients cannot set it.
+- **`maintenance_board`** is re-created with exactly the same 73 columns; the
+  only change is that the inspection starting point uses
+  `inspect_baseline_at` as its time. So Every Mileage Update counts a mileage
+  reading recorded after a starting point, even on the same day; a reading
+  recorded before it does not, and engine-hours-only readings still don't
+  count. A check still resets it (its record's time is newer).
+- Existing starting points keep `inspect_baseline_at` empty and are compared
+  by date only, exactly as before. No existing data is changed.
+
+Tests: `020_inspection_baseline_time.test.sql`; rollback
+`supabase/rollback/20261128090000_rollback.sql` and
+`scripts/test-migration-14-rollback.sh`.
 
 ## Migration 8: cleanup (built; see cleanup.md)
 

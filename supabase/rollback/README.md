@@ -18,9 +18,27 @@ below call for it, and preferably after talking it through.
 
 ## Order matters
 
-Roll back the newest migration first: Migration 13, then 12, then 11, then 10, then 9, then 8, then 7, then 6, then 5, then 4, then 3, then 2, then 1. Each
+Roll back the newest migration first: Migration 14, then 13, then 12, then 11, then 10, then 9, then 8, then 7, then 6, then 5, then 4, then 3, then 2, then 1. Each
 older rollback fails safely (changing nothing) while a newer migration that
 depends on it is still applied.
+
+---
+
+## `20261128090000_rollback.sql` (Migration 14)
+
+Undoes `supabase/migrations/20261128090000_inspection_baseline_time.sql`:
+removes `maintenance_plans.inspect_baseline_at` and its trigger, and puts
+back Migration 13's `maintenance_board` exactly as it was (an inspection
+starting point is again compared by date only). Only the times the starting
+points were set are lost; schedules, starting points and service history are
+unchanged. Migration 13's rollback refuses while Migration 14 is applied.
+
+```sql
+set sledwerx.confirm_rollback = '20261128090000';
+-- then run the whole file in the same session.
+```
+
+Tested by `scripts/test-migration-14-rollback.sh` (CI, local stack only).
 
 ---
 
@@ -33,7 +51,8 @@ Migration 5's `maintenance_board` exactly as it was.
 
 It **refuses** while any Check exists (an item with an outcome) or any
 schedule uses inspection tracking, so no inspection history is lost.
-Migration 12's rollback refuses while Migration 13 is applied.
+Migration 12's rollback refuses while Migration 13 is applied, and it
+refuses while Migration 14 is applied (roll that back first).
 
 ```sql
 set sledwerx.confirm_rollback = '20261127090000';

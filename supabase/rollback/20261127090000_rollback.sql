@@ -12,6 +12,7 @@
 --   All in ONE transaction.
 -- * REFUSES to run unless confirmed in the same session:
 --       set sledwerx.confirm_rollback = '20261127090000';
+-- * REFUSES to run while Migration 14 is applied (roll that back first).
 -- * REFUSES to run while any Check (an item with an outcome) exists or any
 --   schedule uses inspection tracking, so no inspection history is lost.
 -- * Lives outside supabase/migrations/ and is never run by the CLI or CI
@@ -26,6 +27,10 @@ declare
 begin
   if current_setting('sledwerx.confirm_rollback', true) is distinct from '20261127090000' then
     raise exception 'Rollback not confirmed. Run  set sledwerx.confirm_rollback = ''20261127090000'';  first, in the same session. See supabase/rollback/README.md.';
+  end if;
+  if exists (select 1 from information_schema.columns where table_schema = 'public'
+             and table_name = 'maintenance_plans' and column_name = 'inspect_baseline_at') then
+    raise exception 'Rollback aborted: Migration 14 (inspection starting point time) is applied. Roll back Migration 14 first.';
   end if;
   if exists (select 1 from information_schema.columns where table_schema = 'public'
              and table_name = 'maintenance_entry_tasks' and column_name = 'outcome') then

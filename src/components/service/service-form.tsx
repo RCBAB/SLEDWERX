@@ -4,7 +4,8 @@ import { ArrowDown, ArrowUp, ListPlus, Plus, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useActionState, useRef, useState } from "react";
 
-import { createService, updateService, type ServiceActionState } from "@/app/garage/service-actions";
+import { createService, retryCorrections, updateService, type ServiceActionState } from "@/app/garage/service-actions";
+import { Segmented } from "@/components/board/segmented";
 import { Alert } from "@/components/ui/alert";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Field, SelectField, TextareaField } from "@/components/ui/field";
@@ -17,6 +18,7 @@ import {
   parseAmount,
   partsPayload,
   tasksPayload,
+  type CheckOutcome,
   type PartRow,
   type TaskRow,
 } from "@/lib/service/form";
@@ -59,7 +61,7 @@ export function ServiceForm({ sledId, record, taskOptions, packages, readings, c
   });
 
   const [tasks, setTasks] = useState<TaskRow[]>(() =>
-    (record?.tasks ?? []).map((t) => ({ key: t.id, id: t.id, taskId: t.taskId ?? undefined, name: t.name })),
+    (record?.tasks ?? []).map((t) => ({ key: t.id, id: t.id, taskId: t.taskId ?? undefined, name: t.name, outcome: t.outcome ?? undefined })),
   );
   const [parts, setParts] = useState<PartRow[]>(() =>
     (record?.parts ?? []).map((p) => ({
@@ -82,7 +84,13 @@ export function ServiceForm({ sledId, record, taskOptions, packages, readings, c
       idempotencyKey.current ??= randomUuid();
       formData.set("idempotencyKey", idempotencyKey.current);
     }
-    const result = editing ? await updateService(prev, formData) : await createService(prev, formData);
+    // After a failed check-result correction, only the correction is retried
+    // (the record itself was already saved).
+    const result = !editing
+      ? await createService(prev, formData)
+      : prev.correctionPending
+        ? await retryCorrections(prev, formData)
+        : await updateService(prev, formData);
     if (result.ok) {
       router.push(`/garage/${sledId}?service=${editing ? "updated" : "saved"}#service-history`);
     }
@@ -197,7 +205,7 @@ export function ServiceForm({ sledId, record, taskOptions, packages, readings, c
         {tasks.length ? (
           <ol className="mb-4 divide-y divide-white/10 rounded-xl border border-white/10" data-testid="service-tasks">
             {tasks.map((task, index) => (
-              <li key={task.key} className="flex items-center gap-1 px-2 py-2 sm:gap-2 sm:px-3">
+              <li key={task.key} className="flex flex-wrap items-center gap-1 px-2 py-2 sm:gap-2 sm:px-3">
                 <span className="w-6 shrink-0 text-sm tabular-nums text-muted">{index + 1}.</span>
                 {task.taskId ? (
                   <span className="min-w-0 flex-1 break-words text-sm font-medium">{task.name}</span>
@@ -221,6 +229,22 @@ export function ServiceForm({ sledId, record, taskOptions, packages, readings, c
                 <button type="button" className="p-2 text-muted hover:text-accent-hot" aria-label={`Remove task ${task.name}`} onClick={() => setTasks((rows) => rows.filter((r) => r.key !== task.key))}>
                   <Trash2 aria-hidden className="size-4" />
                 </button>
+                {task.outcome ? (
+                  // Decision G: correct a check's result. Needs Replacement and the
+                  // board are recalculated from the corrected check.
+                  <div className="basis-full pb-1 pl-7 sm:pl-8" data-testid="check-outcome">
+                    <Segmented<CheckOutcome>
+                      legend={`Check result for ${task.name}`}
+                      name={`outcome-${task.key}`}
+                      value={task.outcome}
+                      onChange={(outcome) => setTasks((rows) => rows.map((r) => (r.key === task.key ? { ...r, outcome } : r)))}
+                      options={[
+                        { value: "good", label: "Good", selectedClass: "bg-emerald-600 text-white ring-emerald-400" },
+                        { value: "needs_replacement", label: "Needs Replacement", selectedClass: "bg-red-600 text-white ring-red-400" },
+                      ]}
+                    />
+                  </div>
+                ) : null}
               </li>
             ))}
           </ol>
@@ -366,7 +390,7 @@ export function ServiceForm({ sledId, record, taskOptions, packages, readings, c
           Cancel
         </ButtonLink>
         <div className="sm:w-56">
-          <SubmitButton pendingText="Saving…">{editing ? "Save changes" : "Save service"}</SubmitButton>
+          <SubmitButton pendingText="Saving…">{state.correctionPending ? "Retry check result" : editing ? "Save changes" : "Save service"}</SubmitButton>
         </div>
       </div>
     </form>

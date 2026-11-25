@@ -99,7 +99,9 @@ export function statusLine(row: BoardRow): string {
 export function lastDoneLine(row: BoardRow): string {
   if (!row.lastDoneSource) return "Never done in SledWerx";
   const when = row.lastDoneOn ? formatDate(row.lastDoneOn) : "date unknown";
-  const prefix = row.lastDoneSource === "baseline" ? "Done before SledWerx" : "Last done";
+  // Migration 13: a "Start tracking now" starting point is never shown as done.
+  const tracking = row.lastDoneSource === "baseline" && row.tracking?.replaceBaselineKind === "tracking";
+  const prefix = tracking ? "Tracking since" : row.lastDoneSource === "baseline" ? "Done before SledWerx" : "Last done";
   const meters: string[] = [];
   if (row.lastDoneMi != null) meters.push(`${number.format(row.lastDoneMi)} mi`);
   else if (row.intervalMi != null || row.lastDoneSource === "service") meters.push("mileage unknown");

@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 
 import { getSessionUser } from "@/lib/auth/session";
-import { scheduleSchema } from "@/lib/board/validation";
+import { planFrom } from "@/lib/board/validation";
 import { taskOptionsForSled } from "@/lib/service/queries";
 import { serviceReading } from "@/lib/service/validation";
 import { sledErrorMessage } from "@/lib/sleds/errors";
@@ -48,6 +48,24 @@ const SCHEDULE_FIELDS = [
   "baselineOn",
   "baselineMi",
   "baselineHours",
+  // Migration 13: what's tracked, the check schedule and both starting points.
+  "tracks",
+  "replaceAsNeeded",
+  "seasonKind",
+  "replaceStart",
+  "inspectMi",
+  "inspectHours",
+  "inspectEvery",
+  "inspectUnit",
+  "inspectSeasonal",
+  "inspectSeasonKind",
+  "inspectSeasonMonth",
+  "inspectSeasonDay",
+  "inspectEachReading",
+  "inspectStart",
+  "inspectBaselineOn",
+  "inspectBaselineMi",
+  "inspectBaselineHours",
 ] as const;
 
 async function signedInUser(next: string) {
@@ -68,10 +86,12 @@ function done(): BoardActionState {
 
 function scheduleFrom(formData: FormData) {
   const raw = formValues(formData, SCHEDULE_FIELDS);
-  const parsed = scheduleSchema.safeParse(raw);
+  const parsed = planFrom(raw);
   if (!parsed.success) return { raw, error: { fieldErrors: fieldErrorsOf(parsed.error), values: raw } as BoardActionState };
-  const dateError = futureDateError(raw.baselineOn || undefined, formData.get("timeZone"));
-  if (dateError) return { raw, error: { fieldErrors: { baselineOn: [dateError] }, values: raw } as BoardActionState };
+  for (const key of ["baselineOn", "inspectBaselineOn"] as const) {
+    const dateError = futureDateError(raw[key] || undefined, formData.get("timeZone"));
+    if (dateError) return { raw, error: { fieldErrors: { [key]: [dateError] }, values: raw } as BoardActionState };
+  }
   return { raw, schedule: parsed.data };
 }
 
@@ -229,6 +249,79 @@ export async function completeTasks(_prev: BoardActionState, formData: FormData)
     p_reading: serviceReading(input) ?? undefined,
     p_tasks: tasks,
     // The record's own notes field, shown in the service history.
+    p_notes: input.notes ?? undefined,
+  });
+  if (error) {
+    const message = sledErrorMessage(error, "service record");
+    const field = message.startsWith("Odometer")
+      ? { odometer: [message] }
+      : message.startsWith("Engine-hour")
+        ? { engineHours: [message] }
+        : undefined;
+    return { error: message, fieldErrors: field, values: raw };
+  }
+  return done();
+}
+
+// ---------------------------------------------------------------------------
+// Checked / Quick Check: one Inspection service record for one or more checks
+// (save_maintenance_inspection, through save_maintenance_entry: the same
+// permissions, readings, idempotency and audit as any service record)
+// ---------------------------------------------------------------------------
+const checkSchema = z
+  .object({
+    notes: optionalText(10_000, "Notes"),
+    performedOn: pastOrToday,
+    mileageUnknown: checkbox,
+    odometer: z.preprocess(toNumber, odometer.optional()),
+    engineHours: z.preprocess(toNumber, engineHours.optional()),
+    idempotencyKey: z.uuid({ error: "Reload the page and try again." }),
+    checks: z.preprocess(
+      (v) => {
+        try {
+          return typeof v === "string" ? JSON.parse(v) : v;
+        } catch {
+          return null;
+        }
+      },
+      z
+        .array(
+          z.object({
+            taskId: z.uuid(),
+            outcome: z.enum(["good", "needs_replacement"]),
+            note: z.string().trim().max(2_000, { error: "Keep each note under 2,000 characters." }).optional(),
+          }),
+          { error: "Choose Good or Needs Replacement for at least one item." },
+        )
+        .min(1, { error: "Choose Good or Needs Replacement for at least one item." })
+        .max(100),
+    ),
+  })
+  .superRefine((value, ctx) => {
+    if (!value.mileageUnknown && value.odometer === undefined) {
+      ctx.addIssue({ code: "custom", path: ["odometer"], message: "Enter the mileage, or choose “Mileage unknown”." });
+    }
+  });
+
+export async function recordChecks(_prev: BoardActionState, formData: FormData): Promise<BoardActionState> {
+  const sledId = id(formData, "sledId");
+  await signedInUser(sledId ? `/garage/${sledId}` : "/garage");
+  if (!sledId) return { error: "Snowmobile not found." };
+
+  const raw = formValues(formData, ["notes", "performedOn", "mileageUnknown", "odometer", "engineHours", "idempotencyKey", "checks"] as const);
+  const parsed = checkSchema.safeParse(raw);
+  if (!parsed.success) return { fieldErrors: fieldErrorsOf(parsed.error), values: raw };
+  const input = parsed.data;
+  const dateError = futureDateError(input.performedOn, formData.get("timeZone"));
+  if (dateError) return { fieldErrors: { performedOn: [dateError] }, values: raw };
+
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("save_maintenance_inspection", {
+    p_idempotency_key: input.idempotencyKey,
+    p_sled_id: sledId,
+    p_performed_on: input.performedOn,
+    p_checks: input.checks.map((c) => ({ task_id: c.taskId, outcome: c.outcome, note: c.note || null })),
+    p_reading: serviceReading(input) ?? undefined,
     p_notes: input.notes ?? undefined,
   });
   if (error) {

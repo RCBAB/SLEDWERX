@@ -1,6 +1,7 @@
 import { CheckCircle2, ChevronDown, Gauge, Pencil } from "lucide-react";
 import Link from "next/link";
 
+import { OUTCOME_LABEL } from "@/lib/board/tracking";
 import { CATEGORY_SHORT_LABELS } from "@/lib/service/constants";
 import { formatUsd, partLineTotal } from "@/lib/service/costs";
 import { groupBySeason } from "@/lib/service/history";
@@ -113,7 +114,18 @@ function ServiceItem({
             <h4 className="text-xs font-semibold uppercase tracking-[0.15em] text-muted">Work performed</h4>
             <ul className="mt-2 list-inside list-disc space-y-1 text-sm">
               {record.tasks.map((task) => (
-                <li key={task.id}>{task.name}</li>
+                <li key={task.id} data-testid="service-task">
+                  {task.name}
+                  {task.outcome ? (
+                    <>
+                      {" · Checked · "}
+                      <span className={task.outcome === "needs_replacement" ? "font-semibold text-red-300" : "font-semibold text-emerald-300"}>
+                        {OUTCOME_LABEL[task.outcome]}
+                      </span>
+                    </>
+                  ) : null}
+                  {task.note ? <span className="text-muted"> · {task.note}</span> : null}
+                </li>
               ))}
             </ul>
           </div>

@@ -1,3 +1,4 @@
+import { itemState } from "@/lib/board/tracking";
 import type { BoardRow } from "@/lib/board/types";
 
 export type SledTone = "red" | "yellow" | "green" | "neutral";
@@ -8,37 +9,53 @@ export type SledSummary = {
   label: string;
   /** e.g. "2 overdue · 1 due soon", or "All 4 up to date". */
   detail: string;
-  counts: { overdue: number; dueSoon: number; noRecord: number; unknown: number; good: number; notTracked: number };
+  counts: {
+    needsReplacement: number;
+    overdue: number;
+    checksDue: number;
+    dueSoon: number;
+    noRecord: number;
+    unknown: number;
+    good: number;
+    notTracked: number;
+  };
 };
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 /**
  * A sled's overall maintenance status, from its board rows: red if anything
- * is overdue, yellow if anything is due soon, has no record yet or has unknown
- * mileage, green if every scheduled task is good. Paused and unscheduled
- * tasks don't count.
+ * is overdue or needs replacement, yellow if anything is due soon, has a check
+ * due, has no record yet or has unknown mileage, green if every scheduled task
+ * is good. Paused and unscheduled tasks don't count. An item tracking both
+ * schedules counts once, by its more urgent one.
  */
 export function sledSummary(rows: BoardRow[]): SledSummary {
-  const counts = { overdue: 0, dueSoon: 0, noRecord: 0, unknown: 0, good: 0, notTracked: 0 };
+  const counts = { needsReplacement: 0, overdue: 0, checksDue: 0, dueSoon: 0, noRecord: 0, unknown: 0, good: 0, notTracked: 0 };
   for (const row of rows) {
-    if (row.status === "overdue") counts.overdue++;
-    else if (row.status === "upcoming") counts.dueSoon++;
-    else if (row.status === "no_record") counts.noRecord++;
-    else if (row.status === "mileage_unknown") counts.unknown++;
-    else if (row.status === "good") counts.good++;
+    const state = itemState(row);
+    if (state === "needs_replacement") counts.needsReplacement++;
+    else if (state === "overdue") counts.overdue++;
+    else if (state === "check_due") counts.checksDue++;
+    else if (state === "upcoming") counts.dueSoon++;
+    else if (state === "no_record") counts.noRecord++;
+    else if (state === "mileage_unknown") counts.unknown++;
+    else if (state === "good") counts.good++;
     else counts.notTracked++;
   }
   const parts = [
+    counts.needsReplacement ? `${counts.needsReplacement} ${counts.needsReplacement === 1 ? "needs" : "need"} replacement` : null,
     counts.overdue ? `${counts.overdue} overdue` : null,
+    counts.checksDue ? plural(counts.checksDue, "check") + " due" : null,
     counts.dueSoon ? `${counts.dueSoon} due soon` : null,
     counts.noRecord ? `${counts.noRecord} no record yet` : null,
     counts.unknown ? `${counts.unknown} mileage unknown` : null,
   ].filter(Boolean);
 
   if (counts.overdue) return { tone: "red", label: "Overdue", detail: parts.join(" · "), counts };
+  if (counts.needsReplacement) return { tone: "red", label: "Needs replacement", detail: parts.join(" · "), counts };
   if (parts.length) {
-    const label = counts.dueSoon ? "Due soon" : counts.noRecord ? "No record yet" : "Mileage unknown";
+    const label = counts.checksDue ? "Check due" : counts.dueSoon ? "Due soon" : counts.noRecord ? "No record yet" : "Mileage unknown";
     return { tone: "yellow", label, detail: parts.join(" · "), counts };
   }
   if (counts.good)

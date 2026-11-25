@@ -62,11 +62,13 @@ export type BoardTracking = {
   lastCheckedSource: "check" | "replacement" | "service" | "baseline" | "tracking" | null;
   lastCheckedOn: string | null;
   lastCheckedMi: number | null;
+  lastCheckedHours: number | null;
   lastCheckOutcome: "good" | "needs_replacement" | null;
   needsReplacement: boolean;
   inspectDueOn: string | null;
   inspectDueMi: number | null;
   inspectRemainingMi: number | null;
+  inspectRemainingHours: number | null;
   inspectRemainingDays: number | null;
   inspectDueOnReading: boolean;
   /** Board order: Needs Replacement first (-1), then the more urgent schedule. */

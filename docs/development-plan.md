@@ -6,7 +6,7 @@ designed and its open decisions settled before any implementation starts.
 | Order | Feature | Status |
 |---|---|---|
 | 1 | [Suspension Measurement / Turns](#1-suspension-measurement--turns) | Complete: both PRs merged, production testing passed |
-| 2 | [Maintenance Inspection & Replacement Tracking](#2-maintenance-inspection--replacement-tracking) | Plan approved; PR 1 (Migration 13) in progress |
+| 2 | [Maintenance Inspection & Replacement Tracking](#2-maintenance-inspection--replacement-tracking) | PR 1 (Migration 13) merged and live; PR 2 (interface) in review |
 
 Production context (as of 2026-11-24):
 - Measurement photo uploads are live (`SUSPENSION_PHOTO_UPLOADS=on`,
@@ -204,6 +204,14 @@ unnecessary complexity, reuse what exists.
 | C | **Every Mileage Update** is a scheduling option (due once a reading newer than the last check exists). A mileage update is not a ride: **Every Logged Ride** is added separately once a Ride Log exists. |
 | D | Converting an item to inspection only: its earlier completions count as checks with the outcome not recorded. No history is lost. |
 
+PR 2 interface decisions (approved 2026-11-25):
+
+| # | Decision |
+|---|---|
+| E | Replacement-only items keep their **Done** button, unchanged (many are services, not replacements, such as an oil change). Items that track inspections show **Checked** and **Replaced**. |
+| F | Quick Check lists overdue, due and initial-check inspections, included by default, plus inspections **due soon**, shown but set to Skip. |
+| G | A check's outcome can be corrected when editing its Inspection service record (Good / Needs Replacement for each checked item). A correction changes that check itself, so Needs Replacement and the board status are recalculated as if it had been recorded correctly. This is different from recording a later Good check, which does not clear Needs Replacement. The edit goes through the existing permissions and is kept in the audit log and the record's "Edited" date. No migration. |
+
 ### Implementation plan (approved)
 
 - **Migration 13** (additive; existing schedules and history behave exactly as
@@ -235,3 +243,59 @@ unnecessary complexity, reuse what exists.
   Check. Replaced keeps the existing Mark Done / service record form.
 - Service records have no receipts or photos today; requirement 12 keeps the
   existing documentation unchanged, so none are added.
+
+### PR 2 implementation notes
+
+- No migration. Uses Migration 13's board columns and
+  `save_maintenance_inspection`.
+- **Corrections (Decision G)** are two steps: the record edit
+  (`update_maintenance_entry`), then an ordinary update of the check's
+  `outcome`, under the record's existing permissions, guards and audit log.
+  If the second step fails, the form says the other changes were saved and
+  offers **Retry check result**, which runs only the correction: the record
+  isn't edited again, and a correction already applied changes and logs
+  nothing (`supabase/tests/database/019_inspection_corrections.test.sql`,
+  `src/app/garage/service-actions.test.ts`).
+- **Starting points.** Items that track inspections choose Known / Start
+  tracking now / Unknown for each schedule. Replacement-only items keep the
+  "Done before SledWerx?" section, now with **Start tracking now**: today's
+  date and meters, saved as a tracking start (`replace_baseline_kind =
+  tracking`) and shown as "Tracking since …", never as done. No service
+  record is created. A saved starting point is kept unless the user changes
+  it; "Enter a date instead" restores what was there.
+- **Wording.** Inspection only (and Both) items always say "Last checked".
+  When a replacement satisfied the check (Replaced resets both schedules;
+  Decision D's earlier completions), it adds "satisfied by a replacement"
+  ("… before SledWerx" for a replacement starting point).
+- Replacement-only items are otherwise unchanged: same card lines, **Done**,
+  Select / Done (n).
+- Board order: Needs Replacement first, then the more urgent schedule
+  (`item_rank`); replacement-only items keep their order.
+
+### Migration 14 (approved for development 2026-11-25; separate draft PR, not applied)
+
+Every Mileage Update should count a reading recorded after the check
+schedule's starting point, even on the same day. Migration 13's board compares
+a starting point by date only (it has no time), so a reading entered the same
+day as "Start tracking now" (or a same-day known starting point) does not make
+the check due until the next day's reading. There is no reliable app-only fix:
+the board view decides the status, and moving the date would misstate the
+starting point.
+
+Proposed change (additive):
+- `maintenance_plans.inspect_baseline_at timestamptz`: when the check's
+  starting point was last set. Set by a trigger whenever the starting point
+  (date, miles, hours or kind) is set or changed; cleared when it is removed.
+  Existing rows stay empty and behave exactly as today.
+- `maintenance_board` re-created with the same columns; the only change is
+  that the check starting point uses `inspect_baseline_at` as its time, so a
+  mileage reading created after it counts (and a same-day starting point set
+  after a check counts as the newer one).
+- Rollback, pgTAP tests, a rollback test and generated types as usual; applied
+  with the five-step SQL Editor process before the app relies on it.
+- Approved safeguards (each tested in `020_inspection_baseline_time.test.sql`):
+  a mileage reading recorded after the starting point counts, even the same
+  day; readings recorded before it don't; hours-only updates don't; unrelated
+  edits and re-saves keep the time; existing starting points and history are
+  unchanged; completing an inspection resets the requirement. Limited to this
+  functionality. PR 2 doesn't depend on it.

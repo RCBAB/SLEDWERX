@@ -25,6 +25,12 @@ export type ServiceActionState = {
   ok?: boolean;
   entryId?: string;
   savedAt?: number;
+  /**
+   * The record was saved but a check result correction wasn't (Decision G).
+   * Retrying runs only the correction (retryCorrections): the record isn't
+   * edited again, so nothing is saved or logged twice.
+   */
+  correctionPending?: boolean;
 };
 
 const FIELDS = [
@@ -176,6 +182,55 @@ export async function updateService(_prev: ServiceActionState, formData: FormDat
     const message = sledErrorMessage(error, "service record");
     return { error: message, fieldErrors: fieldFor(message), values: raw };
   }
+
+  const failed = await applyCorrections(entryId, input.tasks);
+  if (failed) return { error: correctionFailed(failed), correctionPending: true, values: raw };
+  return { ok: true, entryId, savedAt: Date.now() };
+}
+
+// ---------------------------------------------------------------------------
+// Correcting a check's outcome (Decision G)
+// ---------------------------------------------------------------------------
+
+/**
+ * Corrects check outcomes on one record: only items that already are checks,
+ * only between Good and Needs Replacement, and only where the outcome differs.
+ * It is an ordinary update of each item (the record's permissions, guards and
+ * audit log apply), so the board recalculates Needs Replacement from the
+ * corrected check. Running it again changes nothing and logs nothing: an item
+ * already corrected is not updated. Returns an error message, or null.
+ */
+async function applyCorrections(entryId: string, tasks: ServiceTaskInput[]): Promise<string | null> {
+  const supabase = await createClient();
+  for (const outcome of ["good", "needs_replacement"] as const) {
+    const ids = tasks.flatMap((t) => (t.id && t.outcome === outcome ? [t.id] : []));
+    if (!ids.length) continue;
+    const { error } = await supabase
+      .from("maintenance_entry_tasks")
+      .update({ outcome })
+      .eq("entry_id", entryId)
+      .in("id", ids)
+      .is("deleted_at", null)
+      .not("outcome", "is", null)
+      .neq("outcome", outcome);
+    if (error) return sledErrorMessage(error, "service record");
+  }
+  return null;
+}
+
+const correctionFailed = (message: string) =>
+  `Your other changes were saved, but the check result could not be changed (${message.replace(/\.$/, "")}). Select “Retry check result” to try again. Only the check result is saved.`;
+
+export async function retryCorrections(_prev: ServiceActionState, formData: FormData): Promise<ServiceActionState> {
+  const sledId = idFrom(formData, "sledId");
+  const entryId = idFrom(formData, "entryId");
+  await signedInUser(sledId ? `/garage/${sledId}` : "/garage");
+  if (!sledId || !entryId) return { error: "Service record not found." };
+  const raw = formValues(formData, FIELDS);
+  const parsed = updateServiceSchema.safeParse(raw);
+  if (!parsed.success) return { fieldErrors: fieldErrorsOf(parsed.error), values: raw, correctionPending: true };
+  const failed = await applyCorrections(entryId, parsed.data.tasks);
+  if (failed) return { error: correctionFailed(failed), correctionPending: true, values: raw };
   return { ok: true, entryId, savedAt: Date.now() };
 }
 

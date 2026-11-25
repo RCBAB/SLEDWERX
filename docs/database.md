@@ -806,8 +806,8 @@ Tests: `017_suspension_turns.test.sql`; rollback
 
 ## Maintenance inspection & replacement tracking (Migration 13)
 
-`20261127090000_maintenance_inspections.sql`, **not applied to production**
-(needs approval). Additive; every existing schedule keeps tracking
+`20261127090000_maintenance_inspections.sql`, **applied to production**
+(PR #24). Additive; every existing schedule keeps tracking
 replacement only and is calculated exactly as before. Plan and decisions:
 [development-plan.md](development-plan.md#2-maintenance-inspection--replacement-tracking).
 

@@ -6,11 +6,11 @@ designed and its open decisions settled before any implementation starts.
 | Order | Feature | Status |
 |---|---|---|
 | 1 | [Suspension Measurement / Turns](#1-suspension-measurement--turns) | Complete: both PRs merged, production testing passed |
-| 2 | [Maintenance Inspection & Replacement Tracking](#2-maintenance-inspection--replacement-tracking) | PR 1 (Migration 13) merged and live; PR 2 (interface) in review |
+| 2 | [Maintenance Inspection & Replacement Tracking](#2-maintenance-inspection--replacement-tracking) | PR 1 (Migration 13) and PR 2 (interface) merged and live; production testing passed. Migration 14 in the production process |
 
-Production context (as of 2026-11-24):
+Production context (as of 2026-11-25):
 - Measurement photo uploads are live (`SUSPENSION_PHOTO_UPLOADS=on`,
-  Production only). Migrations 1–11 are applied.
+  Production only). Migrations 1–13 are applied; Migration 14 is not.
 - The Migration 8 cleanup runs report-only. Deletion and retention are off and
   are a separate decision; they are not a prerequisite for anything below.
 
@@ -244,6 +244,16 @@ PR 2 interface decisions (approved 2026-11-25):
 - Service records have no receipts or photos today; requirement 12 keeps the
   existing documentation unchanged, so none are added.
 
+### Status
+
+- **PR 1** (Migration 13): applied, merged (#24) and tested in production.
+- **PR 2** (interface): merged (#25, `bcc54bb`) and deployed to production
+  2026-11-25. Production testing: 10 of 10 tests passed; the manual Viewer
+  permissions test was skipped. Test records cleaned up afterwards.
+- **Migration 14** (#26): approved for development; in the five-step
+  production process (step 1, the read-only preflight, prepared). Not
+  applied or merged.
+
 ### PR 2 implementation notes
 
 - No migration. Uses Migration 13's board columns and
@@ -272,7 +282,7 @@ PR 2 interface decisions (approved 2026-11-25):
 - Board order: Needs Replacement first, then the more urgent schedule
   (`item_rank`); replacement-only items keep their order.
 
-### Migration 14 (approved for development 2026-11-25; separate draft PR, not applied)
+### Migration 14 (approved for development 2026-11-25; PR #26, not applied)
 
 Every Mileage Update should count a reading recorded after the check
 schedule's starting point, even on the same day. Migration 13's board compares

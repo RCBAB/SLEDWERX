@@ -132,6 +132,7 @@ jobs:
           supabase/tests/database/016_measurement_photo_cleanup.test.sql
           supabase/tests/database/017_suspension_turns.test.sql
           supabase/tests/database/018_maintenance_inspections.test.sql
+          supabase/tests/database/019_inspection_corrections.test.sql
       - name: Migration 13 rollback test (local stack)
         run: scripts/test-migration-13-rollback.sh
         env:

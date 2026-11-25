@@ -272,7 +272,7 @@ PR 2 interface decisions (approved 2026-11-25):
 - Board order: Needs Replacement first, then the more urgent schedule
   (`item_rank`); replacement-only items keep their order.
 
-### Proposed Migration 14 (not implemented; awaiting approval)
+### Migration 14 (approved for development 2026-11-25; separate draft PR, not applied)
 
 Every Mileage Update should count a reading recorded after the check
 schedule's starting point, even on the same day. Migration 13's board compares
@@ -293,3 +293,9 @@ Proposed change (additive):
   after a check counts as the newer one).
 - Rollback, pgTAP tests, a rollback test and generated types as usual; applied
   with the five-step SQL Editor process before the app relies on it.
+- Approved safeguards (each tested in `020_inspection_baseline_time.test.sql`):
+  a mileage reading recorded after the starting point counts, even the same
+  day; readings recorded before it don't; hours-only updates don't; unrelated
+  edits and re-saves keep the time; existing starting points and history are
+  unchanged; completing an inspection resets the requirement. Limited to this
+  functionality. PR 2 doesn't depend on it.

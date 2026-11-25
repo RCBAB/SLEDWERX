@@ -34,6 +34,8 @@ export type SledActionState = {
   ok?: boolean;
   /** Set on success, so forms can reset themselves. */
   savedAt?: number;
+  /** After a mileage update: inspections now due (Quick Check is offered). */
+  inspectionsDue?: number;
 };
 
 async function signedInUser(next: string) {
@@ -237,8 +239,16 @@ export async function updateMeters(_prev: SledActionState, formData: FormData): 
     return { error: message, fieldErrors: readingFieldErrors(message), values: raw };
   }
 
+  // Requirement 9: inspections due now (e.g. Every Mileage Update), so the
+  // dialog can offer Quick Check. Not knowing (an error) just skips the offer.
+  const { count } = await supabase
+    .from("maintenance_board")
+    .select("plan_id", { count: "exact", head: true })
+    .eq("sled_id", sledId)
+    .in("inspect_status", ["overdue", "due", "initial_check"]);
+
   refresh();
-  return { ok: true, message: "Mileage and hours updated.", savedAt: Date.now() };
+  return { ok: true, message: "Mileage and hours updated.", savedAt: Date.now(), inspectionsDue: count ?? 0 };
 }
 
 // ---------------------------------------------------------------------------

@@ -135,6 +135,7 @@ async function SledDashboard({ params, searchParams }: Pick<PageProps<"/garage/[
                     ? { value: sled.meters.engineHours.value, readOn: sled.meters.engineHours.readOn }
                     : null,
                 }}
+                quickCheck={can.canLogService ? { rows: board, readings: rangeReadings, current: currentMeters } : undefined}
               />
             ) : null}
             {can.canEdit ? (

@@ -1,20 +1,24 @@
 "use client";
 
-import { Check, CheckSquare, ListChecks, Plus, Settings2, Square } from "lucide-react";
+import { Check, CheckSquare, ClipboardList, ListChecks, Plus, Settings2, Square } from "lucide-react";
 import { useActionState, useLayoutEffect, useState } from "react";
 
 import { addToBoard, removeFromBoard, saveSchedule, type BoardActionState } from "@/app/garage/board-actions";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/components/ui/cn";
-import { CheckboxField, Field, SelectField } from "@/components/ui/field";
+import { Field, SelectField } from "@/components/ui/field";
 import { SubmitButton } from "@/components/ui/submit-button";
-import { STATUS_LABEL, STATUS_TONE, daysToInterval, lastDoneLine, scheduleSummary, statusLine } from "@/lib/board/describe";
+import { STATUS_LABEL, STATUS_TONE, lastDoneLine, scheduleSummary, statusLine } from "@/lib/board/describe";
+import { checksDue, itemState, itemTone, quickCheckItems, tracksInspection, type CheckItem } from "@/lib/board/tracking";
 import type { BoardRow } from "@/lib/board/types";
-import { useLocalToday, useTimeZone } from "@/lib/sleds/use-local-today";
+import { useTimeZone } from "@/lib/sleds/use-local-today";
 
+import { CheckForm } from "./check-form";
 import { CompleteForm, PackageForm, TONE_BAR, TONE_TEXT, type CompletionContext, type TaskRef } from "./complete-form";
+import { ScheduleFields } from "./schedule-fields";
 import { Sheet } from "./sheet";
+import { TrackingButtons, TrackingLines } from "./tracking-card";
 import { useRefreshOnReturn } from "./use-refresh-on-return";
 
 type Props = CompletionContext & {
@@ -24,7 +28,8 @@ type Props = CompletionContext & {
 };
 
 type OpenSheet =
-  | { kind: "done"; tasks: TaskRef[]; title?: string; choose?: boolean }
+  | { kind: "done"; tasks: TaskRef[]; title?: string; choose?: boolean; replaced?: boolean }
+  | { kind: "check"; items: CheckItem[]; single?: string }
   | { kind: "schedule"; row: BoardRow }
   | { kind: "add" }
   | { kind: "package" }
@@ -49,6 +54,7 @@ export function MaintenanceBoard(props: Props) {
   const toggle = (planId: string) =>
     setSelected((ids) => (ids.includes(planId) ? ids.filter((i) => i !== planId) : [...ids, planId]));
   const selectedRows = rows.filter((r) => selected.includes(r.planId));
+  const due = checksDue(rows);
 
   return (
     <section className="mt-8" aria-labelledby="board-heading" data-testid="maintenance-board">
@@ -57,6 +63,12 @@ export function MaintenanceBoard(props: Props) {
           Maintenance board
         </h2>
         <div className="flex flex-wrap gap-2">
+          {canComplete && due && !selecting ? (
+            <Button type="button" onClick={() => open({ kind: "check", items: quickCheckItems(rows) })}>
+              <ClipboardList aria-hidden className="size-4" />
+              Quick Check ({due})
+            </Button>
+          ) : null}
           {canComplete && rows.length ? (
             <Button
               type="button"
@@ -87,21 +99,24 @@ export function MaintenanceBoard(props: Props) {
       {rows.length ? (
         <ul className="mt-4 space-y-2" data-testid="board-rows">
           {rows.map((row) => {
-            const tone = STATUS_TONE[row.status];
+            const tracked = tracksInspection(row);
+            const tone = tracked ? itemTone(row) : STATUS_TONE[row.status];
             const isSelected = selected.includes(row.planId);
             return (
               <li
                 key={row.planId}
                 data-testid="board-row"
-                data-status={row.status}
+                data-status={tracked ? itemState(row) : row.status}
+                data-tracks={row.tracking?.tracks ?? "replacement"}
                 className={cn(
                   "flex items-stretch overflow-hidden rounded-2xl border bg-surface/70",
                   isSelected ? "border-accent" : "border-white/10",
                 )}
               >
                 <span aria-hidden className={cn("w-1.5 shrink-0", TONE_BAR[tone])} />
-                <div className="flex min-w-0 flex-1 items-center gap-3 p-3 sm:p-4">
-                  {selecting ? (
+                <div className={cn("flex min-w-0 flex-1 items-center gap-3 p-3 sm:p-4", tracked && "flex-wrap sm:flex-nowrap")}>
+                  {/* Select / Done (n) marks replacement-only items done; checks use Quick Check. */}
+                  {selecting && !tracked ? (
                     <button
                       type="button"
                       onClick={() => toggle(row.planId)}
@@ -111,22 +126,30 @@ export function MaintenanceBoard(props: Props) {
                     >
                       {isSelected ? <CheckSquare aria-hidden className="size-6 text-accent" /> : <Square aria-hidden className="size-6" />}
                     </button>
+                  ) : selecting ? (
+                    <span aria-hidden className="w-8 shrink-0" />
                   ) : null}
                   <div className="min-w-0 flex-1">
                     <p className="flex flex-wrap items-baseline gap-x-2">
                       <span className="break-words font-semibold">{row.taskName}</span>
-                      <span className="sr-only">{STATUS_LABEL[row.status]}:</span>
+                      {tracked ? null : <span className="sr-only">{STATUS_LABEL[row.status]}:</span>}
                     </p>
-                    <p className={cn("text-sm font-semibold", TONE_TEXT[tone])} data-testid="board-status">
-                      {statusLine(row)}
-                    </p>
-                    <p className="text-xs text-muted" data-testid="board-last-done">
-                      {lastDoneLine(row)}
-                    </p>
-                    <p className="text-xs text-muted">{scheduleSummary(row)}</p>
+                    {tracked ? (
+                      <TrackingLines row={row} showSchedule />
+                    ) : (
+                      <>
+                        <p className={cn("text-sm font-semibold", TONE_TEXT[tone])} data-testid="board-status">
+                          {statusLine(row)}
+                        </p>
+                        <p className="text-xs text-muted" data-testid="board-last-done">
+                          {lastDoneLine(row)}
+                        </p>
+                        <p className="text-xs text-muted">{scheduleSummary(row)}</p>
+                      </>
+                    )}
                   </div>
                   {!selecting ? (
-                    <div className="flex shrink-0 items-center gap-1">
+                    <div className={cn("flex shrink-0 items-center gap-1", tracked && "w-full sm:w-auto")}>
                       {canManage ? (
                         <button
                           type="button"
@@ -137,7 +160,16 @@ export function MaintenanceBoard(props: Props) {
                           <Settings2 aria-hidden className="size-5" />
                         </button>
                       ) : null}
-                      {canComplete ? (
+                      {canComplete && tracked ? (
+                        <TrackingButtons
+                          row={row}
+                          className="flex-1 sm:flex-initial"
+                          onChecked={() =>
+                            open({ kind: "check", single: row.taskName, items: [{ taskId: row.taskId, name: row.taskName, due: true, status: row.tracking.inspectStatus ?? "good" }] })
+                          }
+                          onReplaced={() => open({ kind: "done", replaced: true, tasks: [{ taskId: row.taskId, name: row.taskName }] })}
+                        />
+                      ) : canComplete ? (
                         <Button
                           type="button"
                           className="h-11 px-4"
@@ -192,7 +224,11 @@ export function MaintenanceBoard(props: Props) {
         open={sheet?.kind === "done"}
         onClose={close}
         title={sheet?.kind === "done" && sheet.tasks.length === 1 ? sheet.tasks[0].name : "Mark done"}
-        description="Saves a service record and updates the board."
+        description={
+          sheet?.kind === "done" && sheet.replaced
+            ? "Replaced: saves a service record and resets both schedules."
+            : "Saves a service record and updates the board."
+        }
       >
         {sheet?.kind === "done" ? (
           <CompleteForm
@@ -209,12 +245,35 @@ export function MaintenanceBoard(props: Props) {
         ) : null}
       </Sheet>
 
+      <Sheet
+        open={sheet?.kind === "check"}
+        onClose={close}
+        title={sheet?.kind === "check" && sheet.single ? sheet.single : "Quick Check"}
+        description={
+          sheet?.kind === "check" && sheet.single
+            ? "Checked: saves an inspection record and resets the check schedule."
+            : "Saves one inspection record for everything you check."
+        }
+      >
+        {sheet?.kind === "check" ? (
+          <CheckForm
+            key={session}
+            sledId={props.sledId}
+            readings={props.readings}
+            current={props.current}
+            items={sheet.items}
+            single={Boolean(sheet.single)}
+            onDone={close}
+          />
+        ) : null}
+      </Sheet>
+
       <Sheet open={sheet?.kind === "package"} onClose={close} title="Complete package" description="Tick what you did.">
         {sheet?.kind === "package" ? <PackageForm key={session} {...props} onDone={close} /> : null}
       </Sheet>
 
       <Sheet open={sheet?.kind === "schedule"} onClose={close} title={sheet?.kind === "schedule" ? sheet.row.taskName : "Schedule"}>
-        {sheet?.kind === "schedule" ? <ScheduleForm key={session} sledId={props.sledId} row={sheet.row} onDone={close} /> : null}
+        {sheet?.kind === "schedule" ? <ScheduleForm key={session} sledId={props.sledId} row={sheet.row} current={props.current} onDone={close} /> : null}
       </Sheet>
 
       <Sheet open={sheet?.kind === "add"} onClose={close} title="Add to board">
@@ -224,64 +283,7 @@ export function MaintenanceBoard(props: Props) {
   );
 }
 
-/** Schedule fields shared by Add to board and Schedule. */
-function ScheduleFields({ row, state }: { row?: BoardRow; state: BoardActionState }) {
-  const errors = state.fieldErrors ?? {};
-  const v = state.values;
-  const every = row?.intervalDays != null ? daysToInterval(row.intervalDays) : null;
-  const [seasonal, setSeasonal] = useState(v ? v.seasonal === "on" : row?.seasonMonth != null);
-  const value = (key: string, fallback: number | string | null | undefined) => (v ? (v[key] ?? "") : fallback == null ? "" : String(fallback));
-  const today = useLocalToday();
-
-  return (
-    <div className="space-y-4">
-      <p className="text-sm text-muted">Fill in any you want. Whichever comes first is when it&apos;s due. Leave all empty to keep it on the board without a schedule.</p>
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="Every … miles" name="intervalMi" inputMode="decimal" defaultValue={value("intervalMi", row?.intervalMi)} error={errors.intervalMi?.[0]} />
-        <Field label="Every … engine hours" name="intervalHours" inputMode="decimal" defaultValue={value("intervalHours", row?.intervalHours)} error={errors.intervalHours?.[0]} />
-        <Field label="Every …" name="intervalEvery" inputMode="numeric" defaultValue={value("intervalEvery", every?.every)} error={errors.intervalEvery?.[0]} />
-        <SelectField label="Days, weeks or months" name="intervalUnit" defaultValue={value("intervalUnit", every?.unit ?? "months")}>
-          <option value="days">Days</option>
-          <option value="weeks">Weeks</option>
-          <option value="months">Months</option>
-        </SelectField>
-      </div>
-      <CheckboxField
-        label="Once a season"
-        name="seasonal"
-        checked={seasonal}
-        onChange={(event) => setSeasonal(event.target.checked)}
-        hint="Seasons run July to June. Due by a date each season, like a preseason check by Nov 1."
-      />
-      {seasonal ? (
-        <div className="grid grid-cols-2 gap-3">
-          <SelectField label="Due by month" name="seasonMonth" defaultValue={value("seasonMonth", row?.seasonMonth ?? 11)}>
-            {["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"].map(
-              (month, index) => (
-                <option key={month} value={index + 1}>
-                  {month}
-                </option>
-              ),
-            )}
-          </SelectField>
-          <Field label="Day" name="seasonDay" inputMode="numeric" defaultValue={value("seasonDay", row?.seasonDay ?? 1)} error={errors.seasonDay?.[0]} />
-        </div>
-      ) : null}
-      <details className="rounded-xl border border-white/10 p-3 text-sm" open={Boolean(row?.baselineOn || row?.baselineMi || errors.baselineOn)}>
-        <summary className="cursor-pointer font-medium">Done before SledWerx?</summary>
-        <p className="mt-2 text-muted">If you did it before you started using SledWerx, add when, so the schedule can count from there.</p>
-        <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
-          <Field label="Date" name="baselineOn" type="date" max={today || undefined} defaultValue={value("baselineOn", row?.baselineOn)} error={errors.baselineOn?.[0]} className="col-span-2 sm:col-span-1" />
-          <Field label="Miles then" name="baselineMi" inputMode="decimal" defaultValue={value("baselineMi", row?.baselineMi)} error={errors.baselineMi?.[0]} />
-          <Field label="Hours then" name="baselineHours" inputMode="decimal" defaultValue={value("baselineHours", row?.baselineHours)} error={errors.baselineHours?.[0]} />
-        </div>
-      </details>
-      {row ? <CheckboxField label="Paused" name="paused" defaultChecked={v ? v.paused === "on" : row.paused} hint="Kept on the board, but never shown as due." /> : null}
-    </div>
-  );
-}
-
-function ScheduleForm({ sledId, row, onDone }: { sledId: string; row: BoardRow; onDone: () => void }) {
+function ScheduleForm({ sledId, row, current, onDone }: { sledId: string; row: BoardRow; current: CompletionContext["current"]; onDone: () => void }) {
   const timeZone = useTimeZone();
   const [state, action] = useActionState<BoardActionState, FormData>(async (prev, formData) => {
     const result = await saveSchedule(prev, formData);
@@ -302,7 +304,7 @@ function ScheduleForm({ sledId, row, onDone }: { sledId: string; row: BoardRow; 
         <input type="hidden" name="version" value={row.version} />
         <input type="hidden" name="timeZone" value={timeZone} />
         {state.error ? <Alert tone="error">{state.error}</Alert> : null}
-        <ScheduleFields row={row} state={state} />
+        <ScheduleFields row={row} state={state} current={current} />
         <SubmitButton pendingText="Saving…">Save schedule</SubmitButton>
       </form>
       <form
@@ -323,7 +325,7 @@ function ScheduleForm({ sledId, row, onDone }: { sledId: string; row: BoardRow; 
   );
 }
 
-function AddForm({ sledId, rows, taskOptions, onDone }: Props & { onDone: () => void }) {
+function AddForm({ sledId, rows, taskOptions, current, onDone }: Props & { onDone: () => void }) {
   const timeZone = useTimeZone();
   const onBoard = new Set(rows.map((r) => r.taskId));
   const available = taskOptions.filter((o) => !onBoard.has(o.id));
@@ -358,7 +360,7 @@ function AddForm({ sledId, rows, taskOptions, onDone }: Props & { onDone: () => 
         defaultValue={state.values?.newTaskName ?? ""}
         error={errors.newTaskName?.[0] ?? (available.length ? undefined : errors.taskId?.[0])}
       />
-      <ScheduleFields state={state} />
+      <ScheduleFields state={state} current={current} />
       <SubmitButton pendingText="Adding…">Add to board</SubmitButton>
     </form>
   );

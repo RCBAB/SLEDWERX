@@ -33,6 +33,8 @@ export const taskItemSchema = z
     id: uuid.optional(),
     taskId: uuid.optional(),
     name: z.string().trim().max(120, { error: "Task names must be 120 characters or fewer." }).default(""),
+    // A check's outcome (Inspection records, Migration 13): corrected on edit.
+    outcome: z.enum(["good", "needs_replacement"]).optional(),
   })
   .refine((t) => t.taskId || t.name.length > 0, { error: "Give each task a name.", path: ["name"] });
 

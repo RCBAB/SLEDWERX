@@ -176,6 +176,29 @@ export async function updateService(_prev: ServiceActionState, formData: FormDat
     const message = sledErrorMessage(error, "service record");
     return { error: message, fieldErrors: fieldFor(message), values: raw };
   }
+
+  // Decision G: correct a check's outcome. Only items that already are checks
+  // can change, and only between Good and Needs Replacement. It is an ordinary
+  // update of the item (the record's permissions, guards and audit log apply),
+  // so the board recalculates Needs Replacement from the corrected check.
+  for (const outcome of ["good", "needs_replacement"] as const) {
+    const ids = input.tasks.flatMap((t) => (t.id && t.outcome === outcome ? [t.id] : []));
+    if (!ids.length) continue;
+    const { error: outcomeError } = await supabase
+      .from("maintenance_entry_tasks")
+      .update({ outcome })
+      .eq("entry_id", entryId)
+      .in("id", ids)
+      .is("deleted_at", null)
+      .not("outcome", "is", null)
+      .neq("outcome", outcome);
+    if (outcomeError) {
+      return {
+        error: `The record was saved, but a check result couldn't be changed: ${sledErrorMessage(outcomeError, "service record")} Reload and try again.`,
+        values: raw,
+      };
+    }
+  }
   return { ok: true, entryId, savedAt: Date.now() };
 }
 

@@ -6,7 +6,7 @@ designed and its open decisions settled before any implementation starts.
 | Order | Feature | Status |
 |---|---|---|
 | 1 | [Suspension Measurement / Turns](#1-suspension-measurement--turns) | Complete: both PRs merged, production testing passed |
-| 2 | [Maintenance Inspection & Replacement Tracking](#2-maintenance-inspection--replacement-tracking) | Plan approved; PR 1 (Migration 13) in progress |
+| 2 | [Maintenance Inspection & Replacement Tracking](#2-maintenance-inspection--replacement-tracking) | PR 1 (Migration 13) merged and live; PR 2 (interface) in review |
 
 Production context (as of 2026-11-24):
 - Measurement photo uploads are live (`SUSPENSION_PHOTO_UPLOADS=on`,
@@ -204,6 +204,14 @@ unnecessary complexity, reuse what exists.
 | C | **Every Mileage Update** is a scheduling option (due once a reading newer than the last check exists). A mileage update is not a ride: **Every Logged Ride** is added separately once a Ride Log exists. |
 | D | Converting an item to inspection only: its earlier completions count as checks with the outcome not recorded. No history is lost. |
 
+PR 2 interface decisions (approved 2026-11-25):
+
+| # | Decision |
+|---|---|
+| E | Replacement-only items keep their **Done** button, unchanged (many are services, not replacements, such as an oil change). Items that track inspections show **Checked** and **Replaced**. |
+| F | Quick Check lists overdue, due and initial-check inspections, included by default, plus inspections **due soon**, shown but set to Skip. |
+| G | A check's outcome can be corrected when editing its Inspection service record (Good / Needs Replacement for each checked item). A correction changes that check itself, so Needs Replacement and the board status are recalculated as if it had been recorded correctly. This is different from recording a later Good check, which does not clear Needs Replacement. The edit goes through the existing permissions and is kept in the audit log and the record's "Edited" date. No migration. |
+
 ### Implementation plan (approved)
 
 - **Migration 13** (additive; existing schedules and history behave exactly as
@@ -235,3 +243,20 @@ unnecessary complexity, reuse what exists.
   Check. Replaced keeps the existing Mark Done / service record form.
 - Service records have no receipts or photos today; requirement 12 keeps the
   existing documentation unchanged, so none are added.
+
+### PR 2 implementation notes
+
+- No migration. Uses Migration 13's board columns and
+  `save_maintenance_inspection`; a correction (Decision G) is an ordinary
+  update of the check's `outcome` after `update_maintenance_entry`, under the
+  record's existing permissions, guards and audit log
+  (`supabase/tests/database/019_inspection_corrections.test.sql`).
+- Replacement-only items are unchanged: same card lines, **Done**, Select /
+  Done (n), and the "Done before SledWerx?" starting point. The three-way
+  starting point (Known / Start tracking now / Unknown) is shown for items that
+  track inspections (both schedules of a Both item).
+- Board order: Needs Replacement first, then the more urgent schedule
+  (`item_rank`); replacement-only items keep their order.
+- A "Start tracking now" starting point has a date but no time, so a mileage
+  update on that same day doesn't make an Every Mileage Update check due; the
+  next day's does (Migration 13 view behaviour, unchanged).

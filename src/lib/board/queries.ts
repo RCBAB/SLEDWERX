@@ -12,7 +12,7 @@ const COLUMNS =
 
 /** Migration 13: both schedules of each item. */
 const TRACKING_COLUMNS =
-  "tracks, replace_as_needed, season_kind, replace_baseline_kind, inspect_interval_mi, inspect_interval_hours, inspect_interval_days, inspect_season_month, inspect_season_day, inspect_season_kind, inspect_each_reading, inspect_baseline_on, inspect_baseline_mi, inspect_baseline_hours, inspect_baseline_kind, replace_status, last_checked_source, last_checked_on, last_checked_mi, last_check_outcome, needs_replacement, inspect_due_on, inspect_due_mi, inspect_remaining_mi, inspect_remaining_days, inspect_due_on_reading, inspect_status, item_rank, component_mi, component_since";
+  "tracks, replace_as_needed, season_kind, replace_baseline_kind, inspect_interval_mi, inspect_interval_hours, inspect_interval_days, inspect_season_month, inspect_season_day, inspect_season_kind, inspect_each_reading, inspect_baseline_on, inspect_baseline_mi, inspect_baseline_hours, inspect_baseline_kind, replace_status, last_checked_source, last_checked_on, last_checked_mi, last_checked_hours, last_check_outcome, needs_replacement, inspect_due_on, inspect_due_mi, inspect_remaining_mi, inspect_remaining_hours, inspect_remaining_days, inspect_due_on_reading, inspect_status, item_rank, component_mi, component_since";
 
 type DbError = { code?: string } | null;
 /** Unknown column: the database doesn't have Migration 13 yet. */
@@ -35,8 +35,16 @@ async function boardRows(sledIds: string[]) {
   let { data, error } = await load(`${COLUMNS}, ${TRACKING_COLUMNS}`);
   if (schemaMissing(error)) ({ data, error } = await load(COLUMNS));
   if (error) throw new Error("Could not load the maintenance board.");
-  return data ?? [];
+  // Migration 13: Needs Replacement first, then the more urgent of the two
+  // schedules (item_rank). A stable sort keeps the order above within a rank;
+  // for replacement-only items item_rank is the status rank, so nothing moves.
+  return (data ?? [])
+    .map((r, i) => ({ r, i }))
+    .sort((a, b) => rank(a.r) - rank(b.r) || a.i - b.i)
+    .map(({ r }) => r);
 }
+
+const rank = (r: ViewRow) => r.item_rank ?? r.status_rank ?? 3;
 
 type ViewRow = Database["public"]["Views"]["maintenance_board"]["Row"];
 
@@ -67,11 +75,13 @@ function toTracking(r: ViewRow): BoardTracking | null {
     lastCheckedSource: (r.last_checked_source as BoardTracking["lastCheckedSource"]) ?? null,
     lastCheckedOn: r.last_checked_on,
     lastCheckedMi: num(r.last_checked_mi),
+    lastCheckedHours: num(r.last_checked_hours),
     lastCheckOutcome: r.last_check_outcome === "good" || r.last_check_outcome === "needs_replacement" ? r.last_check_outcome : null,
     needsReplacement: Boolean(r.needs_replacement),
     inspectDueOn: r.inspect_due_on,
     inspectDueMi: num(r.inspect_due_mi),
     inspectRemainingMi: num(r.inspect_remaining_mi),
+    inspectRemainingHours: num(r.inspect_remaining_hours),
     inspectRemainingDays: r.inspect_remaining_days,
     inspectDueOnReading: Boolean(r.inspect_due_on_reading),
     itemRank: r.item_rank,

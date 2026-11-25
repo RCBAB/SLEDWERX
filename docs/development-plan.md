@@ -6,7 +6,7 @@ designed and its open decisions settled before any implementation starts.
 | Order | Feature | Status |
 |---|---|---|
 | 1 | [Suspension Measurement / Turns](#1-suspension-measurement--turns) | Complete: both PRs merged, production testing passed |
-| 2 | [Maintenance Inspection & Replacement Tracking](#2-maintenance-inspection--replacement-tracking) | Complete: PR 1 (Migration 13), PR 2 (interface) and Migration 14 merged and live; production testing of PR 2 passed |
+| 2 | [Maintenance Inspection & Replacement Tracking](#2-maintenance-inspection--replacement-tracking) | Complete: PR 1 (Migration 13), PR 2 (interface) and Migration 14 merged and live; all production testing passed |
 
 Production context (as of 2026-11-25):
 - Measurement photo uploads are live (`SUSPENSION_PHOTO_UPLOADS=on`,
@@ -253,8 +253,9 @@ PR 2 interface decisions (approved 2026-11-25):
 - **Migration 14** (#26): applied to production with the five-step process
   (preflight 22/22, rollback trial passed, apply with all checks passed,
   independent verification 34/34 with the 12 baseline values unchanged),
-  then merged (`ecd426b`) and deployed 2026-11-25. Live application testing
-  of Migration 14: pending.
+  then merged (`ecd426b`) and deployed 2026-11-25. Production testing: 7 of 7
+  live tests passed; test records cleaned up afterwards.
+- **Feature complete** (2026-11-25).
 
 ### PR 2 implementation notes
 

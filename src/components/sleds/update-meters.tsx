@@ -4,6 +4,7 @@ import { Gauge } from "lucide-react";
 import { useActionState, useLayoutEffect, useState } from "react";
 
 import { updateMeters, type SledActionState } from "@/app/garage/actions";
+import { CheckForm } from "@/components/board/check-form";
 import { Sheet } from "@/components/board/sheet";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -11,16 +12,30 @@ import { cn } from "@/components/ui/cn";
 import { CheckboxField, Field } from "@/components/ui/field";
 import { FormActions } from "@/components/ui/form-actions";
 import { SubmitButton } from "@/components/ui/submit-button";
+import { quickCheckItems } from "@/lib/board/tracking";
+import type { BoardRow } from "@/lib/board/types";
+import type { RangeReading } from "@/lib/service/meter-range";
 import { formatDate, formatHours, formatMiles } from "@/lib/sleds/format";
 import { useLocalToday, useTimeZone } from "@/lib/sleds/use-local-today";
 
 type Meter = { value: number; readOn: string } | null;
 export type CurrentReadings = { odometer: Meter; engineHours: Meter };
 
+/** What Quick Check needs after a mileage update (only for users who can record checks). */
+export type QuickCheckContext = {
+  rows: BoardRow[];
+  readings: RangeReading[];
+  current: { odometer: number | null; engineHours: number | null };
+};
+
+type Step = { kind: "meters" } | { kind: "offer"; due: number } | { kind: "check" };
+
 /**
  * "Update Mileage / Hours": a button and a small dialog, used on the sled
  * page and on the Garage Board (Cards, Compact and Wall Display). It saves an
  * ordinary new reading through updateMeters; earlier readings are kept.
+ * When inspections are then due, it offers Quick Check (requirement 9); Later
+ * closes it and leaves them outstanding.
  */
 export function UpdateMetersButton({
   sledId,
@@ -28,17 +43,26 @@ export function UpdateMetersButton({
   current,
   size = "lg",
   className,
+  big,
+  quickCheck,
 }: {
   sledId: string;
   sledName: string;
   current: CurrentReadings;
   size?: "md" | "lg";
   className?: string;
+  big?: boolean;
+  quickCheck?: QuickCheckContext;
 }) {
   const [open, setOpen] = useState(false);
   const [session, setSession] = useState(0);
+  const [step, setStep] = useState<Step>({ kind: "meters" });
   // Close when the page is hidden (Next.js keeps it mounted), so it isn't open on return.
   useLayoutEffect(() => () => setOpen(false), []);
+  const close = () => setOpen(false);
+  // The board as refreshed by the update (the server re-renders it with the action).
+  const items = quickCheck ? quickCheckItems(quickCheck.rows) : [];
+  const title = step.kind === "offer" ? "Inspections due" : step.kind === "check" ? "Quick Check" : "Update mileage / hours";
   return (
     <>
       <Button
@@ -49,14 +73,49 @@ export function UpdateMetersButton({
         aria-label={`Update mileage / hours for ${sledName}`}
         onClick={() => {
           setSession((n) => n + 1);
+          setStep({ kind: "meters" });
           setOpen(true);
         }}
       >
         <Gauge aria-hidden className="size-4" />
         Update mileage / hours
       </Button>
-      <Sheet open={open} onClose={() => setOpen(false)} title="Update mileage / hours" description={sledName}>
-        {open ? <UpdateMetersForm key={session} sledId={sledId} current={current} onDone={() => setOpen(false)} /> : null}
+      <Sheet open={open} onClose={close} title={title} description={sledName}>
+        {!open ? null : step.kind === "meters" ? (
+          <UpdateMetersForm
+            key={session}
+            sledId={sledId}
+            current={current}
+            onDone={(due) => (quickCheck && due ? setStep({ kind: "offer", due }) : close())}
+          />
+        ) : step.kind === "offer" ? (
+          <div className="space-y-5" data-testid="quick-check-offer">
+            <Alert tone="success">Mileage and hours updated.</Alert>
+            <p className={cn(big ? "text-lg" : "text-base")}>
+              {step.due === 1 ? "1 inspection is due." : `${step.due} inspections are due.`} Quick Check now?
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              <Button type="button" variant="secondary" size="lg" className={cn(big && "h-14")} onClick={close}>
+                Later
+              </Button>
+              <Button type="button" size="lg" className={cn(big && "h-14")} onClick={() => setStep({ kind: "check" })}>
+                Quick Check
+              </Button>
+            </div>
+          </div>
+        ) : quickCheck && items.length ? (
+          <CheckForm
+            key={`check-${session}`}
+            sledId={sledId}
+            readings={quickCheck.readings}
+            current={quickCheck.current}
+            items={items}
+            big={big}
+            onDone={close}
+          />
+        ) : (
+          <p className="text-muted">Nothing is due for a check right now.</p>
+        )}
       </Sheet>
     </>
   );
@@ -66,12 +125,21 @@ function currentLine(meter: Meter, format: (v: number) => string) {
   return meter ? `Current: ${format(meter.value)} (${formatDate(meter.readOn)})` : "Not recorded yet";
 }
 
-export function UpdateMetersForm({ sledId, current, onDone }: { sledId: string; current: CurrentReadings; onDone: () => void }) {
+export function UpdateMetersForm({
+  sledId,
+  current,
+  onDone,
+}: {
+  sledId: string;
+  current: CurrentReadings;
+  /** Called after saving, with the number of inspections now due. */
+  onDone: (inspectionsDue: number) => void;
+}) {
   const today = useLocalToday();
   const timeZone = useTimeZone();
   const [state, action] = useActionState<SledActionState, FormData>(async (prev, formData) => {
     const result = await updateMeters(prev, formData);
-    if (result.ok) onDone();
+    if (result.ok) onDone(result.inspectionsDue ?? 0);
     return result;
   }, {});
   const errors = state.fieldErrors ?? {};

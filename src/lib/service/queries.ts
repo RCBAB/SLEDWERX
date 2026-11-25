@@ -9,7 +9,14 @@ import type { ServiceCategory } from "./constants";
 // Every query runs as the signed-in user, so Row Level Security decides what
 // is visible. Nothing here bypasses it.
 
-export type ServiceTask = { id: string; taskId: string | null; name: string; note: string | null };
+/** outcome: a check's result on an Inspection record (Migration 13); null for done / Replaced items. */
+export type ServiceTask = {
+  id: string;
+  taskId: string | null;
+  name: string;
+  note: string | null;
+  outcome: "good" | "needs_replacement" | null;
+};
 export type ServicePart = {
   id: string;
   name: string;
@@ -69,7 +76,7 @@ async function assemble(entries: EntryRow[]): Promise<ServiceRecord[]> {
   const [tasks, parts, readings, costs] = await Promise.all([
     supabase
       .from("maintenance_entry_tasks")
-      .select("id, entry_id, task_id, task_name, note, position")
+      .select("id, entry_id, task_id, task_name, note, outcome, position")
       .in("entry_id", ids)
       .is("deleted_at", null)
       .order("position", { ascending: true }),
@@ -112,7 +119,13 @@ async function assemble(entries: EntryRow[]): Promise<ServiceRecord[]> {
       version: e.version,
       tasks: (tasks.data ?? [])
         .filter((t) => t.entry_id === e.id)
-        .map((t) => ({ id: t.id, taskId: t.task_id, name: t.task_name, note: t.note })),
+        .map((t) => ({
+          id: t.id,
+          taskId: t.task_id,
+          name: t.task_name,
+          note: t.note,
+          outcome: t.outcome === "good" || t.outcome === "needs_replacement" ? t.outcome : null,
+        })),
       parts: (parts.data ?? [])
         .filter((p) => p.entry_id === e.id)
         .map((p) => ({

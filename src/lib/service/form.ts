@@ -3,7 +3,10 @@
 import { randomUuid } from "@/lib/uuid";
 
 /** A task line as submitted: an existing item (id), a task-list task (taskId) or free text. */
-export type ServiceTaskInput = { id?: string; taskId?: string; name: string };
+export type ServiceTaskInput = { id?: string; taskId?: string; name: string; outcome?: CheckOutcome };
+
+/** A check's result on an Inspection record (Migration 13). */
+export type CheckOutcome = "good" | "needs_replacement";
 
 /** Editable rows in the form. `key` is only for React. */
 export type TaskRow = ServiceTaskInput & { key: string };
@@ -31,7 +34,12 @@ export function tasksPayload(rows: TaskRow[]): string {
   return JSON.stringify(
     rows
       .filter((r) => r.taskId || r.name.trim())
-      .map(({ id, taskId, name }) => ({ ...(id ? { id } : {}), ...(taskId ? { taskId } : {}), name: name.trim() })),
+      .map(({ id, taskId, name, outcome }) => ({
+        ...(id ? { id } : {}),
+        ...(taskId ? { taskId } : {}),
+        name: name.trim(),
+        ...(id && outcome ? { outcome } : {}),
+      })),
   );
 }
 

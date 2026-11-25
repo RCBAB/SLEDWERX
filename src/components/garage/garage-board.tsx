@@ -1,12 +1,14 @@
 "use client";
 
-import { Check, Keyboard, LayoutGrid, OctagonAlert, Maximize, Minimize, Monitor, Package, Plus, Rows3, Settings2, X } from "lucide-react";
+import { Check, ClipboardList, Keyboard, LayoutGrid, OctagonAlert, Maximize, Minimize, Monitor, Package, Plus, Rows3, Settings2, X } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useLayoutEffect, useState, useTransition } from "react";
 
 import { saveGarageLayout, saveWallKeyboard } from "@/app/garage/board/actions";
+import { CheckForm } from "@/components/board/check-form";
 import { CompleteForm, PackageForm, TONE_BAR, TONE_TEXT, type TaskRef } from "@/components/board/complete-form";
 import { Sheet } from "@/components/board/sheet";
+import { TrackingButtons, TrackingChips, TrackingLines } from "@/components/board/tracking-card";
 import { useRefreshOnReturn } from "@/components/board/use-refresh-on-return";
 import { SledPhoto } from "@/components/sleds/sled-photo";
 import { SledIssues } from "@/components/issues/issues";
@@ -16,6 +18,7 @@ import { UpdateMetersButton } from "@/components/sleds/update-meters";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { cn } from "@/components/ui/cn";
 import { STATUS_LABEL, STATUS_TONE, lastDoneLine, lastDoneShort, nextDueLine, nextDueShort, statusLine } from "@/lib/board/describe";
+import { checkLine, checkedLine, checksDue, itemState, itemTone, quickCheckItems, replaceLine, tracksInspection, type CheckItem } from "@/lib/board/tracking";
 import type { BoardRow } from "@/lib/board/types";
 import type { GarageLayout } from "@/lib/garage/layout";
 import { hasCriticalIssue, issueSummary } from "@/lib/issues/types";
@@ -28,7 +31,11 @@ import { ROLE_LABELS } from "@/lib/sleds/permissions";
 import { useWallDisplay, WallClock } from "./wall";
 import { WallKeyboard } from "./wall-keyboard";
 
-type OpenSheet = { kind: "done"; sledId: string; tasks: TaskRef[] } | { kind: "package"; sledId: string } | null;
+type OpenSheet =
+  | { kind: "done"; sledId: string; tasks: TaskRef[]; replaced?: boolean }
+  | { kind: "check"; sledId: string; items: CheckItem[]; single?: string }
+  | { kind: "package"; sledId: string }
+  | null;
 
 const TONE_DOT: Record<SledTone, string> = {
   red: "bg-red-500",
@@ -190,7 +197,11 @@ export function GarageBoard({ data, initialWall }: { data: GarageBoardData; init
         open={sheet?.kind === "done"}
         onClose={close}
         title={sheet?.kind === "done" && sheet.tasks.length === 1 ? sheet.tasks[0].name : "Mark done"}
-        description={sheetSled ? `${sledName(sheetSled.sled)} · Saves a service record and updates the board.` : undefined}
+        description={
+          sheetSled
+            ? `${sledName(sheetSled.sled)} · ${sheet?.kind === "done" && sheet.replaced ? "Replaced: saves a service record and resets both schedules." : "Saves a service record and updates the board."}`
+            : undefined
+        }
       >
         {sheet?.kind === "done" && sheetSled ? (
           <CompleteForm
@@ -201,6 +212,30 @@ export function GarageBoard({ data, initialWall }: { data: GarageBoardData; init
             readings={sheetSled.readings}
             current={currentMeters(sheetSled)}
             tasks={sheet.tasks}
+            onDone={close}
+          />
+        ) : null}
+      </Sheet>
+
+      <Sheet
+        open={sheet?.kind === "check"}
+        onClose={close}
+        title={sheet?.kind === "check" && sheet.single ? sheet.single : "Quick Check"}
+        description={
+          sheetSled
+            ? `${sledName(sheetSled.sled)} · ${sheet?.kind === "check" && sheet.single ? "Checked: saves an inspection record and resets the check schedule." : "Saves one inspection record for everything you check."}`
+            : undefined
+        }
+      >
+        {sheet?.kind === "check" && sheetSled ? (
+          <CheckForm
+            key={session}
+            sledId={sheetSled.sled.id}
+            readings={sheetSled.readings}
+            current={currentMeters(sheetSled)}
+            items={sheet.items}
+            single={Boolean(sheet.single)}
+            big={big}
             onDone={close}
           />
         ) : null}
@@ -295,14 +330,29 @@ function Meters({ entry, big }: { entry: GarageBoardSled; big: boolean }) {
 function SledActions({ entry, packages, big, onOpen }: SledProps) {
   const name = sledName(entry.sled);
   const { meters } = entry.sled;
+  const due = entry.canComplete ? checksDue(entry.rows) : 0;
   return (
     <div className="flex flex-wrap gap-2">
+      {due ? (
+        <Button
+          type="button"
+          size={big ? "lg" : "md"}
+          className={cn(big && "h-14")}
+          aria-label={`Quick Check on ${name}: ${due} due`}
+          onClick={() => onOpen({ kind: "check", sledId: entry.sled.id, items: quickCheckItems(entry.rows) })}
+        >
+          <ClipboardList aria-hidden className="size-4" />
+          Quick Check ({due})
+        </Button>
+      ) : null}
       {entry.canAddReading ? (
         <UpdateMetersButton
           sledId={entry.sled.id}
           sledName={name}
           size={big ? "lg" : "md"}
           className={cn(big && "h-14")}
+          big={big}
+          quickCheck={entry.canComplete ? { rows: entry.rows, readings: entry.readings, current: currentMeters(entry) } : undefined}
           current={{
             odometer: meters.odometer ? { value: meters.odometer.value, readOn: meters.odometer.readOn } : null,
             engineHours: meters.engineHours ? { value: meters.engineHours.value, readOn: meters.engineHours.readOn } : null,
@@ -381,7 +431,35 @@ function EmptyRows({ entry }: { entry: GarageBoardSled }) {
   );
 }
 
-function DoneButton({ entry, row, big, onOpen }: { entry: GarageBoardSled; row: BoardRow; big: boolean; onOpen: SledProps["onOpen"] }) {
+function DoneButton({
+  entry,
+  row,
+  big,
+  onOpen,
+  className,
+}: {
+  entry: GarageBoardSled;
+  row: BoardRow;
+  big: boolean;
+  onOpen: SledProps["onOpen"];
+  /** Checked / Replaced container (items that track inspections). */
+  className?: string;
+}) {
+  if (tracksInspection(row)) {
+    const task = { taskId: row.taskId, name: row.taskName };
+    return (
+      <TrackingButtons
+        row={row}
+        on={` on ${sledName(entry.sled)}`}
+        big={big}
+        className={className}
+        onChecked={() =>
+          onOpen({ kind: "check", sledId: entry.sled.id, single: row.taskName, items: [{ ...task, due: true, status: row.tracking.inspectStatus ?? "good" }] })
+        }
+        onReplaced={() => onOpen({ kind: "done", sledId: entry.sled.id, replaced: true, tasks: [task] })}
+      />
+    );
+  }
   return (
     <Button
       type="button"
@@ -486,32 +564,40 @@ function SledCard(props: SledProps) {
         {rows.length ? (
           <ul className="space-y-2" data-testid="garage-tasks">
             {rows.map((row) => {
-              const tone = STATUS_TONE[row.status];
+              const tracked = tracksInspection(row);
+              const tone = tracked ? itemTone(row) : STATUS_TONE[row.status];
               return (
                 <li
                   key={row.planId}
                   data-testid="garage-task"
-                  data-status={row.status}
+                  data-status={tracked ? itemState(row) : row.status}
+                  data-tracks={row.tracking?.tracks ?? "replacement"}
                   className="flex items-stretch overflow-hidden rounded-xl border border-white/10 bg-background/40"
                 >
                   <span aria-hidden className={cn("w-1.5 shrink-0", TONE_BAR[tone])} />
-                  <div className="flex min-w-0 flex-1 items-center gap-3 p-3">
+                  <div className={cn("flex min-w-0 flex-1 items-center gap-3 p-3", tracked && "flex-wrap")}>
                     <div className="min-w-0 flex-1">
                       <p className={cn("break-words font-semibold", big && "text-lg")}>
                         <span>{row.taskName}</span>
-                        <span className="sr-only">: {STATUS_LABEL[row.status]}</span>
+                        {tracked ? null : <span className="sr-only">: {STATUS_LABEL[row.status]}</span>}
                       </p>
-                      <p className={cn("font-semibold", big ? "text-base" : "text-sm", TONE_TEXT[tone])} data-testid="board-status">
-                        {statusLine(row)}
-                      </p>
-                      <p className={cn("text-muted", big ? "text-sm" : "text-xs")} data-testid="board-last-done">
-                        {lastDoneLine(row)}
-                      </p>
-                      <p className={cn("text-muted", big ? "text-sm" : "text-xs")} data-testid="board-next-due">
-                        {nextDueLine(row, current)}
-                      </p>
+                      {tracked ? (
+                        <TrackingLines row={row} big={big} />
+                      ) : (
+                        <>
+                          <p className={cn("font-semibold", big ? "text-base" : "text-sm", TONE_TEXT[tone])} data-testid="board-status">
+                            {statusLine(row)}
+                          </p>
+                          <p className={cn("text-muted", big ? "text-sm" : "text-xs")} data-testid="board-last-done">
+                            {lastDoneLine(row)}
+                          </p>
+                          <p className={cn("text-muted", big ? "text-sm" : "text-xs")} data-testid="board-next-due">
+                            {nextDueLine(row, current)}
+                          </p>
+                        </>
+                      )}
                     </div>
-                    {entry.canComplete ? <DoneButton entry={entry} row={row} big={big} onOpen={onOpen} /> : null}
+                    {entry.canComplete ? <DoneButton entry={entry} row={row} big={big} onOpen={onOpen} className="w-full" /> : null}
                   </div>
                 </li>
               );
@@ -577,12 +663,14 @@ function SledTable(props: SledProps) {
           </thead>
           <tbody className="block sm:table-row-group">
             {rows.map((row) => {
-              const tone = STATUS_TONE[row.status];
+              const tracked = tracksInspection(row);
+              const tone = tracked ? itemTone(row) : STATUS_TONE[row.status];
               return (
                 <tr
                   key={row.planId}
                   data-testid="garage-task"
-                  data-status={row.status}
+                  data-status={tracked ? itemState(row) : row.status}
+                  data-tracks={row.tracking?.tracks ?? "replacement"}
                   className={cn(
                     "grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 border-l-4 border-t border-t-white/10 px-4 py-3 sm:table-row sm:px-0 sm:py-0",
                     TONE_BORDER[tone],
@@ -590,21 +678,40 @@ function SledTable(props: SledProps) {
                 >
                   <td className="col-start-1 min-w-0 break-words font-semibold sm:py-3 sm:pl-4 sm:pr-3">
                     <span>{row.taskName}</span>
-                    <span className="sr-only">: {STATUS_LABEL[row.status]}</span>
+                    {tracked ? null : <span className="sr-only">: {STATUS_LABEL[row.status]}</span>}
                   </td>
-                  <td className={cn("col-start-1 min-w-0 font-semibold sm:px-3 sm:py-3", TONE_TEXT[tone])} data-testid="board-status">
-                    {statusLine(row)}
-                  </td>
-                  <td className="col-start-1 min-w-0 text-muted sm:px-3 sm:py-3" data-testid="board-last-done">
-                    <span className="sm:hidden">Last: </span>
-                    {lastDoneShort(row)}
-                  </td>
-                  <td className="col-start-1 min-w-0 text-muted sm:px-3 sm:py-3" data-testid="board-next-due">
-                    <span className="sm:hidden">Next: </span>
-                    {nextDueShort(row, current)}
-                  </td>
+                  {tracked ? (
+                    <>
+                      <td className="col-start-1 min-w-0 font-semibold sm:px-3 sm:py-3" data-testid="board-status">
+                        <TrackingChips row={row} big={big} />
+                      </td>
+                      <td className="col-start-1 min-w-0 text-muted sm:px-3 sm:py-3" data-testid="board-last-done">
+                        <span className="sm:hidden">Last: </span>
+                        {checkedLine(row).replace(/^Last checked /, "Checked ")}
+                      </td>
+                      <td className="col-start-1 min-w-0 text-muted sm:px-3 sm:py-3" data-testid="board-next-due">
+                        <span className="sm:hidden">Next: </span>
+                        {checkLine(row)}
+                        {row.tracking.tracks === "both" ? ` · ${replaceLine(row)}` : ""}
+                      </td>
+                    </>
+                  ) : (
+                    <>
+                      <td className={cn("col-start-1 min-w-0 font-semibold sm:px-3 sm:py-3", TONE_TEXT[tone])} data-testid="board-status">
+                        {statusLine(row)}
+                      </td>
+                      <td className="col-start-1 min-w-0 text-muted sm:px-3 sm:py-3" data-testid="board-last-done">
+                        <span className="sm:hidden">Last: </span>
+                        {lastDoneShort(row)}
+                      </td>
+                      <td className="col-start-1 min-w-0 text-muted sm:px-3 sm:py-3" data-testid="board-next-due">
+                        <span className="sm:hidden">Next: </span>
+                        {nextDueShort(row, current)}
+                      </td>
+                    </>
+                  )}
                   <td className="col-start-2 row-span-4 row-start-1 self-center text-right sm:py-2 sm:pl-3 sm:pr-4">
-                    {entry.canComplete ? <DoneButton entry={entry} row={row} big={big} onOpen={onOpen} /> : null}
+                    {entry.canComplete ? <DoneButton entry={entry} row={row} big={big} onOpen={onOpen} className="flex-col sm:flex-row sm:[&>button]:flex-initial" /> : null}
                   </td>
                 </tr>
               );

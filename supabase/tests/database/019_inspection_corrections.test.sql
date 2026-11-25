@@ -9,7 +9,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 set search_path = public, extensions;
 
-select plan(24);
+select plan(27);
 
 insert into auth.users (id, email, email_confirmed_at) values
   ('c1111111-1111-1111-1111-111111111111', 'ic-owner@example.com', now()),
@@ -112,6 +112,19 @@ select ok(exists (
   select 1 from public.audit_log
   where table_name = 'maintenance_entry_tasks' and action = 'insert' and new_data ->> 'entry_id' = pg_temp.v('belt_check')
 ), 'the original check stays in the audit log');
+set local role authenticated;
+
+-- Retrying a correction (after a failure, or twice) changes and logs nothing more.
+select pg_temp.as_user('c2222222-2222-2222-2222-222222222222');
+select is(pg_temp.correct(pg_temp.v('belt_check'), 'good'), 0, 'retrying an applied correction changes nothing');
+select is((select count(*)::int from public.maintenance_entries where sled_id = pg_temp.v('sled')::uuid), 1,
+  'no record is added');
+reset role;
+select is((select count(*)::int from public.audit_log
+           where table_name = 'maintenance_entry_tasks' and action = 'update' and 'outcome' = any (changed_fields)
+             and new_data ->> 'entry_id' = pg_temp.v('belt_check')
+             and old_data ->> 'outcome' = 'needs_replacement' and new_data ->> 'outcome' = 'good'), 1,
+  'and the audit log has the correction once');
 set local role authenticated;
 
 -- ---------------------------------------------------------------------------

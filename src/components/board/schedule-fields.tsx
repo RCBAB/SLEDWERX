@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import type { BoardActionState } from "@/app/garage/board-actions";
+import { Button } from "@/components/ui/button";
 import { CheckboxField, Field, SelectField } from "@/components/ui/field";
 import { daysToInterval } from "@/lib/board/describe";
 import type { BoardRow, SeasonKind, TrackingMode } from "@/lib/board/types";
@@ -246,7 +247,7 @@ export function ScheduleFields({ row, state, current }: { row?: BoardRow; state:
             <ScheduleConditions part={replace} onChange={setReplace} names={REPLACE} errors={errors} kind="replace" />
           )}
           {tracks === "replacement" ? (
-            <DoneBefore start={replaceStart} onChange={setReplaceStart} errors={errors} />
+            <DoneBefore start={replaceStart} onChange={setReplaceStart} errors={errors} current={current} />
           ) : (
             <StartingPoint
               start={replaceStart}
@@ -391,61 +392,105 @@ function ScheduleConditions({
 }
 
 /**
- * A replacement-only item's starting point, exactly as before: "Done before
+ * A replacement-only item's starting point, as before: "Done before
  * SledWerx?" with an optional date, miles and hours (empty: no record yet).
+ * It can also start tracking now: a starting point from today's date and
+ * meters that is never shown or counted as done. A saved starting point is
+ * kept as it is unless the user changes it.
  */
 function DoneBefore({
   start,
   onChange,
   errors,
+  current,
 }: {
   start: Start;
   onChange: (update: (s: Start) => Start) => void;
   errors: Partial<Record<string, string[]>>;
+  current: Meters;
 }) {
   const today = useLocalToday();
   const shown = start.kind === "unknown" ? { on: "", mi: "", hours: "" } : start;
   // Opened once when it has something in it; then the user opens and closes it.
   const [initiallyOpen] = useState(Boolean(shown.on || shown.mi || shown.hours || errors.baselineOn));
+  // What was there before "Start tracking now", so going back restores it.
+  const [previous, setPrevious] = useState<Start | null>(null);
   const set = (change: Partial<Start>) =>
-    onChange((s) => ({
-      ...(s.kind === "unknown" ? { on: "", mi: "", hours: "" } : s),
-      kind: s.kind === "tracking" ? "tracking" : "known",
-      ...change,
-    }));
+    onChange((s) => ({ ...(s.kind === "unknown" ? { on: "", mi: "", hours: "" } : s), kind: "known", ...change }));
+  const at = [start.mi ? formatMiles(Number(start.mi)) : null, start.hours ? formatHours(Number(start.hours)) : null]
+    .filter(Boolean)
+    .join(" · ");
   return (
-    <details className="rounded-xl border border-white/10 p-3 text-sm" open={initiallyOpen}>
+    <details className="rounded-xl border border-white/10 p-3 text-sm" open={initiallyOpen} data-testid="done-before">
       <summary className="cursor-pointer font-medium">Done before SledWerx?</summary>
       <input type="hidden" name="replaceStart" value={start.kind === "tracking" ? "tracking" : "known"} />
-      <p className="mt-2 text-muted">If you did it before you started using SledWerx, add when, so the schedule can count from there.</p>
-      <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
-        <Field
-          label="Date"
-          name="baselineOn"
-          type="date"
-          max={today || undefined}
-          value={shown.on}
-          onChange={(e) => set({ on: e.target.value })}
-          error={errors.baselineOn?.[0]}
-          className="col-span-2 sm:col-span-1"
-        />
-        <Field
-          label="Miles then"
-          name="baselineMi"
-          inputMode="decimal"
-          value={shown.mi}
-          onChange={(e) => set({ mi: e.target.value })}
-          error={errors.baselineMi?.[0]}
-        />
-        <Field
-          label="Hours then"
-          name="baselineHours"
-          inputMode="decimal"
-          value={shown.hours}
-          onChange={(e) => set({ hours: e.target.value })}
-          error={errors.baselineHours?.[0]}
-        />
-      </div>
+      {start.kind === "tracking" ? (
+        <div className="mt-3 space-y-3">
+          <input type="hidden" name="baselineOn" value={start.on || today} />
+          <input type="hidden" name="baselineMi" value={start.mi} />
+          <input type="hidden" name="baselineHours" value={start.hours} />
+          <p className="text-muted" data-testid="tracking-start">
+            Tracking from {!start.on || start.on === today ? "today" : formatDate(start.on)}
+            {at ? ` at ${at}` : ""}. Nothing is recorded as done.
+          </p>
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={() =>
+              onChange(() => (previous && previous.kind !== "tracking" ? previous : { kind: "unknown", on: "", mi: "", hours: "" }))
+            }
+          >
+            Enter a date instead
+          </Button>
+        </div>
+      ) : (
+        <>
+          <p className="mt-2 text-muted">
+            If you did it before you started using SledWerx, add when, so the schedule can count from there.
+          </p>
+          <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <Field
+              label="Date"
+              name="baselineOn"
+              type="date"
+              max={today || undefined}
+              value={shown.on}
+              onChange={(e) => set({ on: e.target.value })}
+              error={errors.baselineOn?.[0]}
+              className="col-span-2 sm:col-span-1"
+            />
+            <Field
+              label="Miles then"
+              name="baselineMi"
+              inputMode="decimal"
+              value={shown.mi}
+              onChange={(e) => set({ mi: e.target.value })}
+              error={errors.baselineMi?.[0]}
+            />
+            <Field
+              label="Hours then"
+              name="baselineHours"
+              inputMode="decimal"
+              value={shown.hours}
+              onChange={(e) => set({ hours: e.target.value })}
+              error={errors.baselineHours?.[0]}
+            />
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => {
+                setPrevious(start);
+                onChange(() => ({ kind: "tracking", on: today, mi: text(current.odometer), hours: text(current.engineHours) }));
+              }}
+            >
+              Start tracking now
+            </Button>
+            <span className="text-muted">Don&apos;t know? Count from today instead. Not recorded as done.</span>
+          </div>
+        </>
+      )}
     </details>
   );
 }

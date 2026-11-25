@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import { sledSummary } from "@/lib/garage/summary";
 
+import { lastDoneLine, lastDoneShort } from "./describe";
+
 import {
   canRecordReplacement,
   checkLine,
@@ -136,7 +138,18 @@ describe("the check schedule's lines", () => {
   it("say what the check counts from, with the outcome", () => {
     expect(checkedLine(row())).toBe("Last checked Nov 3, 2026 · 1,200 mi · Good");
     expect(checkedLine(row({ lastCheckOutcome: "needs_replacement" }))).toBe("Last checked Nov 3, 2026 · 1,200 mi · Needs Replacement");
-    expect(checkedLine(row({ lastCheckedSource: "replacement", lastCheckOutcome: null }))).toBe("Replaced Nov 3, 2026 · 1,200 mi");
+    // Inspection only items use "Last checked" throughout, and say when a replacement satisfied it.
+    expect(checkedLine(row({ lastCheckedSource: "replacement", lastCheckOutcome: null }))).toBe(
+      "Last checked Nov 3, 2026 · 1,200 mi · satisfied by a replacement",
+    );
+    expect(checkedLine(row({ lastCheckedSource: "service", lastCheckOutcome: null }))).toBe(
+      "Last checked Nov 3, 2026 · 1,200 mi · satisfied by a replacement",
+    );
+    const own = { ...tracking.inspect, baselineOn: "2026-11-03", baselineMi: 1200, baselineKind: "known" as const };
+    expect(checkedLine(row({ lastCheckedSource: "baseline", inspect: own }))).toBe("Last checked Nov 3, 2026 · 1,200 mi · before SledWerx");
+    expect(checkedLine(row({ lastCheckedSource: "baseline" }))).toBe(
+      "Last checked Nov 3, 2026 · 1,200 mi · satisfied by a replacement before SledWerx",
+    );
     expect(checkedLine(row({ lastCheckedSource: "tracking", lastCheckedMi: null }))).toBe("Tracking since Nov 3, 2026");
     expect(checkedLine(row({ lastCheckedSource: null }))).toBe("Never checked");
   });
@@ -186,6 +199,20 @@ describe("Needs Replacement and the card's colour", () => {
     expect(itemTone(row({ tracks: "both", inspectStatus: "upcoming", replaceStatus: "good" }))).toBe("yellow");
     expect(itemTone(row({ tracks: "both", inspectStatus: "unscheduled", replaceStatus: "as_needed" }))).toBe("neutral");
     expect(itemState(row({ tracks: "both", inspectStatus: "initial_check", replaceStatus: "upcoming" }))).toBe("check_due");
+  });
+
+  it("shows a replacement-only tracking start as tracking, never as done", () => {
+    const started = {
+      ...replacementOnly("good"),
+      lastDoneSource: "baseline" as const,
+      lastDoneOn: "2026-11-25",
+      lastDoneMi: 3000,
+      tracking: { ...tracking, tracks: "replacement" as const, replaceBaselineKind: "tracking" as const },
+    };
+    expect(lastDoneLine(started)).toBe("Tracking since Nov 25, 2026 · 3,000 mi");
+    expect(lastDoneShort(started)).toBe("Tracking since Nov 25, 2026 · 3,000 mi");
+    const known = { ...started, tracking: { ...started.tracking, replaceBaselineKind: null } };
+    expect(lastDoneLine(known)).toBe("Done before SledWerx Nov 25, 2026 · 3,000 mi");
   });
 
   it("leaves replacement-only items exactly as before", () => {

@@ -4,7 +4,7 @@ import { ArrowDown, ArrowUp, ListPlus, Plus, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useActionState, useRef, useState } from "react";
 
-import { createService, updateService, type ServiceActionState } from "@/app/garage/service-actions";
+import { createService, retryCorrections, updateService, type ServiceActionState } from "@/app/garage/service-actions";
 import { Segmented } from "@/components/board/segmented";
 import { Alert } from "@/components/ui/alert";
 import { Button, ButtonLink } from "@/components/ui/button";
@@ -84,7 +84,13 @@ export function ServiceForm({ sledId, record, taskOptions, packages, readings, c
       idempotencyKey.current ??= randomUuid();
       formData.set("idempotencyKey", idempotencyKey.current);
     }
-    const result = editing ? await updateService(prev, formData) : await createService(prev, formData);
+    // After a failed check-result correction, only the correction is retried
+    // (the record itself was already saved).
+    const result = !editing
+      ? await createService(prev, formData)
+      : prev.correctionPending
+        ? await retryCorrections(prev, formData)
+        : await updateService(prev, formData);
     if (result.ok) {
       router.push(`/garage/${sledId}?service=${editing ? "updated" : "saved"}#service-history`);
     }
@@ -384,7 +390,7 @@ export function ServiceForm({ sledId, record, taskOptions, packages, readings, c
           Cancel
         </ButtonLink>
         <div className="sm:w-56">
-          <SubmitButton pendingText="Saving…">{editing ? "Save changes" : "Save service"}</SubmitButton>
+          <SubmitButton pendingText="Saving…">{state.correctionPending ? "Retry check result" : editing ? "Save changes" : "Save service"}</SubmitButton>
         </div>
       </div>
     </form>

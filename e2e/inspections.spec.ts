@@ -161,7 +161,8 @@ test("converting an item, Checked, Needs Replacement, Replaced, and correcting a
   await expect(replaced).toBeHidden();
   await expect(belt.getByTestId("needs-replacement")).toHaveCount(0);
   // On an inspection only item a replacement counts as the latest check (Decision D).
-  await expect(belt.getByTestId("check-last")).toContainText("Last done");
+  await expect(belt.getByTestId("check-last")).toContainText("Last checked");
+  await expect(belt.getByTestId("check-last")).toContainText("satisfied by a replacement");
   await expect(belt.getByRole("button", { name: "Replaced: Drive belt" })).toHaveCount(0);
 
   // A mistaken Needs Replacement, corrected on the record (Decision G), is recalculated.
@@ -188,6 +189,56 @@ test("converting an item, Checked, Needs Replacement, Replaced, and correcting a
   await expect(page.getByRole("dialog", { name: "Update mileage / hours" })).toBeHidden();
   await expect(page.getByRole("dialog", { name: "Inspections due" })).toHaveCount(0);
   await expect(page.getByTestId("current-odometer")).toHaveText("2,100 mi");
+});
+
+test("replacement-only items: start tracking now, and existing starting points are kept", async ({ page }) => {
+  await signUp(page, uniqueEmail("insp-start"));
+  await addSled(page, { make: "Yamaha", model: "Sidewinder", year: "2022", odometer: "3000", hours: "200" });
+  await addReplacement(page, "Change oil", "1000");
+  await addReplacement(page, "Chaincase oil", "1000");
+
+  // An existing "Done before SledWerx" starting point.
+  const openSchedule = async (task: string) => {
+    await row(page, task)
+      .getByRole("button", { name: `Schedule for ${task}` })
+      .click();
+    const dialog = page.getByRole("dialog", { name: task });
+    const doneBefore = dialog.getByTestId("done-before");
+    if (!(await doneBefore.evaluate((d: HTMLDetailsElement) => d.open))) await doneBefore.locator("summary").click();
+    return { dialog, doneBefore };
+  };
+  let { dialog, doneBefore } = await openSchedule("Chaincase oil");
+  await label(doneBefore, "Miles then").fill("2500");
+  await dialog.getByRole("button", { name: "Save schedule" }).click();
+  await expect(dialog).toBeHidden();
+  await expect(row(page, "Chaincase oil").getByTestId("board-last-done")).toContainText("Done before SledWerx");
+
+  // Saving the schedule again keeps it exactly.
+  ({ dialog, doneBefore } = await openSchedule("Chaincase oil"));
+  await expect(label(doneBefore, "Miles then")).toHaveValue("2500");
+  await label(dialog, "Every … miles", true).fill("1200");
+  await dialog.getByRole("button", { name: "Save schedule" }).click();
+  await expect(dialog).toBeHidden();
+  await expect(row(page, "Chaincase oil").getByTestId("board-last-done")).toContainText("Done before SledWerx");
+  await expect(row(page, "Chaincase oil").getByTestId("board-status")).toHaveText("Next due in 700 mi");
+
+  // Start tracking now: counts from today's meters, never shown or saved as done.
+  ({ dialog, doneBefore } = await openSchedule("Change oil"));
+  await doneBefore.getByRole("button", { name: "Start tracking now" }).click();
+  await expect(doneBefore.getByTestId("tracking-start")).toContainText("Tracking from today at 3,000 mi · 200 hrs");
+  await dialog.getByRole("button", { name: "Save schedule" }).click();
+  await expect(dialog).toBeHidden();
+  const oil = row(page, "Change oil");
+  await expect(oil.getByTestId("board-last-done")).toContainText("Tracking since");
+  await expect(oil.getByTestId("board-last-done")).not.toContainText("Done");
+  await expect(oil.getByTestId("board-status")).toHaveText("Next due in 1,000 mi");
+  await expect(oil).toHaveAttribute("data-status", "good");
+  await expect(history(page)).toHaveCount(0);
+
+  // Reopening keeps the tracking start (not moved to a new date or mileage).
+  ({ dialog, doneBefore } = await openSchedule("Change oil"));
+  await expect(doneBefore.getByTestId("tracking-start")).toContainText("3,000 mi");
+  await dialog.getByRole("button", { name: "Close" }).click();
 });
 
 test("Quick Check, Mark All as Good, Skip, starting points and the offer after a mileage update", async ({ page }) => {

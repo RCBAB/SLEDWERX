@@ -247,16 +247,49 @@ PR 2 interface decisions (approved 2026-11-25):
 ### PR 2 implementation notes
 
 - No migration. Uses Migration 13's board columns and
-  `save_maintenance_inspection`; a correction (Decision G) is an ordinary
-  update of the check's `outcome` after `update_maintenance_entry`, under the
-  record's existing permissions, guards and audit log
-  (`supabase/tests/database/019_inspection_corrections.test.sql`).
-- Replacement-only items are unchanged: same card lines, **Done**, Select /
-  Done (n), and the "Done before SledWerx?" starting point. The three-way
-  starting point (Known / Start tracking now / Unknown) is shown for items that
-  track inspections (both schedules of a Both item).
+  `save_maintenance_inspection`.
+- **Corrections (Decision G)** are two steps: the record edit
+  (`update_maintenance_entry`), then an ordinary update of the check's
+  `outcome`, under the record's existing permissions, guards and audit log.
+  If the second step fails, the form says the other changes were saved and
+  offers **Retry check result**, which runs only the correction: the record
+  isn't edited again, and a correction already applied changes and logs
+  nothing (`supabase/tests/database/019_inspection_corrections.test.sql`,
+  `src/app/garage/service-actions.test.ts`).
+- **Starting points.** Items that track inspections choose Known / Start
+  tracking now / Unknown for each schedule. Replacement-only items keep the
+  "Done before SledWerx?" section, now with **Start tracking now**: today's
+  date and meters, saved as a tracking start (`replace_baseline_kind =
+  tracking`) and shown as "Tracking since …", never as done. No service
+  record is created. A saved starting point is kept unless the user changes
+  it; "Enter a date instead" restores what was there.
+- **Wording.** Inspection only (and Both) items always say "Last checked".
+  When a replacement satisfied the check (Replaced resets both schedules;
+  Decision D's earlier completions), it adds "satisfied by a replacement"
+  ("… before SledWerx" for a replacement starting point).
+- Replacement-only items are otherwise unchanged: same card lines, **Done**,
+  Select / Done (n).
 - Board order: Needs Replacement first, then the more urgent schedule
   (`item_rank`); replacement-only items keep their order.
-- A "Start tracking now" starting point has a date but no time, so a mileage
-  update on that same day doesn't make an Every Mileage Update check due; the
-  next day's does (Migration 13 view behaviour, unchanged).
+
+### Proposed Migration 14 (not implemented; awaiting approval)
+
+Every Mileage Update should count a reading recorded after the check
+schedule's starting point, even on the same day. Migration 13's board compares
+a starting point by date only (it has no time), so a reading entered the same
+day as "Start tracking now" (or a same-day known starting point) does not make
+the check due until the next day's reading. There is no reliable app-only fix:
+the board view decides the status, and moving the date would misstate the
+starting point.
+
+Proposed change (additive):
+- `maintenance_plans.inspect_baseline_at timestamptz`: when the check's
+  starting point was last set. Set by a trigger whenever the starting point
+  (date, miles, hours or kind) is set or changed; cleared when it is removed.
+  Existing rows stay empty and behave exactly as today.
+- `maintenance_board` re-created with the same columns; the only change is
+  that the check starting point uses `inspect_baseline_at` as its time, so a
+  mileage reading created after it counts (and a same-day starting point set
+  after a check counts as the newer one).
+- Rollback, pgTAP tests, a rollback test and generated types as usual; applied
+  with the five-step SQL Editor process before the app relies on it.

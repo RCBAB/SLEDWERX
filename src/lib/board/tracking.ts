@@ -164,7 +164,12 @@ function meters(mi: number | null, hours: number | null): string {
 
 export const OUTCOME_LABEL = { good: "Good", needs_replacement: "Needs Replacement" } as const;
 
-/** What the check schedule counts from: "Last checked Nov 3, 2026 · 1,200 mi · Good". */
+/**
+ * What the check schedule counts from, always worded as "Last checked":
+ * "Last checked Nov 3, 2026 · 1,200 mi · Good". When a replacement satisfied
+ * the check (Replaced resets both schedules; on an inspection only item an
+ * earlier completion counts as a check, Decision D), it says so.
+ */
 export function checkedLine(row: Tracked): string {
   const t = row.tracking;
   const when = t.lastCheckedOn ? formatDate(t.lastCheckedOn) : "date unknown";
@@ -173,11 +178,15 @@ export function checkedLine(row: Tracked): string {
     case "check":
       return `Last checked ${when}${at}${t.lastCheckOutcome ? ` · ${OUTCOME_LABEL[t.lastCheckOutcome]}` : ""}`;
     case "replacement":
-      return `Replaced ${when}${at}`;
     case "service":
-      return `Last done ${when}${at}`;
-    case "baseline":
-      return `Checked before SledWerx ${when}${at}`;
+      return `Last checked ${when}${at} · satisfied by a replacement`;
+    case "baseline": {
+      // The replacement's starting point (Both) or the check's own.
+      const i = t.inspect;
+      const own = i.baselineOn === t.lastCheckedOn && i.baselineMi === t.lastCheckedMi && i.baselineHours === t.lastCheckedHours;
+      const fromReplacement = !own;
+      return `Last checked ${when}${at} · ${fromReplacement ? "satisfied by a replacement before SledWerx" : "before SledWerx"}`;
+    }
     case "tracking":
       return `Tracking since ${when}${at}`;
     default:

@@ -6,11 +6,11 @@ designed and its open decisions settled before any implementation starts.
 | Order | Feature | Status |
 |---|---|---|
 | 1 | [Suspension Measurement / Turns](#1-suspension-measurement--turns) | Complete: both PRs merged, production testing passed |
-| 2 | [Maintenance Inspection & Replacement Tracking](#2-maintenance-inspection--replacement-tracking) | PR 1 (Migration 13) and PR 2 (interface) merged and live; production testing passed. Migration 14 in the production process |
+| 2 | [Maintenance Inspection & Replacement Tracking](#2-maintenance-inspection--replacement-tracking) | Complete: PR 1 (Migration 13), PR 2 (interface) and Migration 14 merged and live; production testing of PR 2 passed |
 
 Production context (as of 2026-11-25):
 - Measurement photo uploads are live (`SUSPENSION_PHOTO_UPLOADS=on`,
-  Production only). Migrations 1–13 are applied; Migration 14 is not.
+  Production only). Migrations 1–14 are applied.
 - The Migration 8 cleanup runs report-only. Deletion and retention are off and
   are a separate decision; they are not a prerequisite for anything below.
 
@@ -250,9 +250,11 @@ PR 2 interface decisions (approved 2026-11-25):
 - **PR 2** (interface): merged (#25, `bcc54bb`) and deployed to production
   2026-11-25. Production testing: 10 of 10 tests passed; the manual Viewer
   permissions test was skipped. Test records cleaned up afterwards.
-- **Migration 14** (#26): approved for development; in the five-step
-  production process (step 1, the read-only preflight, prepared). Not
-  applied or merged.
+- **Migration 14** (#26): applied to production with the five-step process
+  (preflight 22/22, rollback trial passed, apply with all checks passed,
+  independent verification 34/34 with the 12 baseline values unchanged),
+  then merged (`ecd426b`) and deployed 2026-11-25. Live application testing
+  of Migration 14: pending.
 
 ### PR 2 implementation notes
 
@@ -282,7 +284,7 @@ PR 2 interface decisions (approved 2026-11-25):
 - Board order: Needs Replacement first, then the more urgent schedule
   (`item_rank`); replacement-only items keep their order.
 
-### Migration 14 (approved for development 2026-11-25; PR #26, not applied)
+### Migration 14 (applied to production and merged 2026-11-25, #26)
 
 Every Mileage Update should count a reading recorded after the check
 schedule's starting point, even on the same day. Migration 13's board compares
